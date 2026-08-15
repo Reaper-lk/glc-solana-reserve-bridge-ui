@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, ErrorState } from "@/components/ui";
+import { Wallet } from "lucide-react";
+import { Button, Card, ErrorState, TokenAmount } from "@/components/ui";
 import {
   directions,
   display,
@@ -255,7 +256,7 @@ export function BridgeCard() {
 
   if (phase.kind === "glc-to-sol-deposit") {
     return (
-      <Card>
+      <Card variant="raised" padding="lg">
         <h1 className="text-heading-2 mb-4">Send your deposit</h1>
         <DepositInstructions
           depositVaultAddress={phase.depositVaultAddress}
@@ -274,7 +275,7 @@ export function BridgeCard() {
 
   if (phase.kind === "sol-to-glc-waiting") {
     return (
-      <Card>
+      <Card variant="raised" padding="lg">
         <h1 className="text-heading-2 mb-2">Deposit submitted</h1>
         <p className="text-body-sm text-ink-600">
           Your Solana transaction has been submitted (signature{" "}
@@ -285,33 +286,58 @@ export function BridgeCard() {
     );
   }
 
+  const destinationToken = descriptor.to.token;
+
   return (
-    <Card>
-      <h1 className="text-heading-2 mb-4">Bridge GLC</h1>
+    <Card variant="raised" padding="lg">
+      <div className="mb-5">
+        <h1 className="text-heading-2">Bridge GLC</h1>
+        <p className="text-body-sm text-ink-500 mt-1">
+          Reserve-backed, 1:1. Nothing is minted, burned, or wrapped.
+        </p>
+      </div>
 
       <div className="flex flex-col gap-5">
-        <DirectionSelector
-          value={direction}
-          onChange={(next) => {
-            setDirection(next);
-            setAmountInput("");
-            setRecipient("");
-          }}
-        />
+        <div>
+          <DirectionSelector
+            value={direction}
+            onChange={(next) => {
+              setDirection(next);
+              setAmountInput("");
+              setRecipient("");
+            }}
+          />
+          {destinationReserveCapacity !== null && destinationReserveCapacity > 0 && (
+            <p className="text-body-sm text-ink-500 mt-2">
+              Available capacity:{" "}
+              <TokenAmount
+                raw={String(destinationReserveCapacity)}
+                decimals={destinationToken.decimals}
+                symbol={destinationToken.symbol}
+                className="text-ink-700"
+              />
+            </p>
+          )}
+        </div>
 
         <div>
           <label htmlFor="bridge-amount" className="text-body-sm text-ink-600 mb-1 block">
-            Amount ({sourceToken.symbol})
+            You bridge
           </label>
-          <input
-            id="bridge-amount"
-            aria-label={`Amount in ${sourceToken.symbol}`}
-            inputMode="decimal"
-            value={amountInput}
-            onChange={(event) => setAmountInput(event.target.value)}
-            placeholder="0.00"
-            className="border-ink-200 text-heading-3 tabular w-full rounded-lg border px-3 py-2"
-          />
+          <div className="border-ink-200 focus-within:border-ink-400 flex items-center rounded-lg border pr-3 transition-colors">
+            <input
+              id="bridge-amount"
+              aria-label={`Amount in ${sourceToken.symbol}`}
+              inputMode="decimal"
+              value={amountInput}
+              onChange={(event) => setAmountInput(event.target.value)}
+              placeholder="0.00"
+              className="text-heading-2 tabular min-w-0 flex-1 rounded-lg px-3 py-2.5 outline-none"
+            />
+            <span className="text-body text-ink-500 font-medium">
+              {sourceToken.symbol}
+            </span>
+          </div>
           {amountValidation && isReportableProblem(amountValidation.problem) && (
             <p className="text-body-sm text-danger-700 mt-1">
               {amountValidation.message}
@@ -336,23 +362,28 @@ export function BridgeCard() {
               ? "Solana recipient address"
               : "Goldcoin destination address"}
           </label>
-          <input
-            id="bridge-recipient"
-            aria-label={
-              direction === "GlcToSol"
-                ? "Solana recipient address"
-                : "Goldcoin destination address"
-            }
-            value={recipient}
-            onChange={(event) => setRecipient(event.target.value)}
-            placeholder={direction === "GlcToSol" ? "Solana address" : "Goldcoin address"}
-            className="border-ink-200 text-mono-sm w-full rounded-lg border px-3 py-2"
-          />
+          <div className="border-ink-200 focus-within:border-ink-400 flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors">
+            <Wallet aria-hidden="true" className="text-ink-400 size-4 shrink-0" />
+            <input
+              id="bridge-recipient"
+              aria-label={
+                direction === "GlcToSol"
+                  ? "Solana recipient address"
+                  : "Goldcoin destination address"
+              }
+              value={recipient}
+              onChange={(event) => setRecipient(event.target.value)}
+              placeholder={
+                direction === "GlcToSol" ? "Solana address" : "Goldcoin address"
+              }
+              className="text-mono-sm min-w-0 flex-1 outline-none"
+            />
+          </div>
           {direction === "GlcToSol" && wallet.address && recipient.trim() === "" && (
             <button
               type="button"
               onClick={() => setRecipient(wallet.address ?? "")}
-              className="text-body-sm text-ink-700 mt-1 underline underline-offset-2"
+              className="bg-ink-50 text-ink-700 hover:bg-ink-100 text-body-sm mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition-colors"
             >
               Use connected wallet ({wallet.address.slice(0, 4)}…
               {wallet.address.slice(-4)})

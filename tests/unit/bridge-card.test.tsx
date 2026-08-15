@@ -108,7 +108,7 @@ describe("BridgeCard — direction switching", () => {
     expect(screen.getByLabelText(/Amount in GLC/i)).toBeInTheDocument();
     expect(screen.getByLabelText("Solana recipient address")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("radio", { name: /Solana.*Goldcoin/i }));
+    await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
 
     expect(screen.getByLabelText("Goldcoin destination address")).toBeInTheDocument();
   });
@@ -121,7 +121,7 @@ describe("BridgeCard — direction switching", () => {
     await user.type(amountInput, "100");
     expect(amountInput).toHaveValue("100");
 
-    await user.click(screen.getByRole("radio", { name: /Solana.*Goldcoin/i }));
+    await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
 
     const newAmountInput = screen.getByLabelText(/Amount in GLC/i);
     expect(newAmountInput).toHaveValue("");
@@ -174,7 +174,11 @@ describe("BridgeCard — POST /quote integration and fee presentation", () => {
       );
     });
 
-    expect(await screen.findByText("You bridge")).toBeInTheDocument();
+    // "You bridge" is now also the amount field's own visible label, so
+    // both occurrences are asserted rather than assuming just one.
+    await waitFor(() =>
+      expect(screen.getAllByText("You bridge").length).toBeGreaterThan(0),
+    );
     expect(screen.getByText("Bridge fee (1%)")).toBeInTheDocument();
     expect(screen.getByText("You receive")).toBeInTheDocument();
     expect(screen.getByText(/1000\.00000000/)).toBeInTheDocument();
@@ -297,7 +301,7 @@ describe("BridgeCard — Solana -> Goldcoin wallet-disconnected gating", () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeCard />);
 
-    await user.click(screen.getByRole("radio", { name: /Solana.*Goldcoin/i }));
+    await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
     await waitFor(() => expect(getLimits).toHaveBeenCalled());
 
     await user.type(screen.getByLabelText(/Amount in GLC/i), "100");

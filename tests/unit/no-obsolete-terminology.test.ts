@@ -14,9 +14,42 @@ import { describe, expect, it } from "vitest";
  * mechanic is gone. Forbidding the noun would produce false positives with
  * no safety value; the mechanic itself (mint/burn/wrap as a verb bridging
  * GLC into a new token) has no surviving code path to flag.
+ *
+ * Every term below gets a negation carve-out: the product explicitly wants
+ * to reassure users with copy like "nothing is minted, burned, or wrapped"
+ * and "no federation of operators controls this bridge". A negated mention
+ * is exactly the opposite of the leftover reference this test exists to
+ * catch, so only an UNnegated occurrence — the word with no nearby negation
+ * cue — fails.
  */
 
-const FORBIDDEN: readonly RegExp[] = [/wglc/i, /wrapped/i, /federation/i, /\bburn/i];
+const FORBIDDEN_TERMS: readonly RegExp[] = [
+  /wglc/i,
+  /wrapped/i,
+  /federation/i,
+  /\bburn(ed|ing|s)?\b/i,
+];
+
+const NEGATION_CUE = /\b(not|never|no|n't|nothing is|does not|isn't|doesn't)\b/i;
+/**
+ * Characters of context to look back from a match for a negation cue.
+ * Wide enough to cover a short list ("nothing is minted, burned, or
+ * wrapped") without also reaching back across an unrelated sentence.
+ */
+const NEGATION_WINDOW = 60;
+
+function findUnnegatedMatch(content: string, pattern: RegExp): string | null {
+  const flagged = pattern.flags.includes("g")
+    ? pattern
+    : new RegExp(pattern.source, `${pattern.flags}g`);
+  let match: RegExpExecArray | null;
+  while ((match = flagged.exec(content))) {
+    const start = Math.max(0, match.index - NEGATION_WINDOW);
+    const before = content.slice(start, match.index);
+    if (!NEGATION_CUE.test(before)) return match[0];
+  }
+  return null;
+}
 
 const ROOTS = ["app", "src"];
 const SKIP_DIRS = new Set(["node_modules", ".next", "coverage"]);
@@ -50,9 +83,12 @@ describe("no obsolete wrapped-token/federation terminology in the primary UI", (
   for (const file of sourceFiles) {
     it(`${file.slice(repoRoot.length + 1)} has no obsolete terminology`, () => {
       const content = readFileSync(file, "utf8");
-      for (const pattern of FORBIDDEN) {
-        const match = content.match(pattern);
-        expect(match, `found "${match?.[0]}" matching ${pattern} in ${file}`).toBeNull();
+      for (const pattern of FORBIDDEN_TERMS) {
+        const unnegated = findUnnegatedMatch(content, pattern);
+        expect(
+          unnegated,
+          `found an un-negated "${unnegated}" in ${file} — either it's a leftover reference, or it needs a nearby negation cue (not/never/no/isn't/doesn't) to read as the reassurance it's meant to be`,
+        ).toBeNull();
       }
     });
   }
