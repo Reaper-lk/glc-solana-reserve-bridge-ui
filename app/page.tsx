@@ -43,11 +43,14 @@ export default function HomePage() {
 
             <div className="mt-8 flex flex-wrap gap-3">
               <ButtonLink href={routes.bridge} variant="brand" size="lg">
-                Open the bridge
+                Bridge GLC
                 <ArrowRight aria-hidden="true" className="size-4" />
               </ButtonLink>
               <ButtonLink href={routes.explorer} variant="secondary" size="lg">
                 View the explorer
+              </ButtonLink>
+              <ButtonLink href={routes.reserves} variant="tertiary" size="lg">
+                View reserves
               </ButtonLink>
             </div>
           </div>
