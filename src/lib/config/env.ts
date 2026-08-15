@@ -75,6 +75,18 @@ const envSchema = z
     bridgeApiMode: z.enum(["mock", "http"]).default("mock"),
     bridgeApiUrl: urlSchema.optional(),
     /**
+     * Real backend origin for the local dev-only same-origin proxy
+     * (`app/api/bridge/[...path]/route.ts`), read server-side only. Exists
+     * because the real bridge service has no CORS headers of its own
+     * (`service/src/api.rs` module doc) — pointing `bridgeApiUrl` at
+     * `/api/bridge` keeps the browser's fetches same-origin during local
+     * development, while this variable tells the proxy route what real
+     * backend to forward them to. NOT a production mechanism: production
+     * puts a real reverse proxy in front of the backend and points
+     * `bridgeApiUrl` at that directly (see .env.example).
+     */
+    bridgeApiProxyUpstreamUrl: urlSchema.optional(),
+    /**
      * Which unhappy path the mock client simulates. Exists purely so E2E
      * tests can exercise a paused direction or exhausted reserve capacity
      * against a real running server without a live backend — never read
@@ -154,6 +166,9 @@ function readEnv(): PublicEnv {
     bridgeApiMode: present(process.env.NEXT_PUBLIC_BRIDGE_API_MODE) ?? "mock",
     mockScenario: present(process.env.NEXT_PUBLIC_MOCK_SCENARIO) ?? "operational",
     bridgeApiUrl: present(process.env.NEXT_PUBLIC_BRIDGE_API_URL),
+    bridgeApiProxyUpstreamUrl: present(
+      process.env.NEXT_PUBLIC_BRIDGE_API_PROXY_UPSTREAM_URL,
+    ),
 
     solanaCluster: present(process.env.NEXT_PUBLIC_SOLANA_CLUSTER) ?? "devnet",
     solanaRpcUrl: present(process.env.NEXT_PUBLIC_SOLANA_RPC_URL),

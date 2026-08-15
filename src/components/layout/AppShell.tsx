@@ -6,7 +6,18 @@ import { ReserveBanner } from "./ReserveBanner";
 import { WalletSlot } from "./WalletSlot";
 import { isMockMode } from "@/lib/api";
 import { devBuildSha } from "@/lib/dev/build-info";
+import { env } from "@/lib/config/env";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
+
+/**
+ * Distinguishes real-but-non-production backend traffic (a local
+ * regtest/test-validator instance, a shared staging deployment) from
+ * mainnet/production, so this build never presents test data as if it were
+ * real. `NODE_ENV` alone is the right signal here: `bridgeApiMode === "http"`
+ * is also true in production, but a production *build* is the one case this
+ * banner must never appear in.
+ */
+const isNonProductionBuild = process.env.NODE_ENV !== "production";
 
 /**
  * Application shell (design spec 6 / G1).
@@ -41,8 +52,16 @@ export function AppShell({
       <div role="region" aria-label="Bridge notices">
         {isMockMode && (
           <p className="bg-ink-950 text-body-sm px-4 py-1.5 text-center text-white">
-            Development build{devBuildSha ? ` — ${devBuildSha}` : ""} — all figures on
-            this site come from local fixtures and describe nothing real.
+            Development build{devBuildSha ? ` — ${devBuildSha}` : ""} — MOCK DATA MODE.
+            All figures on this site come from local fixtures and describe nothing real.
+          </p>
+        )}
+        {!isMockMode && isNonProductionBuild && (
+          <p className="bg-ink-950 text-body-sm px-4 py-1.5 text-center text-white">
+            Development build{devBuildSha ? ` — ${devBuildSha}` : ""} — REAL LOCAL BACKEND
+            / TEST NETWORK MODE. Connected to {env.bridgeApiUrl}. This is a real bridge
+            instance running against test infrastructure, not mainnet — figures here are
+            genuine but describe no real money.
           </p>
         )}
 
