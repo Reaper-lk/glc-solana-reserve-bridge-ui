@@ -128,9 +128,12 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
     await page.getByLabel(/Amount in GLC/i).fill("1000");
 
     // The quote panel shows the failure through the same three-part error
-    // formula as everywhere else — never a stale or guessed quote.
+    // formula as everywhere else — never a stale or guessed quote. "You
+    // bridge" is also the amount field's own permanent label now, so the
+    // breakdown-only rows are what prove no quote is being shown.
     await expect(page.getByText(/could not complete that request/i)).toBeVisible();
-    await expect(page.getByText("You bridge")).not.toBeVisible();
+    await expect(page.getByText(/Bridge fee/)).not.toBeVisible();
+    await expect(page.getByText("You receive")).not.toBeVisible();
     await expect(
       page.getByRole("button", { name: /Create deposit request/i }),
     ).toBeDisabled();

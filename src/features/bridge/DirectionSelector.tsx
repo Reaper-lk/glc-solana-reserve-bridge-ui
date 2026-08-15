@@ -34,20 +34,20 @@ export function DirectionSelector({
             aria-label={descriptor.label}
             onClick={() => onChange(id)}
             className={cn(
-              "flex-1 rounded-lg border px-4 py-3 text-left transition-colors",
+              "min-w-0 flex-1 rounded-lg border px-4 py-3 text-left transition-colors",
               selected
                 ? "border-ink-950 bg-ink-950 text-white"
                 : "border-ink-200 hover:bg-ink-50 text-ink-900",
             )}
           >
-            <span className="text-body-sm flex items-center gap-1.5 font-medium">
-              <span className="truncate">{descriptor.from.token.name}</span>
+            <span className="text-body-sm flex min-w-0 items-center gap-1.5 font-medium">
+              <span className="min-w-0 truncate">{descriptor.from.token.name}</span>
               <ArrowLeftRight aria-hidden="true" className="size-3.5 shrink-0" />
-              <span className="truncate">{descriptor.to.token.name}</span>
+              <span className="min-w-0 truncate">{descriptor.to.token.name}</span>
             </span>
             <span
               className={cn(
-                "text-body-sm mt-0.5 block",
+                "text-body-sm mt-0.5 block truncate",
                 selected ? "text-ink-300" : "text-ink-500",
               )}
             >
