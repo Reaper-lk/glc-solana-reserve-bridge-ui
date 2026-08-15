@@ -1,10 +1,18 @@
 "use client";
 
-import { TriangleAlert } from "lucide-react";
-import { Card, ErrorState, Skeleton, StatusBadge, TokenAmount } from "@/components/ui";
+import { History, TriangleAlert } from "lucide-react";
+import {
+  Card,
+  EmptyState,
+  ErrorState,
+  Skeleton,
+  StatusBadge,
+  TokenAmount,
+} from "@/components/ui";
 import { useReserve, useReserveHistory, useStats } from "@/lib/query/hooks";
 import { directionAvailabilityStatus } from "@/lib/status";
 import { GOLDCOIN_GLC, SOLANA_GLC } from "@/lib/bridge";
+import type { ReserveHistoryEntryDto } from "@/lib/api/schemas/reserves";
 
 /**
  * Reserve capacity is a first-class concept for a reserve-backed bridge:
@@ -109,46 +117,59 @@ function ReserveHistoryTable() {
 
   if (query.isPending) return <Skeleton className="h-64 w-full" />;
   if (query.isError) return <ErrorState error={query.error} />;
-  if (query.data.items.length === 0) return null;
 
   return (
     <div>
       <h3 className="text-heading-3 mb-2">Reconciliation history</h3>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] text-left">
-          <thead>
-            <tr className="border-ink-100 text-body-sm text-ink-500 border-b">
-              <th className="py-2 pr-4 font-medium">Reserve</th>
-              <th className="py-2 pr-4 font-medium">Detected</th>
-              <th className="py-2 pr-4 font-medium">Delta (atomic)</th>
-              <th className="py-2 pr-4 font-medium">Classification</th>
-            </tr>
-          </thead>
-          <tbody>
-            {query.data.items.map((entry) => {
-              const skipped = entry.classification.startsWith("SKIPPED");
-              return (
-                <tr key={entry.id} className="border-ink-100 border-b last:border-b-0">
-                  <td className="text-body-sm py-2 pr-4">{entry.direction}</td>
-                  <td className="text-body-sm text-ink-500 py-2 pr-4">
-                    {new Date(entry.detected_at * 1000).toLocaleString()}
-                  </td>
-                  <td className="tabular text-body-sm py-2 pr-4">{entry.delta_atomic}</td>
-                  <td className="text-body-sm py-2 pr-4">
-                    {skipped ? (
-                      <span className="text-warn-700">
-                        missing tick — {entry.classification}
-                      </span>
-                    ) : (
-                      entry.classification
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {query.data.items.length === 0 ? (
+        <EmptyState
+          icon={History}
+          title="No reconciliation ticks yet"
+          description="This reserve has no recorded history yet."
+        />
+      ) : (
+        <ReserveHistoryRows items={query.data.items} />
+      )}
+    </div>
+  );
+}
+
+function ReserveHistoryRows({ items }: { items: readonly ReserveHistoryEntryDto[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[560px] text-left">
+        <thead>
+          <tr className="border-ink-100 text-body-sm text-ink-500 border-b">
+            <th className="py-2 pr-4 font-medium">Reserve</th>
+            <th className="py-2 pr-4 font-medium">Detected</th>
+            <th className="py-2 pr-4 font-medium">Delta (atomic)</th>
+            <th className="py-2 pr-4 font-medium">Classification</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((entry) => {
+            const skipped = entry.classification.startsWith("SKIPPED");
+            return (
+              <tr key={entry.id} className="border-ink-100 border-b last:border-b-0">
+                <td className="text-body-sm py-2 pr-4">{entry.direction}</td>
+                <td className="text-body-sm text-ink-500 py-2 pr-4">
+                  {new Date(entry.detected_at * 1000).toLocaleString()}
+                </td>
+                <td className="tabular text-body-sm py-2 pr-4">{entry.delta_atomic}</td>
+                <td className="text-body-sm py-2 pr-4">
+                  {skipped ? (
+                    <span className="text-warn-700">
+                      missing tick — {entry.classification}
+                    </span>
+                  ) : (
+                    entry.classification
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
