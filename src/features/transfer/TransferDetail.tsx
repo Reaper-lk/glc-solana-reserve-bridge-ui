@@ -217,7 +217,7 @@ function TxRow({
               href={href}
               target="_blank"
               rel="noreferrer"
-              className="underline decoration-ink-300 underline-offset-2 hover:decoration-ink-600"
+              className="decoration-ink-300 hover:decoration-ink-600 underline underline-offset-2"
             >
               <AddressCompact address={txid} lead={10} tail={8} />
             </a>
