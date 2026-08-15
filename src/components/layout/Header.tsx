@@ -48,7 +48,11 @@ export function Header({ walletSlot }: { walletSlot?: ReactNode }) {
               <DropdownMenu.Content
                 align="start"
                 sideOffset={-8}
-                className="border-ink-200 shadow-elev-2 z-50 min-w-56 rounded-md border bg-white p-1"
+                className={cn(
+                  "border-ink-200 shadow-elev-2 z-50 min-w-56 origin-top rounded-md border bg-white p-1",
+                  "data-[state=open]:[animation:menu-in_var(--duration-base)_var(--ease-decelerate)]",
+                  "data-[state=closed]:[animation:menu-out_var(--duration-fast)_var(--ease-accelerate)]",
+                )}
               >
                 {moreNav.map((item) => (
                   <DropdownMenu.Item key={item.href} asChild>
