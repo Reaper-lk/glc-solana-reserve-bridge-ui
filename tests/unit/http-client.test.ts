@@ -156,4 +156,80 @@ describe("HttpBridgeClient", () => {
       }
     }
   });
+
+  it("falls back to a status-only message when the error body is not valid JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => "<html>not json</html>",
+      }),
+    );
+    const client = new HttpBridgeClient(BASE);
+    try {
+      await client.getStatus();
+      expect.unreachable("getStatus should have thrown");
+    } catch (error) {
+      expect(isApiError(error)).toBe(true);
+      if (isApiError(error)) expect(error.kind).toBe("server");
+    }
+  });
+
+  it("treats an unexpected success status (e.g. 200 where 201 was required) as a server error", async () => {
+    respondOk(fixtures.transfersFixture()[0], 200);
+    const client = new HttpBridgeClient(BASE);
+    try {
+      await client.createTransfer({ amount_atomic: 100, recipient: "x" });
+      expect.unreachable("createTransfer should have thrown");
+    } catch (error) {
+      expect(isApiError(error)).toBe(true);
+      if (isApiError(error)) expect(error.kind).toBe("server");
+    }
+  });
+
+  it("exercises every remaining read endpoint against a real response shape", async () => {
+    const client = new HttpBridgeClient(BASE);
+
+    respondOk(fixtures.limitsFixture());
+    await expect(client.getLimits()).resolves.toMatchObject({ bridge_fee_bps: 100 });
+
+    respondOk(fixtures.reserveFixture());
+    await expect(client.getReserve()).resolves.toHaveProperty(
+      "solana_available_capacity",
+    );
+
+    respondOk(fixtures.healthFixture());
+    await expect(client.getHealth()).resolves.toMatchObject({ healthy: true });
+
+    respondOk(fixtures.statsFixture());
+    await expect(client.getStats()).resolves.toHaveProperty("glc_to_sol");
+
+    respondOk({ items: fixtures.transfersFixture(), next_cursor: null, as_of: 0 });
+    await expect(
+      client.listTransfers({ address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM" }),
+    ).resolves.toHaveProperty("items");
+
+    respondOk({ items: fixtures.explorerEventsFixture(), next_cursor: null, as_of: 0 });
+    await expect(
+      client.listExplorerEvents({ direction: "GlcToSol" }),
+    ).resolves.toHaveProperty("items");
+
+    respondOk({ items: fixtures.reserveHistoryFixture(), next_cursor: null, as_of: 0 });
+    await expect(
+      client.listReserveHistory({ direction: "solana" }),
+    ).resolves.toHaveProperty("items");
+  });
+
+  it("normalises the 'resource' fallback description for a non-transfer 404", async () => {
+    respondError(404, "not found");
+    const client = new HttpBridgeClient(BASE);
+    try {
+      await client.getLimits();
+      expect.unreachable("getLimits should have thrown");
+    } catch (error) {
+      expect(isApiError(error)).toBe(true);
+      if (isApiError(error)) expect(error.message).toMatch(/resource not found/i);
+    }
+  });
 });
