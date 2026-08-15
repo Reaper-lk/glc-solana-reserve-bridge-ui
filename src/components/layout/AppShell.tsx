@@ -5,6 +5,7 @@ import { BridgeStatusBar } from "./BridgeStatusBar";
 import { ReserveBanner } from "./ReserveBanner";
 import { WalletSlot } from "./WalletSlot";
 import { isMockMode } from "@/lib/api";
+import { devBuildSha } from "@/lib/dev/build-info";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 
 /**
@@ -40,8 +41,8 @@ export function AppShell({
       <div role="region" aria-label="Bridge notices">
         {isMockMode && (
           <p className="bg-ink-950 text-body-sm px-4 py-1.5 text-center text-white">
-            Development build — all figures on this site come from local fixtures and
-            describe nothing real.
+            Development build{devBuildSha ? ` — ${devBuildSha}` : ""} — all figures on
+            this site come from local fixtures and describe nothing real.
           </p>
         )}
 
