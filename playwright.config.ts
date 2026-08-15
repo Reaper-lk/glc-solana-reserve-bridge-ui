@@ -1,7 +1,27 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 3000;
+const INTERCEPT_PORT = 3001;
+
 const baseURL = `http://127.0.0.1:${PORT}`;
+const interceptBaseURL = `http://127.0.0.1:${INTERCEPT_PORT}`;
+
+/**
+ * Backend origin the "intercepted" server is configured to call. Nothing
+ * ever listens here on purpose: the browser's requests are answered
+ * entirely by `page.route` (with CORS headers, since this is a distinct
+ * origin from the app itself — see tests/e2e/intercepted-helpers.ts), and
+ * the app's own server-side SSR fetch to this same URL (in app/layout.tsx)
+ * fails fast with ECONNREFUSED rather than hanging.
+ *
+ * A same-origin path (e.g. this app's own port with a `/__mock_api` path)
+ * was tried first and rejected: Next.js dev mode serializes a server
+ * component's self-fetch back to its own origin behind the same request
+ * queue that is still rendering the page issuing it, so every SSR call
+ * took ~15s to resolve even as a 404 — plainly unusable for tests.
+ */
+const UNUSED_PORT = 9999;
+export const INTERCEPTED_API_ORIGIN = `http://127.0.0.1:${UNUSED_PORT}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -19,12 +39,14 @@ export default defineConfig({
   projects: [
     {
       name: "desktop-chromium",
+      testIgnore: /intercepted/,
       use: { ...devices["Desktop Chrome"] },
     },
     {
-      // Acceptance criterion 6: every screen works at 360px. Enforced by a
-      // dedicated project rather than a single ad-hoc viewport assertion.
+      // Every screen must work at 360px. Enforced by a dedicated project
+      // rather than a single ad-hoc viewport assertion.
       name: "mobile-360",
+      testIgnore: /intercepted/,
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 360, height: 740 },
@@ -32,12 +54,35 @@ export default defineConfig({
         hasTouch: true,
       },
     },
+    {
+      // Paused / insufficient-liquidity / malformed-response /
+      // backend-unavailable scenarios: this project runs against a server
+      // configured for NEXT_PUBLIC_BRIDGE_API_MODE=http, and every spec in
+      // it uses page.route to control the response itself.
+      name: "intercepted-backend",
+      testMatch: /intercepted-.*\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: interceptBaseURL },
+    },
   ],
 
-  webServer: {
-    command: `npm run start -- --port ${PORT}`,
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  webServer: [
+    {
+      command: `npm run start -- --port ${PORT}`,
+      url: baseURL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      // NEXT_PUBLIC_* values are inlined at build time, so a different mode
+      // needs its own dev server rather than reusing the production build.
+      command: `npm run dev -- --port ${INTERCEPT_PORT}`,
+      url: interceptBaseURL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      env: {
+        NEXT_PUBLIC_BRIDGE_API_MODE: "http",
+        NEXT_PUBLIC_BRIDGE_API_URL: INTERCEPTED_API_ORIGIN,
+      },
+    },
+  ],
 });

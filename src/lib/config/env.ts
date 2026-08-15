@@ -74,6 +74,15 @@ const envSchema = z
 
     bridgeApiMode: z.enum(["mock", "http"]).default("mock"),
     bridgeApiUrl: urlSchema.optional(),
+    /**
+     * Which unhappy path the mock client simulates. Exists purely so E2E
+     * tests can exercise a paused direction or exhausted reserve capacity
+     * against a real running server without a live backend — never read
+     * outside `NEXT_PUBLIC_BRIDGE_API_MODE=mock`.
+     */
+    mockScenario: z
+      .enum(["operational", "paused", "insufficient-liquidity"])
+      .default("operational"),
 
     solanaCluster: z
       .enum(["mainnet-beta", "testnet", "devnet", "localnet"])
@@ -143,6 +152,7 @@ function readEnv(): PublicEnv {
     appVersion: present(process.env.NEXT_PUBLIC_APP_VERSION),
 
     bridgeApiMode: present(process.env.NEXT_PUBLIC_BRIDGE_API_MODE) ?? "mock",
+    mockScenario: present(process.env.NEXT_PUBLIC_MOCK_SCENARIO) ?? "operational",
     bridgeApiUrl: present(process.env.NEXT_PUBLIC_BRIDGE_API_URL),
 
     solanaCluster: present(process.env.NEXT_PUBLIC_SOLANA_CLUSTER) ?? "devnet",
