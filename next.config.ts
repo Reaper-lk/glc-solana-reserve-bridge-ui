@@ -16,8 +16,10 @@ const nextConfig: NextConfig = {
   // Dev-server-only (a no-op in production/`next build`): Next 16 blocks
   // cross-origin requests to its own dev assets by default. Local E2E runs
   // and this box's own tooling reach the dev server via 127.0.0.1 rather
-  // than localhost, which trips that block without this.
-  allowedDevOrigins: ["127.0.0.1", "localhost"],
+  // than localhost, which trips that block without this. The box's public
+  // IP is included too, since manual browser verification happens against
+  // that address rather than through a loopback tunnel.
+  allowedDevOrigins: ["127.0.0.1", "localhost", "5.78.77.80"],
 
   typescript: {
     // A type error is a build failure. Never relaxed.
