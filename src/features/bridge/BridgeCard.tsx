@@ -3,7 +3,14 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Wallet } from "lucide-react";
-import { Button, Card, ErrorState, TokenAmount } from "@/components/ui";
+import {
+  Alert,
+  Button,
+  ButtonLink,
+  Card,
+  ErrorState,
+  TokenAmount,
+} from "@/components/ui";
 import {
   directions,
   display,
@@ -13,6 +20,7 @@ import {
   validateAmount,
   validateGoldcoinAddress,
 } from "@/lib/bridge";
+import { routes } from "@/lib/config/links";
 import {
   canonicalToSourceRawCeil,
   canonicalToSourceRawExact,
@@ -120,13 +128,19 @@ export function BridgeCard() {
 
   const gate = useMemo(() => {
     if (status.isPending || limits.isPending || reserve.isPending) {
-      return { can: false, reason: "Loading bridge status…", reasonShownInline: false };
+      return {
+        can: false,
+        reason: "Loading bridge status…",
+        reasonShownInline: false,
+        blocker: null,
+      };
     }
     if (status.isError) {
       return {
         can: false,
         reason: "Bridge status is unavailable.",
         reasonShownInline: false,
+        blocker: "unavailable" as const,
       };
     }
     if (directionAvailable === false) {
@@ -134,6 +148,7 @@ export function BridgeCard() {
         can: false,
         reason: `${descriptor.label} is currently paused or unavailable.`,
         reasonShownInline: false,
+        blocker: "paused" as const,
       };
     }
     if (destinationReserveCapacity !== null && destinationReserveCapacity <= 0) {
@@ -141,6 +156,7 @@ export function BridgeCard() {
         can: false,
         reason: "Insufficient reserve liquidity for this direction right now.",
         reasonShownInline: false,
+        blocker: "insufficient-liquidity" as const,
       };
     }
     if (!amountValidation || amountValidation.raw === null) {
@@ -150,6 +166,7 @@ export function BridgeCard() {
         reason: reportable ? amountValidation!.message! : "Enter an amount.",
         // The amount field already prints this message inline when reportable.
         reasonShownInline: reportable,
+        blocker: null,
       };
     }
     if (!recipientValidation.valid) {
@@ -159,6 +176,7 @@ export function BridgeCard() {
         reason: recipientValidation.message ?? "Enter a destination address.",
         // The recipient field already prints this message inline when reportable.
         reasonShownInline: reportable,
+        blocker: null,
       };
     }
     if (direction === "SolToGlc") {
@@ -170,19 +188,26 @@ export function BridgeCard() {
           can: false,
           reason: capability.message ?? "This direction is unavailable.",
           reasonShownInline: false,
+          blocker: null,
         };
     }
     if (quote.isPending) {
-      return { can: false, reason: "Fetching quote…", reasonShownInline: false };
+      return {
+        can: false,
+        reason: "Fetching quote…",
+        reasonShownInline: false,
+        blocker: null,
+      };
     }
     if (quote.isError) {
       return {
         can: false,
         reason: "Could not fetch a quote for this amount.",
         reasonShownInline: false,
+        blocker: null,
       };
     }
-    return { can: true, reason: null, reasonShownInline: false };
+    return { can: true, reason: null, reasonShownInline: false, blocker: null };
   }, [
     status.isPending,
     status.isError,
@@ -320,6 +345,10 @@ export function BridgeCard() {
           )}
         </div>
 
+        {gate.blocker && (
+          <BlockerAlert blocker={gate.blocker} directionLabel={descriptor.label} />
+        )}
+
         <div>
           <label htmlFor="bridge-amount" className="text-body-sm text-ink-600 mb-1 block">
             You bridge
@@ -413,7 +442,11 @@ export function BridgeCard() {
             ? {
                 disabled: true,
                 disabledReason: gate.reason ?? "Cannot submit yet.",
-                reasonPlacement: gate.reasonShownInline ? "accessible" : "inline",
+                // A blocker already gets its own Alert above the form, so the
+                // button doesn't repeat the same sentence a second time —
+                // the reason still reaches assistive tech via "accessible".
+                reasonPlacement:
+                  gate.reasonShownInline || gate.blocker ? "accessible" : "inline",
               }
             : {})}
         >
@@ -421,5 +454,54 @@ export function BridgeCard() {
         </Button>
       </div>
     </Card>
+  );
+}
+
+type Blocker = "unavailable" | "paused" | "insufficient-liquidity";
+
+/**
+ * Bridge-wide, backend-driven blockers get their own callout rather than
+ * disappearing into the submit button's disabled-reason text — these are
+ * conditions the amount/recipient fields cannot fix, so a reader should
+ * see them before filling anything in, not discover them only after
+ * clicking a dead-looking button.
+ */
+function BlockerAlert({
+  blocker,
+  directionLabel,
+}: {
+  blocker: Blocker;
+  directionLabel: string;
+}) {
+  const copy: Record<Blocker, { title: string; funds: string }> = {
+    unavailable: {
+      title: "We could not reach the bridge status service.",
+      funds:
+        "No funds have moved. This is a problem loading information, not a problem with a transfer.",
+    },
+    paused: {
+      title: `${directionLabel} is currently paused.`,
+      funds:
+        "Nothing you enter below will submit while this direction is paused — no funds move.",
+    },
+    "insufficient-liquidity": {
+      title: "This direction has no reserve capacity available right now.",
+      funds:
+        "Nothing you enter below will submit until capacity is available — no funds move.",
+    },
+  };
+
+  return (
+    <Alert
+      level="warn"
+      title={copy[blocker].title}
+      funds={copy[blocker].funds}
+      next="Check your connection and try again, or see the current status."
+      actions={
+        <ButtonLink href={routes.status} variant="secondary" size="sm">
+          View status
+        </ButtonLink>
+      }
+    />
   );
 }

@@ -160,7 +160,7 @@ function ReserveHistoryTable() {
         <>
           <ReserveHistoryRows items={items} />
           {(nextCursor || loadingMore) && (
-            <div className="flex justify-center border-ink-100 border-t p-4">
+            <div className="border-ink-100 flex justify-center border-t p-4">
               <Button
                 variant="secondary"
                 size="sm"
