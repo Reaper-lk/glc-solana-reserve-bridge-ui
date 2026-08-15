@@ -98,4 +98,13 @@ describe("ReservesView", () => {
 
     expect(await screen.findByText(/missing tick/i)).toBeInTheDocument();
   });
+
+  it("shows a real empty state for reconciliation history rather than silently rendering nothing", async () => {
+    getReserve.mockResolvedValue(fixtures.reserveFixture());
+    getStats.mockResolvedValue(fixtures.statsFixture());
+    listReserveHistory.mockResolvedValue({ items: [], next_cursor: null, as_of: 0 });
+    renderWithQueryClient(<ReservesView />);
+
+    expect(await screen.findByText(/No reconciliation ticks yet/i)).toBeInTheDocument();
+  });
 });
