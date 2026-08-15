@@ -3,8 +3,8 @@ import { Header } from "./Header";
 import { Footer } from "./Footer";
 import { BridgeStatusBar } from "./BridgeStatusBar";
 import { ReserveBanner } from "./ReserveBanner";
+import { WalletSlot } from "./WalletSlot";
 import { isMockMode } from "@/lib/api";
-import { WalletButton } from "@/features/wallet/WalletButton";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 
 /**
@@ -37,7 +37,7 @@ export function AppShell({
         </p>
       )}
 
-      <Header walletSlot={<WalletButton />} />
+      <Header walletSlot={<WalletSlot />} />
       <BridgeStatusBar {...(initialStatus ? { initialStatus } : {})} />
       {/*
         Site-wide and above the fold on every page. Under-collateralisation is
