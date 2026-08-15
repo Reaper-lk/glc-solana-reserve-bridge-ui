@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { History, TriangleAlert } from "lucide-react";
 import {
+  Button,
   Card,
   EmptyState,
   ErrorState,
@@ -12,7 +14,10 @@ import {
 import { useReserve, useReserveHistory, useStats } from "@/lib/query/hooks";
 import { directionAvailabilityStatus } from "@/lib/status";
 import { GOLDCOIN_GLC, SOLANA_GLC, directions } from "@/lib/bridge";
+import { cn } from "@/lib/utils/cn";
 import type { ReserveHistoryEntryDto } from "@/lib/api/schemas/reserves";
+
+const HISTORY_PAGE_SIZE = 20;
 
 /**
  * Reserve capacity is a first-class concept for a reserve-backed bridge:
@@ -46,7 +51,7 @@ export function ReservesView() {
   return (
     <div className="flex flex-col gap-6">
       <div className="grid gap-4 sm:grid-cols-2">
-        <Card>
+        <Card variant="raised">
           <div className="flex items-center justify-between">
             <h3 className="text-heading-3">Solana reserve</h3>
             <StatusBadge
@@ -76,7 +81,7 @@ export function ReservesView() {
           )}
         </Card>
 
-        <Card>
+        <Card variant="raised">
           <div className="flex items-center justify-between">
             <h3 className="text-heading-3">Goldcoin reserve</h3>
             <StatusBadge
@@ -113,56 +118,116 @@ export function ReservesView() {
 }
 
 function ReserveHistoryTable() {
-  const query = useReserveHistory({ limit: 20 });
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [olderPages, setOlderPages] = useState<readonly ReserveHistoryEntryDto[]>([]);
 
-  if (query.isPending) return <Skeleton className="h-64 w-full" />;
+  const query = useReserveHistory({
+    limit: HISTORY_PAGE_SIZE,
+    ...(cursor ? { cursor } : {}),
+  });
+
+  const loadingMore = query.isPending && olderPages.length > 0;
+
+  if (query.isPending && olderPages.length === 0) {
+    return (
+      <Card variant="raised">
+        <h3 className="text-heading-3 mb-3">Reconciliation history</h3>
+        <Skeleton className="h-64 w-full" />
+      </Card>
+    );
+  }
+
   if (query.isError) return <ErrorState error={query.error} />;
 
+  const items = query.isPending ? olderPages : [...olderPages, ...query.data.items];
+  const nextCursor = query.isPending ? undefined : query.data.next_cursor;
+
   return (
-    <div>
-      <h3 className="text-heading-3 mb-2">Reconciliation history</h3>
-      {query.data.items.length === 0 ? (
+    <Card variant="raised" padding="none" className="overflow-hidden">
+      <h3 className="text-heading-3 px-6 pt-6">Reconciliation history</h3>
+      <p className="text-body-sm text-ink-500 px-6 pt-1">
+        Every scheduled reserve-balance check the bridge has actually recorded — a real,
+        already-persisted observation, never interpolated.
+      </p>
+      {items.length === 0 ? (
         <EmptyState
           icon={History}
           title="No reconciliation ticks yet"
           description="This reserve has no recorded history yet."
+          className="px-6 py-10"
         />
       ) : (
-        <ReserveHistoryRows items={query.data.items} />
+        <>
+          <ReserveHistoryRows items={items} />
+          {(nextCursor || loadingMore) && (
+            <div className="flex justify-center border-ink-100 border-t p-4">
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={loadingMore}
+                onClick={() => {
+                  setOlderPages(items);
+                  setCursor(nextCursor ?? null);
+                }}
+              >
+                Load older history
+              </Button>
+            </div>
+          )}
+        </>
       )}
-    </div>
+    </Card>
   );
 }
 
 function ReserveHistoryRows({ items }: { items: readonly ReserveHistoryEntryDto[] }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[560px] text-left">
+      <table className="w-full min-w-[640px] text-left">
         <thead>
-          <tr className="border-ink-100 text-body-sm text-ink-500 border-b">
-            <th className="py-2 pr-4 font-medium">Reserve</th>
-            <th className="py-2 pr-4 font-medium">Detected</th>
-            <th className="py-2 pr-4 font-medium">Delta (atomic)</th>
-            <th className="py-2 pr-4 font-medium">Classification</th>
+          <tr className="border-ink-100 bg-ink-50 text-body-sm text-ink-500 border-y">
+            <th className="py-2.5 pr-4 pl-6 font-medium">Reserve</th>
+            <th className="py-2.5 pr-4 font-medium">Detected</th>
+            <th className="py-2.5 pr-4 font-medium">Delta (atomic)</th>
+            <th className="py-2.5 pr-6 font-medium">Classification</th>
           </tr>
         </thead>
         <tbody>
           {items.map((entry) => {
             const skipped = entry.classification.startsWith("SKIPPED");
             return (
-              <tr key={entry.id} className="border-ink-100 border-b last:border-b-0">
-                <td className="text-body-sm py-2 pr-4">{entry.direction}</td>
-                <td className="text-body-sm text-ink-500 py-2 pr-4">
+              <tr
+                key={entry.id}
+                className="border-ink-100 hover:bg-ink-50/60 border-b last:border-b-0"
+              >
+                <td className="text-body-sm py-2.5 pr-4 pl-6">
+                  {entry.direction === "GoldcoinReserve" ? "Goldcoin" : "Solana"}
+                </td>
+                <td className="text-body-sm text-ink-500 py-2.5 pr-4">
                   {new Date(entry.detected_at * 1000).toLocaleString()}
                 </td>
-                <td className="tabular text-body-sm py-2 pr-4">{entry.delta_atomic}</td>
-                <td className="text-body-sm py-2 pr-4">
+                <td
+                  className={cn(
+                    "tabular text-body-sm py-2.5 pr-4",
+                    entry.delta_atomic < 0 ? "text-danger-700" : "text-ink-700",
+                  )}
+                >
+                  {entry.delta_atomic > 0 ? "+" : ""}
+                  {entry.delta_atomic}
+                </td>
+                <td className="text-body-sm py-2.5 pr-6">
                   {skipped ? (
                     <span className="text-warn-700">
                       missing tick — {entry.classification}
                     </span>
                   ) : (
-                    entry.classification
+                    <span className="text-ink-700">{entry.classification}</span>
+                  )}
+                  {entry.auto_paused && (
+                    <span className="text-danger-700 bg-danger-50 ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium">
+                      <TriangleAlert aria-hidden="true" className="size-3" />
+                      Auto-paused
+                    </span>
                   )}
                 </td>
               </tr>

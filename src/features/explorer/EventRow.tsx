@@ -18,7 +18,7 @@ export function EventRow({ event }: { event: ExplorerEventDto }) {
   return (
     <Link
       href={`/bridge/${event.request_id}`}
-      className="border-ink-100 hover:bg-ink-50 flex flex-col gap-1 border-b px-4 py-3 outline-none last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
+      className="border-ink-100 hover:bg-ink-50 focus-visible:bg-ink-50 flex flex-col gap-1 border-b px-4 py-3 outline-none last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
     >
       <div className="text-body-sm text-ink-700 flex items-center gap-2">
         <span>{descriptor.label}</span>
