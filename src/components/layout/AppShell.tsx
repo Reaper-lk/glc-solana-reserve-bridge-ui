@@ -55,8 +55,12 @@ export function AppShell({
       <div role="region" aria-label="Bridge notices">
         {isMockMode && (
           <div className={cn("border-b", toneStyles.neutral.bar)}>
-            <p className="text-body-sm text-ink-700 mx-auto flex max-w-page items-center justify-center gap-2 px-4 py-1.5 text-center md:px-6">
-              <FlaskConical aria-hidden="true" className="size-4 shrink-0" strokeWidth={2} />
+            <p className="text-body-sm text-ink-700 max-w-page mx-auto flex items-center justify-center gap-2 px-4 py-1.5 text-center md:px-6">
+              <FlaskConical
+                aria-hidden="true"
+                className="size-4 shrink-0"
+                strokeWidth={2}
+              />
               <span>
                 <span className="font-medium">Mock data mode</span>
                 {devBuildSha ? ` (build ${devBuildSha})` : ""} — every figure on this site
@@ -67,10 +71,12 @@ export function AppShell({
         )}
         {!isMockMode && isNonProductionBuild && (
           <div className={cn("border-b", toneStyles.warn.bar)}>
-            <p className="text-body-sm text-warn-700 mx-auto flex max-w-page items-center justify-center gap-2 px-4 py-1.5 text-center md:px-6">
+            <p className="text-body-sm text-warn-700 max-w-page mx-auto flex items-center justify-center gap-2 px-4 py-1.5 text-center md:px-6">
               <ServerCog aria-hidden="true" className="size-4 shrink-0" strokeWidth={2} />
               <span>
-                <span className="font-medium">Real local backend / test network mode</span>
+                <span className="font-medium">
+                  Real local backend / test network mode
+                </span>
                 {devBuildSha ? ` (build ${devBuildSha})` : ""} — connected to{" "}
                 <span className="font-mono">{env.bridgeApiUrl}</span>, a real bridge
                 instance on test infrastructure, not mainnet. Figures here are genuine but
