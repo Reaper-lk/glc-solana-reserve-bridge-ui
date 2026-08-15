@@ -178,6 +178,73 @@
       transform: scale(1);
     }
   }
+
+  /* Dropdown/sheet entrance and exit (H3) — a small fade + rise, driven by
+     Radix's own `data-state` attribute so it never fires on first paint. */
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes menu-out {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  /* The mobile navigation sheet slides in from the left edge it's anchored
+     to, rather than fading in place — a sheet that doesn't move like a
+     sheet reads as a glitch, not restraint. */
+  @keyframes sheet-in {
+    from {
+      transform: translateX(-16px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes sheet-out {
+    from {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateX(-16px);
+      opacity: 0;
+    }
+  }
 }
 
 /* Duration tokens (H3). Not a Tailwind theme namespace, so exposed as plain

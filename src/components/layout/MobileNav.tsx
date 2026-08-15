@@ -38,11 +38,19 @@ export function MobileNav({ walletSlot }: { walletSlot?: ReactNode }) {
       </Dialog.Trigger>
 
       <Dialog.Portal>
-        <Dialog.Overlay className="bg-ink-950/45 fixed inset-0 z-50" />
+        <Dialog.Overlay
+          className={cn(
+            "bg-ink-950/45 fixed inset-0 z-50",
+            "data-[state=open]:animate-[fade-in_var(--duration-base)_var(--ease-decelerate)]",
+            "data-[state=closed]:animate-[fade-out_var(--duration-fast)_var(--ease-accelerate)]",
+          )}
+        />
         <Dialog.Content
           className={cn(
             "fixed inset-x-0 top-0 bottom-0 z-50 flex flex-col bg-white",
             "shadow-elev-3 focus:outline-none",
+            "data-[state=open]:animate-[sheet-in_var(--duration-base)_var(--ease-decelerate)]",
+            "data-[state=closed]:animate-[sheet-out_var(--duration-fast)_var(--ease-accelerate)]",
           )}
         >
           <div className="border-ink-200 flex h-16 items-center justify-between border-b px-4">
