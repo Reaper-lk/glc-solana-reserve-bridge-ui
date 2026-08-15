@@ -4,6 +4,7 @@ import Link from "next/link";
 import { CircleX } from "lucide-react";
 import { routes } from "@/lib/config/links";
 import { useReserve } from "@/lib/query/hooks";
+import { directions } from "@/lib/bridge";
 
 /**
  * The insufficient-liquidity banner.
@@ -32,8 +33,8 @@ export function ReserveBanner() {
     goldcoinShort && solanaShort
       ? "Both reserves are out of available capacity."
       : goldcoinShort
-        ? "The Goldcoin reserve is out of available capacity — Solana → Goldcoin is affected."
-        : "The Solana reserve is out of available capacity — Goldcoin → Solana is affected.";
+        ? `The Goldcoin reserve is out of available capacity — ${directions.SolToGlc.label} is affected.`
+        : `The Solana reserve is out of available capacity — ${directions.GlcToSol.label} is affected.`;
 
   return (
     <div role="alert" className="bg-danger-500 text-white">

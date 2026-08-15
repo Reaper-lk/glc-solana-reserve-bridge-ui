@@ -21,7 +21,7 @@ test.describe("bridge form", () => {
     await expect(page.getByLabel(/Amount in GLC/i)).toBeVisible();
     await expect(page.getByLabel("Solana recipient address")).toBeVisible();
 
-    await page.getByRole("radio", { name: /Solana.*Goldcoin/i }).click();
+    await page.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }).click();
     await expect(page.getByLabel("Goldcoin destination address")).toBeVisible();
   });
 

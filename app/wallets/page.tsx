@@ -22,10 +22,10 @@ export default function WalletsPage() {
       </ContentSection>
       <ContentSection id="goldcoin-wallet" title="Goldcoin wallet">
         <p>
-          A Goldcoin address is where a Solana → Goldcoin payout is released to, and where
-          a Goldcoin → Solana deposit is sent from. This bridge does not integrate a
-          Goldcoin browser wallet — use whatever native Goldcoin wallet you already hold
-          GLC in.
+          A Goldcoin address is where a GLC on Solana → GLC L1 payout is released to, and
+          where a GLC L1 → GLC on Solana deposit is sent from. This bridge does not
+          integrate a Goldcoin browser wallet — use whatever native Goldcoin wallet you
+          already hold GLC in.
         </p>
       </ContentSection>
     </ContentPage>

@@ -11,7 +11,7 @@ import {
 } from "@/components/ui";
 import { useReserve, useReserveHistory, useStats } from "@/lib/query/hooks";
 import { directionAvailabilityStatus } from "@/lib/status";
-import { GOLDCOIN_GLC, SOLANA_GLC } from "@/lib/bridge";
+import { GOLDCOIN_GLC, SOLANA_GLC, directions } from "@/lib/bridge";
 import type { ReserveHistoryEntryDto } from "@/lib/api/schemas/reserves";
 
 /**
@@ -57,7 +57,7 @@ export function ReservesView() {
             />
           </div>
           <p className="text-body-sm text-ink-600 mt-1">
-            Backs Goldcoin → Solana payouts.
+            Backs {directions.GlcToSol.label} payouts.
           </p>
           <div className="mt-4">
             <TokenAmount
@@ -87,7 +87,7 @@ export function ReservesView() {
             />
           </div>
           <p className="text-body-sm text-ink-600 mt-1">
-            Backs Solana → Goldcoin payouts.
+            Backs {directions.SolToGlc.label} payouts.
           </p>
           <div className="mt-4">
             <TokenAmount

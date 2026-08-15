@@ -45,14 +45,20 @@ export interface DirectionDescriptor {
 const GOLDCOIN: ChainDescriptor = { id: "goldcoin", name: "Goldcoin" };
 const SOLANA: ChainDescriptor = { id: "solana", name: "Solana" };
 
+/**
+ * Token display names, used everywhere a direction is described to a user.
+ * "GLC L1" / "GLC on Solana" names the asset by where it already lives,
+ * which is the point of a reserve-backed bridge — there is no "native" vs
+ * "wrapped" pair to distinguish, just the same GLC on two networks.
+ */
 export const GOLDCOIN_GLC: TokenDescriptor = {
   symbol: "GLC",
-  name: "Native GLC",
+  name: "GLC L1",
   decimals: 8,
 };
 export const SOLANA_GLC: TokenDescriptor = {
   symbol: "GLC",
-  name: "Solana GLC",
+  name: "GLC on Solana",
   decimals: 6,
 };
 
@@ -61,14 +67,14 @@ export const directions: Record<Direction, DirectionDescriptor> = {
     id: "GlcToSol",
     from: { chain: GOLDCOIN, token: GOLDCOIN_GLC },
     to: { chain: SOLANA, token: SOLANA_GLC },
-    label: "Goldcoin → Solana",
+    label: `${GOLDCOIN_GLC.name} → ${SOLANA_GLC.name}`,
     destinationReserve: "solana",
   },
   SolToGlc: {
     id: "SolToGlc",
     from: { chain: SOLANA, token: SOLANA_GLC },
     to: { chain: GOLDCOIN, token: GOLDCOIN_GLC },
-    label: "Solana → Goldcoin",
+    label: `${SOLANA_GLC.name} → ${GOLDCOIN_GLC.name}`,
     destinationReserve: "goldcoin",
   },
 };

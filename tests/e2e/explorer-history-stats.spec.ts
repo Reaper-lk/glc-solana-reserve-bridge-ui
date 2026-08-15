@@ -31,8 +31,8 @@ test.describe("explorer, reserves, and status navigation", () => {
 
   test("status page shows both directions and system health", async ({ page }) => {
     await page.goto("/status");
-    await expect(page.getByText("Goldcoin → Solana")).toBeVisible();
-    await expect(page.getByText("Solana → Goldcoin")).toBeVisible();
+    await expect(page.getByText("GLC L1 → GLC on Solana").first()).toBeVisible();
+    await expect(page.getByText("GLC on Solana → GLC L1").first()).toBeVisible();
     await expect(page.getByText("System health")).toBeVisible();
   });
 

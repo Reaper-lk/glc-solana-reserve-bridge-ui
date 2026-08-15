@@ -21,9 +21,9 @@ export function TransferRow({ transfer }: { transfer: TransferViewDto }) {
     >
       <div className="flex items-center gap-2">
         <span className="text-body-sm text-ink-700 flex items-center gap-1">
-          {descriptor.from.chain.name}
+          {descriptor.from.token.name}
           <ArrowRight aria-hidden="true" className="size-3.5" />
-          {descriptor.to.chain.name}
+          {descriptor.to.token.name}
         </span>
         <span className="text-body-sm text-ink-500">#{transfer.id}</span>
       </div>

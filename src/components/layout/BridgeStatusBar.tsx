@@ -6,6 +6,7 @@ import { useBridgeStatus } from "@/lib/query/hooks";
 import { routes } from "@/lib/config/links";
 import { StatusDot } from "@/components/ui/StatusDot";
 import { cn } from "@/lib/utils/cn";
+import { directions } from "@/lib/bridge";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 
 /**
@@ -63,8 +64,8 @@ export function BridgeStatusBar({ initialStatus }: { initialStatus?: BridgeStatu
           {status === "operational" && "Both directions are available."}
           {status === "degraded" &&
             (!data.glc_to_sol_available
-              ? "Goldcoin → Solana is currently unavailable."
-              : "Solana → Goldcoin is currently unavailable.")}
+              ? `${directions.GlcToSol.label} is currently unavailable.`
+              : `${directions.SolToGlc.label} is currently unavailable.`)}
           {status === "paused" && "The bridge is paused on both sides."}
         </p>
 
