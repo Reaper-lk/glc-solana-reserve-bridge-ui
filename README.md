@@ -74,11 +74,11 @@ The system is designed around pre-funded reserves.
 
 It does **not**:
 
-* mint GLC
-* burn GLC
-* create wrapped GLC
-* create replacement tokens
-* alter token supply
+- mint GLC
+- burn GLC
+- create wrapped GLC
+- create replacement tokens
+- alter token supply
 
 A transfer is possible only when sufficient destination-side reserve liquidity is available.
 
@@ -88,22 +88,22 @@ The UI therefore exposes bridge availability and reserve capacity rather than im
 
 The interface is intended to provide:
 
-* Goldcoin → Solana transfers
-* Solana → Goldcoin transfers
-* wallet and address handling
-* backend-authoritative bridge quotes
-* gross amount, fee, and net amount display
-* reserve liquidity information
-* transfer limits
-* bridge and direction status
-* transfer progress tracking
-* transfer history
-* bridge explorer
-* reserve history
-* bridge statistics
-* responsive desktop and mobile interfaces
-* explicit paused and insufficient-liquidity states
-* recovery of existing transfers after page refresh
+- Goldcoin → Solana transfers
+- Solana → Goldcoin transfers
+- wallet and address handling
+- backend-authoritative bridge quotes
+- gross amount, fee, and net amount display
+- reserve liquidity information
+- transfer limits
+- bridge and direction status
+- transfer progress tracking
+- transfer history
+- bridge explorer
+- reserve history
+- bridge statistics
+- responsive desktop and mobile interfaces
+- explicit paused and insufficient-liquidity states
+- recovery of existing transfers after page refresh
 
 ## Transfer Lifecycle
 
@@ -167,14 +167,14 @@ The frontend should use the backend's actual API schemas rather than maintaining
 
 The frontend must never:
 
-* request or store private keys
-* perform custody operations
-* authorize reserve releases itself
-* calculate authoritative settlement values independently
-* bypass backend reserve checks
-* bypass backend fee calculations
-* represent an unknown transaction as successful
-* expose internal signer or custody information
+- request or store private keys
+- perform custody operations
+- authorize reserve releases itself
+- calculate authoritative settlement values independently
+- bypass backend reserve checks
+- bypass backend fee calculations
+- represent an unknown transaction as successful
+- expose internal signer or custody information
 
 All security-sensitive bridge decisions remain backend/on-chain responsibilities.
 
