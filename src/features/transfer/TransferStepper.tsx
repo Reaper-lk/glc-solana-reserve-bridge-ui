@@ -51,14 +51,26 @@ export function TransferStepper({
             <div className="flex flex-col items-center">
               <Icon
                 aria-hidden="true"
-                className={cn("size-5 shrink-0", tone.text)}
+                className={cn(
+                  "size-5 shrink-0",
+                  tone.text,
+                  status === "pending" && "opacity-60",
+                )}
                 strokeWidth={2}
               />
               {index < sequence.length - 1 && (
                 <div className={cn("my-1 w-px flex-1", tone.dot, "opacity-30")} />
               )}
             </div>
-            <div className={cn("pb-6", status === "pending" && "opacity-60")}>
+            <div className="pb-6">
+              {/*
+                A pending step is de-emphasised by tone (neutral grey vs
+                success/info) alone, never by opacity: opacity blends text
+                toward the background and silently drops it below AA
+                contrast (axe color-contrast, caught against real transfer
+                data — every fixture-mode scan happened to land on a step
+                sequence short enough to never render a pending step).
+              */}
               <p className={cn("text-body-sm font-medium", tone.text)}>
                 {REQUEST_STATE_LABELS[step]}
               </p>
