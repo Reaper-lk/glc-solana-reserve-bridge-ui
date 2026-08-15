@@ -208,25 +208,27 @@ function TxRow({
   href?: string | undefined;
 }) {
   return (
-    <div className="border-ink-100 col-span-3 flex flex-wrap items-center justify-between gap-2 border-t pt-4">
-      <div>
-        <dt className="text-body-sm text-ink-500">{label}</dt>
-        <dd className="mt-0.5">
-          {href ? (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              className="decoration-ink-300 hover:decoration-ink-600 underline underline-offset-2"
-            >
-              <AddressCompact address={txid} lead={10} tail={8} />
-            </a>
-          ) : (
+    // `dt`/`dd` are direct children of this div — a dl's only valid
+    // wrapping div is one that contains nothing but its dt/dd pairs
+    // (axe's `dlitem` rule), so the copy button sits in its own row below
+    // rather than nesting another div around just the text pair.
+    <div className="border-ink-100 col-span-3 border-t pt-4">
+      <dt className="text-body-sm text-ink-500">{label}</dt>
+      <dd className="mt-0.5 flex flex-wrap items-center justify-between gap-2">
+        {href ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="decoration-ink-300 hover:decoration-ink-600 underline underline-offset-2"
+          >
             <AddressCompact address={txid} lead={10} tail={8} />
-          )}
-        </dd>
-      </div>
-      <CopyButton value={txid} label={label.toLowerCase()} />
+          </a>
+        ) : (
+          <AddressCompact address={txid} lead={10} tail={8} />
+        )}
+        <CopyButton value={txid} label={label.toLowerCase()} />
+      </dd>
     </div>
   );
 }
