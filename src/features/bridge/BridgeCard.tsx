@@ -256,7 +256,7 @@ export function BridgeCard() {
   if (phase.kind === "glc-to-sol-deposit") {
     return (
       <Card>
-        <h2 className="text-heading-2 mb-4">Send your deposit</h2>
+        <h1 className="text-heading-2 mb-4">Send your deposit</h1>
         <DepositInstructions
           depositVaultAddress={phase.depositVaultAddress}
           depositBindingHex={phase.depositBindingHex}
@@ -275,7 +275,7 @@ export function BridgeCard() {
   if (phase.kind === "sol-to-glc-waiting") {
     return (
       <Card>
-        <h2 className="text-heading-2 mb-2">Deposit submitted</h2>
+        <h1 className="text-heading-2 mb-2">Deposit submitted</h1>
         <p className="text-body-sm text-ink-600">
           Your Solana transaction has been submitted (signature{" "}
           {phase.signature.slice(0, 12)}…). Waiting for the bridge to observe it — this
@@ -287,7 +287,7 @@ export function BridgeCard() {
 
   return (
     <Card>
-      <h2 className="text-heading-2 mb-4">Bridge GLC</h2>
+      <h1 className="text-heading-2 mb-4">Bridge GLC</h1>
 
       <div className="flex flex-col gap-5">
         <DirectionSelector

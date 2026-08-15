@@ -22,7 +22,7 @@ function createClient(): BridgeApiClient {
     // Guaranteed present: env.ts rejects this combination at startup.
     return new HttpBridgeClient(env.bridgeApiUrl as string);
   }
-  return new MockBridgeClient();
+  return new MockBridgeClient({ scenario: env.mockScenario });
 }
 
 export const bridgeApi: BridgeApiClient = createClient();
