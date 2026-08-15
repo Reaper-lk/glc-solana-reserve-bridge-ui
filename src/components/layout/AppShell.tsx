@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { FlaskConical, ServerCog } from "lucide-react";
 import { Header } from "./Header";
 import { Footer } from "./Footer";
 import { BridgeStatusBar } from "./BridgeStatusBar";
@@ -7,6 +8,8 @@ import { WalletSlot } from "./WalletSlot";
 import { isMockMode } from "@/lib/api";
 import { devBuildSha } from "@/lib/dev/build-info";
 import { env } from "@/lib/config/env";
+import { toneStyles } from "@/lib/status";
+import { cn } from "@/lib/utils/cn";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 
 /**
@@ -51,18 +54,30 @@ export function AppShell({
       */}
       <div role="region" aria-label="Bridge notices">
         {isMockMode && (
-          <p className="bg-ink-950 text-body-sm px-4 py-1.5 text-center text-white">
-            Development build{devBuildSha ? ` — ${devBuildSha}` : ""} — MOCK DATA MODE.
-            All figures on this site come from local fixtures and describe nothing real.
-          </p>
+          <div className={cn("border-b", toneStyles.neutral.bar)}>
+            <p className="text-body-sm text-ink-700 mx-auto flex max-w-page items-center justify-center gap-2 px-4 py-1.5 text-center md:px-6">
+              <FlaskConical aria-hidden="true" className="size-4 shrink-0" strokeWidth={2} />
+              <span>
+                <span className="font-medium">Mock data mode</span>
+                {devBuildSha ? ` (build ${devBuildSha})` : ""} — every figure on this site
+                comes from local fixtures and describes nothing real.
+              </span>
+            </p>
+          </div>
         )}
         {!isMockMode && isNonProductionBuild && (
-          <p className="bg-ink-950 text-body-sm px-4 py-1.5 text-center text-white">
-            Development build{devBuildSha ? ` — ${devBuildSha}` : ""} — REAL LOCAL BACKEND
-            / TEST NETWORK MODE. Connected to {env.bridgeApiUrl}. This is a real bridge
-            instance running against test infrastructure, not mainnet — figures here are
-            genuine but describe no real money.
-          </p>
+          <div className={cn("border-b", toneStyles.warn.bar)}>
+            <p className="text-body-sm text-warn-700 mx-auto flex max-w-page items-center justify-center gap-2 px-4 py-1.5 text-center md:px-6">
+              <ServerCog aria-hidden="true" className="size-4 shrink-0" strokeWidth={2} />
+              <span>
+                <span className="font-medium">Real local backend / test network mode</span>
+                {devBuildSha ? ` (build ${devBuildSha})` : ""} — connected to{" "}
+                <span className="font-mono">{env.bridgeApiUrl}</span>, a real bridge
+                instance on test infrastructure, not mainnet. Figures here are genuine but
+                describe no real money.
+              </span>
+            </p>
+          </div>
         )}
 
         <BridgeStatusBar {...(initialStatus ? { initialStatus } : {})} />
