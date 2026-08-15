@@ -123,11 +123,13 @@ export function useTransfer(
 
 export function useTransfers(
   params: ListTransfersParams,
+  options: { enabled?: boolean } = {},
 ): UseQueryResult<TransferListDto> {
   return useQuery({
     queryKey: queryKeys.transfers(params),
     queryFn: ({ signal }) => bridgeApi.listTransfers(params, signal),
     refetchInterval: pollIntervals.transferList,
+    enabled: options.enabled ?? true,
   });
 }
 

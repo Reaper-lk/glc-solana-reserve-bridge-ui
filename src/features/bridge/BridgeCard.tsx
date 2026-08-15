@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Button, Card, ErrorState } from "@/components/ui";
+import { Button, Card, ErrorState } from "@/components/ui";
 import {
   directions,
   display,
@@ -119,33 +119,45 @@ export function BridgeCard() {
 
   const gate = useMemo(() => {
     if (status.isPending || limits.isPending || reserve.isPending) {
-      return { can: false, reason: "Loading bridge status…" };
+      return { can: false, reason: "Loading bridge status…", reasonShownInline: false };
     }
-    if (status.isError) return { can: false, reason: "Bridge status is unavailable." };
+    if (status.isError) {
+      return {
+        can: false,
+        reason: "Bridge status is unavailable.",
+        reasonShownInline: false,
+      };
+    }
     if (directionAvailable === false) {
       return {
         can: false,
         reason: `${descriptor.label} is currently paused or unavailable.`,
+        reasonShownInline: false,
       };
     }
     if (destinationReserveCapacity !== null && destinationReserveCapacity <= 0) {
       return {
         can: false,
         reason: "Insufficient reserve liquidity for this direction right now.",
+        reasonShownInline: false,
       };
     }
     if (!amountValidation || amountValidation.raw === null) {
+      const reportable = isReportableProblem(amountValidation?.problem ?? null);
       return {
         can: false,
-        reason: isReportableProblem(amountValidation?.problem ?? null)
-          ? amountValidation!.message!
-          : "Enter an amount.",
+        reason: reportable ? amountValidation!.message! : "Enter an amount.",
+        // The amount field already prints this message inline when reportable.
+        reasonShownInline: reportable,
       };
     }
     if (!recipientValidation.valid) {
+      const reportable = recipient.trim() !== "" && recipientValidation.message !== null;
       return {
         can: false,
         reason: recipientValidation.message ?? "Enter a destination address.",
+        // The recipient field already prints this message inline when reportable.
+        reasonShownInline: reportable,
       };
     }
     if (direction === "SolToGlc") {
@@ -156,12 +168,20 @@ export function BridgeCard() {
         return {
           can: false,
           reason: capability.message ?? "This direction is unavailable.",
+          reasonShownInline: false,
         };
     }
-    if (quote.isPending) return { can: false, reason: "Fetching quote…" };
-    if (quote.isError)
-      return { can: false, reason: "Could not fetch a quote for this amount." };
-    return { can: true, reason: null };
+    if (quote.isPending) {
+      return { can: false, reason: "Fetching quote…", reasonShownInline: false };
+    }
+    if (quote.isError) {
+      return {
+        can: false,
+        reason: "Could not fetch a quote for this amount.",
+        reasonShownInline: false,
+      };
+    }
+    return { can: true, reason: null, reasonShownInline: false };
   }, [
     status.isPending,
     status.isError,
@@ -353,15 +373,17 @@ export function BridgeCard() {
 
         {submitError ? <ErrorState error={submitError} /> : null}
 
-        {!gate.can && gate.reason && <Alert level="info" title={gate.reason} />}
-
         <Button
           fullWidth
           size="lg"
           loading={submitting}
           onClick={() => void submit()}
           {...(!gate.can
-            ? { disabled: true, disabledReason: gate.reason ?? "Cannot submit yet." }
+            ? {
+                disabled: true,
+                disabledReason: gate.reason ?? "Cannot submit yet.",
+                reasonPlacement: gate.reasonShownInline ? "accessible" : "inline",
+              }
             : {})}
         >
           {direction === "GlcToSol" ? "Create deposit request" : "Deposit from wallet"}

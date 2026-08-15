@@ -26,7 +26,10 @@ export function ActivityView() {
   const [draft, setDraft] = useState(urlAddress);
 
   const address = urlAddress || wallet.address || "";
-  const query = useTransfers(address ? { address, limit: 50 } : { limit: 50 });
+  // No unscoped fallback: without an address there is nothing to search, and
+  // fetching the whole (wallet-scoped-by-design) /transfers list would be
+  // both wasteful and semantically wrong for this view.
+  const query = useTransfers({ address, limit: 50 }, { enabled: Boolean(address) });
 
   function applySearch(event: React.FormEvent) {
     event.preventDefault();
