@@ -4,7 +4,7 @@ import { Dialog } from "radix-ui";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { moreNav, primaryNav } from "./navigation";
 import { cn } from "@/lib/utils/cn";
 
@@ -15,8 +15,12 @@ import { cn } from "@/lib/utils/cn";
  * within thumb reach. Radix supplies the focus trap, escape handling and scroll
  * lock, so keyboard and screen-reader behaviour is correct rather than
  * approximated.
+ *
+ * `walletSlot` renders at the top of the sheet: Header hides the wallet
+ * control below `md` because the 64px bar can't fit mark + connect + menu
+ * at 360px, so this sheet is the only place a mobile visitor can reach it.
  */
-export function MobileNav() {
+export function MobileNav({ walletSlot }: { walletSlot?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
@@ -54,6 +58,8 @@ export function MobileNav() {
           <Dialog.Description className="sr-only">
             Site navigation for the Goldcoin bridge
           </Dialog.Description>
+
+          {walletSlot && <div className="border-ink-200 border-b p-4">{walletSlot}</div>}
 
           <nav className="flex-1 overflow-y-auto p-4" aria-label="Main">
             <ul className="space-y-1">
