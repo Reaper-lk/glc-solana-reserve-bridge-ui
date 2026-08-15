@@ -174,7 +174,18 @@ export class HttpBridgeClient implements BridgeApiClient {
       } catch {
         bodyText = "";
       }
-      const parsed = apiErrorBodySchema.safeParse(bodyText ? JSON.parse(bodyText) : null);
+      // A reverse proxy in front of the real backend can return a non-JSON
+      // body (an HTML error page on a 502/504, for instance) — that must
+      // degrade to a generic server error, not an uncaught SyntaxError.
+      let bodyJson: unknown = null;
+      if (bodyText) {
+        try {
+          bodyJson = JSON.parse(bodyText);
+        } catch {
+          bodyJson = null;
+        }
+      }
+      const parsed = apiErrorBodySchema.safeParse(bodyJson);
       const message = parsed.success
         ? parsed.data.error
         : `Bridge API responded ${response.status}`;

@@ -1,7 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = 3000;
-const INTERCEPT_PORT = 3001;
+// Overridable so a local run doesn't collide with a `next dev` server
+// someone already has open on the default port.
+const PORT = Number(process.env.E2E_PORT ?? 3000);
+const INTERCEPT_PORT = Number(process.env.E2E_INTERCEPT_PORT ?? 3001);
 
 const baseURL = `http://127.0.0.1:${PORT}`;
 const interceptBaseURL = `http://127.0.0.1:${INTERCEPT_PORT}`;
