@@ -30,21 +30,29 @@ export function AppShell({
         Skip to main content
       </a>
 
-      {isMockMode && (
-        <p className="bg-ink-950 text-body-sm px-4 py-1.5 text-center text-white">
-          Development build — all figures on this site come from local fixtures and
-          describe nothing real.
-        </p>
-      )}
-
       <Header walletSlot={<WalletSlot />} />
-      <BridgeStatusBar {...(initialStatus ? { initialStatus } : {})} />
+
       {/*
-        Site-wide and above the fold on every page. Under-collateralisation is
-        the one condition that must reach a reader wherever they are, so it is
-        not confined to the Proof of Reserves page (design spec G10).
+        Grouped in its own landmark, separate from Header's own top-level
+        banner landmark, so this notice content is reachable via landmark
+        navigation rather than floating outside every region.
       */}
-      <ReserveBanner />
+      <div role="region" aria-label="Bridge notices">
+        {isMockMode && (
+          <p className="bg-ink-950 text-body-sm px-4 py-1.5 text-center text-white">
+            Development build — all figures on this site come from local fixtures and
+            describe nothing real.
+          </p>
+        )}
+
+        <BridgeStatusBar {...(initialStatus ? { initialStatus } : {})} />
+        {/*
+          Site-wide and above the fold on every page. Under-collateralisation is
+          the one condition that must reach a reader wherever they are, so it is
+          not confined to the Proof of Reserves page (design spec G10).
+        */}
+        <ReserveBanner />
+      </div>
 
       <main id="main" className="flex-1">
         {children}

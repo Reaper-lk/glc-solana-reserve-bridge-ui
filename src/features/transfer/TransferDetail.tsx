@@ -59,7 +59,7 @@ export function TransferDetail({
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-heading-2">
-            {descriptor.label} <span className="text-ink-400">#{transfer.id}</span>
+            {descriptor.label} <span className="text-ink-500">#{transfer.id}</span>
           </h1>
           <p className="text-body-sm text-ink-500">
             Created {new Date(transfer.created_at * 1000).toLocaleString()}

@@ -13,6 +13,12 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
 
+  // Dev-server-only (a no-op in production/`next build`): Next 16 blocks
+  // cross-origin requests to its own dev assets by default. Local E2E runs
+  // and this box's own tooling reach the dev server via 127.0.0.1 rather
+  // than localhost, which trips that block without this.
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
+
   typescript: {
     // A type error is a build failure. Never relaxed.
     ignoreBuildErrors: false,

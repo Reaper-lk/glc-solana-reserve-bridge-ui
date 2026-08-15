@@ -25,7 +25,7 @@ export function TransferRow({ transfer }: { transfer: TransferViewDto }) {
           <ArrowRight aria-hidden="true" className="size-3.5" />
           {descriptor.to.chain.name}
         </span>
-        <span className="text-body-sm text-ink-400">#{transfer.id}</span>
+        <span className="text-body-sm text-ink-500">#{transfer.id}</span>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

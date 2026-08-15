@@ -22,7 +22,7 @@ export function EventRow({ event }: { event: ExplorerEventDto }) {
     >
       <div className="text-body-sm text-ink-700 flex items-center gap-2">
         <span>{descriptor.label}</span>
-        <span className="text-ink-400">#{event.request_id}</span>
+        <span className="text-ink-500">#{event.request_id}</span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {event.from_state && (

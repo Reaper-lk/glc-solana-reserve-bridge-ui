@@ -67,18 +67,15 @@ export function Header({ walletSlot }: { walletSlot?: ReactNode }) {
 
         <div className="ml-auto flex items-center gap-2">
           {/*
-            The wallet control appears from `md` up, matching wireframe F1,
-            which shows only the mark and the menu on a mobile header. At 360px
-            the mark, a connect control and the menu button cannot share a
-            64px bar without overflowing, and a financial page that scrolls
-            sideways is a defect (acceptance criterion 6).
-
-            Mobile wallet connection is a flow of its own — deep links and the
-            return trip — and is tracked separately. Until it lands, mobile
-            users reach wallet guidance through the navigation sheet.
+            The wallet control appears from `md` up. At 360px the mark, a
+            connect control and the menu button cannot share a 64px bar
+            without overflowing, and a financial page that scrolls sideways
+            is a defect. Below `md` the same control is reachable inside the
+            navigation sheet instead (passed to MobileNav below), not
+            dropped.
           */}
           <div className="hidden md:flex md:items-center">{walletSlot}</div>
-          <MobileNav />
+          <MobileNav walletSlot={walletSlot} />
         </div>
       </div>
     </header>
