@@ -53,7 +53,7 @@ export function ReservesView() {
       <div className="grid gap-4 sm:grid-cols-2">
         <Card variant="raised">
           <div className="flex items-center justify-between">
-            <h3 className="text-heading-3">Solana reserve</h3>
+            <h2 className="text-heading-3">Solana reserve</h2>
             <StatusBadge
               status={availability(
                 reserve.data.solana_available_capacity,
@@ -83,7 +83,7 @@ export function ReservesView() {
 
         <Card variant="raised">
           <div className="flex items-center justify-between">
-            <h3 className="text-heading-3">Goldcoin reserve</h3>
+            <h2 className="text-heading-3">Goldcoin reserve</h2>
             <StatusBadge
               status={availability(
                 reserve.data.goldcoin_available_capacity,
@@ -131,7 +131,7 @@ function ReserveHistoryTable() {
   if (query.isPending && olderPages.length === 0) {
     return (
       <Card variant="raised">
-        <h3 className="text-heading-3 mb-3">Reconciliation history</h3>
+        <h2 className="text-heading-3 mb-3">Reconciliation history</h2>
         <Skeleton className="h-64 w-full" />
       </Card>
     );
@@ -144,7 +144,7 @@ function ReserveHistoryTable() {
 
   return (
     <Card variant="raised" padding="none" className="overflow-hidden">
-      <h3 className="text-heading-3 px-6 pt-6">Reconciliation history</h3>
+      <h2 className="text-heading-3 px-6 pt-6">Reconciliation history</h2>
       <p className="text-body-sm text-ink-500 px-6 pt-1">
         Every scheduled reserve-balance check the bridge has actually recorded — a real,
         already-persisted observation, never interpolated.
