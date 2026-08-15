@@ -25,6 +25,20 @@ const interceptBaseURL = `http://127.0.0.1:${INTERCEPT_PORT}`;
 const UNUSED_PORT = 9999;
 export const INTERCEPTED_API_ORIGIN = `http://127.0.0.1:${UNUSED_PORT}`;
 
+/**
+ * Real-backend integration project (tests/e2e/real-backend/). Opt-in only:
+ * unlike every other project here, this one talks to an actual running
+ * instance of the bridge service (a local regtest Goldcoin node + a local
+ * Solana test-validator + `glc-bridge-daemon`, per docs in that directory)
+ * rather than fixtures or `page.route` interception, so it cannot be part of
+ * the default `npm run test:e2e` baseline — there is no way to guarantee
+ * that stack is up in every environment this runs in. Set
+ * `E2E_REAL_BACKEND_URL` to the URL of a UI instance already configured
+ * with `NEXT_PUBLIC_BRIDGE_API_MODE=http` against that real backend; every
+ * spec in this project skips itself (not fails) when it is unset.
+ */
+const realBackendUrl = process.env.E2E_REAL_BACKEND_URL;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
@@ -41,14 +55,14 @@ export default defineConfig({
   projects: [
     {
       name: "desktop-chromium",
-      testIgnore: /intercepted/,
+      testIgnore: [/intercepted/, /real-backend\//],
       use: { ...devices["Desktop Chrome"] },
     },
     {
       // Every screen must work at 360px. Enforced by a dedicated project
       // rather than a single ad-hoc viewport assertion.
       name: "mobile-360",
-      testIgnore: /intercepted/,
+      testIgnore: [/intercepted/, /real-backend\//],
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 360, height: 740 },
@@ -65,26 +79,41 @@ export default defineConfig({
       testMatch: /intercepted-.*\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], baseURL: interceptBaseURL },
     },
+    {
+      // See the `realBackendUrl` comment above — opt-in, skips itself when
+      // E2E_REAL_BACKEND_URL is unset.
+      name: "real-backend",
+      testMatch: /real-backend\/.*\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: realBackendUrl ?? baseURL },
+    },
   ],
 
-  webServer: [
-    {
-      command: `npm run start -- --port ${PORT}`,
-      url: baseURL,
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
-    },
-    {
-      // NEXT_PUBLIC_* values are inlined at build time, so a different mode
-      // needs its own dev server rather than reusing the production build.
-      command: `npm run dev -- --port ${INTERCEPT_PORT}`,
-      url: interceptBaseURL,
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
-      env: {
-        NEXT_PUBLIC_BRIDGE_API_MODE: "http",
-        NEXT_PUBLIC_BRIDGE_API_URL: INTERCEPTED_API_ORIGIN,
-      },
-    },
-  ],
+  // The real-backend project talks to a UI instance the caller already has
+  // running against real infrastructure (see tests/e2e/real-backend/README.md)
+  // — it needs neither local server below, and unlike them has no build/dev
+  // command that would even produce the right one. E2E_SKIP_LOCAL_SERVERS
+  // opts out of both for a `--project=real-backend`-only run.
+  webServer: process.env.E2E_SKIP_LOCAL_SERVERS
+    ? []
+    : [
+        {
+          command: `npm run start -- --port ${PORT}`,
+          url: baseURL,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+        {
+          // NEXT_PUBLIC_* values are inlined at build time, so a different
+          // mode needs its own dev server rather than reusing the
+          // production build.
+          command: `npm run dev -- --port ${INTERCEPT_PORT}`,
+          url: interceptBaseURL,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+          env: {
+            NEXT_PUBLIC_BRIDGE_API_MODE: "http",
+            NEXT_PUBLIC_BRIDGE_API_URL: INTERCEPTED_API_ORIGIN,
+          },
+        },
+      ],
 });
