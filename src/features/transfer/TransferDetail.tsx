@@ -1,8 +1,10 @@
 "use client";
 
 import {
+  AddressCompact,
   Alert,
   Card,
+  CopyButton,
   ErrorState,
   Skeleton,
   StatusBadge,
@@ -17,7 +19,21 @@ import {
   isUnexercisedState,
 } from "@/lib/bridge";
 import { goldcoinTxUrl, solanaTxUrl } from "@/lib/config/links";
+import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { TransferStepper } from "./TransferStepper";
+
+/**
+ * `TransferView`'s `gross_amount_atomic`/`fee_amount_atomic`/
+ * `net_amount_atomic` are all the ledger's own canonical accounting unit
+ * (Goldcoin's 8 decimals, docs/20-bridge-fee.md) regardless of direction —
+ * unlike `QuoteOutput`, this endpoint has no per-direction
+ * source/destination decimals or pre-formatted display strings, so
+ * formatting any of the three with the destination token's own decimals
+ * (6 for Solana) understates or overstates the figure by orders of
+ * magnitude. All three render at canonical decimals here; both tokens
+ * already share the symbol "GLC".
+ */
+const CANONICAL_SYMBOL = "GLC";
 
 /**
  * Reconstructed entirely from `GET /transfers/:id` plus the id in the URL —
@@ -51,19 +67,24 @@ export function TransferDetail({
 
   const transfer = query.data;
   const descriptor = directions[transfer.direction];
-  const sourceToken = descriptor.from.token;
-  const destToken = descriptor.to.token;
 
   return (
-    <Card>
-      <div className="mb-4 flex items-center justify-between">
+    <Card variant="raised" padding="lg">
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-heading-2">
             {descriptor.label} <span className="text-ink-500">#{transfer.id}</span>
           </h1>
-          <p className="text-body-sm text-ink-500">
-            Created {new Date(transfer.created_at * 1000).toLocaleString()}
-          </p>
+          <div className="text-body-sm text-ink-500 mt-1 flex flex-wrap items-center gap-x-1 gap-y-1">
+            <span>Created {new Date(transfer.created_at * 1000).toLocaleString()}</span>
+            <CopyButton
+              value={String(transfer.id)}
+              label="request id"
+              className="px-1.5 py-0.5"
+            >
+              Copy ID
+            </CopyButton>
+          </div>
         </div>
         <StatusBadge status={requestStateStatus[transfer.state]} />
       </div>
@@ -111,60 +132,101 @@ export function TransferDetail({
         </p>
       )}
 
-      <dl className="border-ink-100 mt-6 grid grid-cols-2 gap-4 border-t pt-4">
+      <dl className="border-ink-100 mt-6 grid grid-cols-3 gap-4 border-t pt-4">
         <div>
-          <dt className="text-body-sm text-ink-500">Gross amount</dt>
+          <dt className="text-body-sm text-ink-500">You bridge</dt>
           <dd>
             <TokenAmount
               raw={String(transfer.gross_amount_atomic)}
-              decimals={sourceToken.decimals}
-              symbol={sourceToken.symbol}
+              decimals={GOLDCOIN_DECIMALS}
+              symbol={CANONICAL_SYMBOL}
+            />
+          </dd>
+        </div>
+        <div>
+          <dt className="text-body-sm text-ink-500">
+            Bridge fee (
+            {(transfer.fee_bps / 100).toFixed(transfer.fee_bps % 100 === 0 ? 0 : 2)}%)
+          </dt>
+          <dd className="text-ink-600">
+            <TokenAmount
+              raw={String(transfer.fee_amount_atomic)}
+              decimals={GOLDCOIN_DECIMALS}
+              symbol={CANONICAL_SYMBOL}
             />
           </dd>
         </div>
         <div>
           <dt className="text-body-sm text-ink-500">You receive</dt>
-          <dd>
+          <dd className="text-ink-950 font-medium">
             <TokenAmount
               raw={String(transfer.net_amount_atomic)}
-              decimals={destToken.decimals}
-              symbol={destToken.symbol}
+              decimals={GOLDCOIN_DECIMALS}
+              symbol={CANONICAL_SYMBOL}
             />
           </dd>
         </div>
+
         {transfer.source_txid && (
-          <div className="col-span-2">
-            <dt className="text-body-sm text-ink-500">Source transaction</dt>
-            <dd className="text-mono-sm break-all">
-              {!readOnly &&
-              (transfer.direction === "GlcToSol"
-                ? goldcoinTxUrl(transfer.source_txid)
-                : solanaTxUrl(transfer.source_txid)) ? (
-                <a
-                  href={
-                    (transfer.direction === "GlcToSol"
-                      ? goldcoinTxUrl(transfer.source_txid)
-                      : solanaTxUrl(transfer.source_txid)) ?? undefined
-                  }
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline underline-offset-2"
-                >
-                  {transfer.source_txid}
-                </a>
-              ) : (
-                transfer.source_txid
-              )}
-            </dd>
-          </div>
+          <TxRow
+            label="Source transaction"
+            txid={transfer.source_txid}
+            href={
+              readOnly
+                ? undefined
+                : ((transfer.direction === "GlcToSol"
+                    ? goldcoinTxUrl(transfer.source_txid)
+                    : solanaTxUrl(transfer.source_txid)) ?? undefined)
+            }
+          />
         )}
         {transfer.destination_txid && (
-          <div className="col-span-2">
-            <dt className="text-body-sm text-ink-500">Destination transaction</dt>
-            <dd className="text-mono-sm break-all">{transfer.destination_txid}</dd>
-          </div>
+          <TxRow
+            label="Destination transaction"
+            txid={transfer.destination_txid}
+            href={
+              readOnly
+                ? undefined
+                : ((transfer.direction === "GlcToSol"
+                    ? solanaTxUrl(transfer.destination_txid)
+                    : goldcoinTxUrl(transfer.destination_txid)) ?? undefined)
+            }
+          />
         )}
       </dl>
     </Card>
+  );
+}
+
+function TxRow({
+  label,
+  txid,
+  href,
+}: {
+  label: string;
+  txid: string;
+  href?: string | undefined;
+}) {
+  return (
+    <div className="border-ink-100 col-span-3 flex flex-wrap items-center justify-between gap-2 border-t pt-4">
+      <div>
+        <dt className="text-body-sm text-ink-500">{label}</dt>
+        <dd className="mt-0.5">
+          {href ? (
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              className="underline decoration-ink-300 underline-offset-2 hover:decoration-ink-600"
+            >
+              <AddressCompact address={txid} lead={10} tail={8} />
+            </a>
+          ) : (
+            <AddressCompact address={txid} lead={10} tail={8} />
+          )}
+        </dd>
+      </div>
+      <CopyButton value={txid} label={label.toLowerCase()} />
+    </div>
   );
 }
