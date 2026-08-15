@@ -1,0 +1,158 @@
+"use client";
+
+import { useQuery, useMutation, type UseQueryResult } from "@tanstack/react-query";
+import { bridgeApi } from "@/lib/api";
+import type {
+  ListExplorerEventsParams,
+  ListReserveHistoryParams,
+  ListTransfersParams,
+} from "@/lib/api";
+import type { Direction } from "@/lib/api/schemas/common";
+import type {
+  BridgeStatusDto,
+  PublicHealthDto,
+  ReserveAvailabilityDto,
+  TransferLimitsDto,
+} from "@/lib/api/schemas/status";
+import type { BridgeStatsDto } from "@/lib/api/schemas/stats";
+import type { ExplorerEventListDto } from "@/lib/api/schemas/explorer";
+import type { ReserveHistoryListDto } from "@/lib/api/schemas/reserves";
+import type { QuoteOutputDto } from "@/lib/api/schemas/quote";
+import type {
+  CreateTransferOutputDto,
+  CreateTransferRequest,
+  TransferListDto,
+  TransferViewDto,
+} from "@/lib/api/schemas/transfer";
+import { isTerminalState } from "@/lib/bridge/state";
+import { queryKeys, pollIntervals } from "./keys";
+
+/**
+ * One typed hook per bridge endpoint. Application code uses these, never
+ * `bridgeApi` directly, so every server-state read goes through react-query
+ * caching/retry/staleness policy uniformly.
+ */
+
+export function useBridgeStatus(
+  initialData?: BridgeStatusDto,
+): UseQueryResult<BridgeStatusDto> {
+  return useQuery({
+    queryKey: queryKeys.status(),
+    queryFn: ({ signal }) => bridgeApi.getStatus(signal),
+    refetchInterval: pollIntervals.status,
+    ...(initialData ? { initialData } : {}),
+  });
+}
+
+export function useLimits(
+  initialData?: TransferLimitsDto,
+): UseQueryResult<TransferLimitsDto> {
+  return useQuery({
+    queryKey: queryKeys.limits(),
+    queryFn: ({ signal }) => bridgeApi.getLimits(signal),
+    refetchInterval: pollIntervals.limits,
+    ...(initialData ? { initialData } : {}),
+  });
+}
+
+export function useReserve(
+  initialData?: ReserveAvailabilityDto,
+): UseQueryResult<ReserveAvailabilityDto> {
+  return useQuery({
+    queryKey: queryKeys.reserve(),
+    queryFn: ({ signal }) => bridgeApi.getReserve(signal),
+    refetchInterval: pollIntervals.reserve,
+    ...(initialData ? { initialData } : {}),
+  });
+}
+
+export function useHealth(
+  initialData?: PublicHealthDto,
+): UseQueryResult<PublicHealthDto> {
+  return useQuery({
+    queryKey: queryKeys.health(),
+    queryFn: ({ signal }) => bridgeApi.getHealth(signal),
+    refetchInterval: pollIntervals.health,
+    ...(initialData ? { initialData } : {}),
+  });
+}
+
+export function useStats(initialData?: BridgeStatsDto): UseQueryResult<BridgeStatsDto> {
+  return useQuery({
+    queryKey: queryKeys.stats(),
+    queryFn: ({ signal }) => bridgeApi.getStats(signal),
+    refetchInterval: pollIntervals.stats,
+    ...(initialData ? { initialData } : {}),
+  });
+}
+
+/**
+ * The authoritative gross/fee/net quote. `grossAmount` of 0 disables the
+ * query — the form never shows a quote for an amount that has not been
+ * entered.
+ */
+export function useQuote(
+  direction: Direction,
+  grossAmount: number,
+): UseQueryResult<QuoteOutputDto> {
+  return useQuery({
+    queryKey: queryKeys.quote(direction, grossAmount),
+    queryFn: ({ signal }) =>
+      bridgeApi.getQuote({ direction, gross_amount: grossAmount }, signal),
+    enabled: grossAmount > 0,
+    staleTime: 5_000,
+    retry: false,
+  });
+}
+
+export function useTransfer(
+  id: number,
+  initialData?: TransferViewDto,
+): UseQueryResult<TransferViewDto> {
+  return useQuery({
+    queryKey: queryKeys.transfer(id),
+    queryFn: ({ signal }) => bridgeApi.getTransfer(id, signal),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && isTerminalState(data.state)) return pollIntervals.terminalTransfer;
+      return pollIntervals.activeTransfer;
+    },
+    ...(initialData ? { initialData } : {}),
+  });
+}
+
+export function useTransfers(
+  params: ListTransfersParams,
+): UseQueryResult<TransferListDto> {
+  return useQuery({
+    queryKey: queryKeys.transfers(params),
+    queryFn: ({ signal }) => bridgeApi.listTransfers(params, signal),
+    refetchInterval: pollIntervals.transferList,
+  });
+}
+
+export function useExplorerEvents(
+  params: ListExplorerEventsParams,
+): UseQueryResult<ExplorerEventListDto> {
+  return useQuery({
+    queryKey: queryKeys.explorerEvents(params),
+    queryFn: ({ signal }) => bridgeApi.listExplorerEvents(params, signal),
+    refetchInterval: pollIntervals.explorerEvents,
+  });
+}
+
+export function useReserveHistory(
+  params: ListReserveHistoryParams,
+): UseQueryResult<ReserveHistoryListDto> {
+  return useQuery({
+    queryKey: queryKeys.reserveHistory(params),
+    queryFn: ({ signal }) => bridgeApi.listReserveHistory(params, signal),
+    refetchInterval: pollIntervals.reserveHistory,
+  });
+}
+
+export function useCreateTransfer() {
+  return useMutation<CreateTransferOutputDto, unknown, CreateTransferRequest>({
+    mutationFn: (request) => bridgeApi.createTransfer(request),
+  });
+}

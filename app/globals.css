@@ -1,0 +1,289 @@
+@import "tailwindcss";
+
+/* =============================================================================
+   Design tokens — the single source of truth for the visual system.
+   Values are transcribed from docs/glc-bridge-ui-design-v2.md Part E.
+   Nothing in this codebase may introduce a raw hex value; if a colour is
+   missing it is added here first.
+   ========================================================================== */
+
+@theme {
+  /* --- Neutrals (E2) — warm-shifted to harmonise with gold ---------------- */
+  --color-ink-950: #0b0d0f;
+  --color-ink-900: #14171a;
+  --color-ink-700: #33383f;
+  --color-ink-600: #4a5058;
+  --color-ink-500: #6b7280;
+  --color-ink-400: #9aa1aa;
+  --color-ink-300: #c7ccd2;
+  --color-ink-200: #e3e6ea;
+  --color-ink-100: #eff1f4;
+  --color-ink-50: #f7f8fa;
+
+  /* --- Brand gold (E2) ---------------------------------------------------
+     Gold is a BRAND accent, never a status colour and never a button fill
+     outside the landing hero. White text is never placed on gold-400/500;
+     gold text on white must be gold-700 or darker. */
+  --color-gold-900: #5c3d06;
+  --color-gold-700: #8a5d0a;
+  --color-gold-600: #a87410;
+  --color-gold-500: #c89211;
+  --color-gold-400: #e0a82a;
+  --color-gold-300: #eec46b;
+  --color-gold-200: #f6dea9;
+  --color-gold-100: #fbedcf;
+  --color-gold-50: #fdf7e8;
+
+  /* --- Semantic (E2) — deliberately separated from brand gold -------------
+     Warning is orange-red, NOT amber: a gold-branded financial product whose
+     caution colour resembles its brand colour is a safety failure. */
+  --color-success-700: #10633a;
+  --color-success-500: #14874e;
+  --color-success-100: #cdeadb;
+  --color-success-50: #e9f6ef;
+
+  --color-danger-700: #9b2c22;
+  --color-danger-500: #c0392b;
+  --color-danger-100: #f7d5d0;
+  --color-danger-50: #fcedeb;
+
+  --color-info-700: #1b4fa8;
+  --color-info-500: #2d6cdf;
+  --color-info-100: #d3e2fb;
+  --color-info-50: #eaf1fd;
+
+  --color-warn-700: #9a3412;
+  --color-warn-500: #c2410c;
+  --color-warn-100: #fbd9c8;
+  --color-warn-50: #fdf0e9;
+
+  /* --- Chain identity (E2) — identity only, never status ------------------ */
+  --color-chain-goldcoin: #c89211;
+  --color-chain-solana: #6b54d3;
+
+  /* --- Typography (E3) --------------------------------------------------- */
+  --font-sans: var(--font-plex-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --text-display-xl: 2.5rem; /* 40 */
+  --text-display-xl--line-height: 2.75rem; /* 44 */
+  --text-display-xl--font-weight: 600;
+  --text-display-xl--letter-spacing: -0.02em;
+
+  --text-display-lg: 2rem; /* 32 */
+  --text-display-lg--line-height: 2.375rem; /* 38 */
+  --text-display-lg--font-weight: 600;
+  --text-display-lg--letter-spacing: -0.02em;
+
+  --text-heading-1: 1.625rem; /* 26 */
+  --text-heading-1--line-height: 2rem; /* 32 */
+  --text-heading-1--font-weight: 600;
+  --text-heading-1--letter-spacing: -0.01em;
+
+  --text-heading-2: 1.25rem; /* 20 */
+  --text-heading-2--line-height: 1.75rem; /* 28 */
+  --text-heading-2--font-weight: 600;
+  --text-heading-2--letter-spacing: -0.01em;
+
+  --text-heading-3: 1.0625rem; /* 17 */
+  --text-heading-3--line-height: 1.5rem; /* 24 */
+  --text-heading-3--font-weight: 600;
+
+  --text-body-lg: 1.0625rem; /* 17 */
+  --text-body-lg--line-height: 1.625rem; /* 26 */
+
+  --text-body: 0.9375rem; /* 15 */
+  --text-body--line-height: 1.375rem; /* 22 */
+
+  --text-body-sm: 0.8125rem; /* 13 */
+  --text-body-sm--line-height: 1.125rem; /* 18 */
+
+  --text-label: 0.8125rem; /* 13 */
+  --text-label--line-height: 1rem; /* 16 */
+  --text-label--font-weight: 500;
+  --text-label--letter-spacing: 0.01em;
+
+  --text-overline: 0.6875rem; /* 11 */
+  --text-overline--line-height: 0.875rem; /* 14 */
+  --text-overline--font-weight: 600;
+  --text-overline--letter-spacing: 0.08em;
+
+  --text-mono-lg: 1.25rem; /* 20 */
+  --text-mono-lg--line-height: 1.75rem; /* 28 */
+  --text-mono-lg--font-weight: 500;
+
+  --text-mono: 0.875rem; /* 14 */
+  --text-mono--line-height: 1.25rem; /* 20 */
+
+  --text-mono-sm: 0.75rem; /* 12 */
+  --text-mono-sm--line-height: 1rem; /* 16 */
+
+  /* --- Radius (E4) ------------------------------------------------------- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* --- Elevation (E4) — deliberately near-flat --------------------------- */
+  --shadow-elev-1: 0 1px 2px rgb(11 13 15 / 0.05);
+  --shadow-elev-2: 0 4px 12px rgb(11 13 15 / 0.07);
+  --shadow-elev-3: 0 16px 40px rgb(11 13 15 / 0.12);
+
+  /* --- Breakpoints (D1) -------------------------------------------------- */
+  --breakpoint-xs: 360px;
+  --breakpoint-sm: 480px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+
+  /* --- Layout containers (E4) -------------------------------------------- */
+  --container-page: 1120px;
+  --container-wide: 1200px; /* explorer tables */
+  --container-card: 520px; /* bridge card */
+  --container-prose: 680px; /* long-form, 68-72ch measure */
+  --container-modal: 480px;
+
+  /* --- Motion (H3) ------------------------------------------------------- */
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1);
+  --ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
+
+  --animate-pulse-halo: pulse-halo 2.4s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.4s linear infinite;
+
+  @keyframes pulse-halo {
+    0%,
+    100% {
+      opacity: 0.4;
+    }
+    50% {
+      opacity: 0.8;
+    }
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  /* One moment of warmth at the end of a long wait (H3). Fires once. */
+  @keyframes receipt-check {
+    from {
+      transform: scale(0.9);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+}
+
+/* Duration tokens (H3). Not a Tailwind theme namespace, so exposed as plain
+   custom properties and consumed as duration-[var(--duration-base)]. */
+:root {
+  --duration-instant: 0ms;
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+  --duration-deliberate: 400ms; /* reserved for the timeline step advance */
+}
+
+/* =============================================================================
+   Dark theme tokens — defined now so dark mode is a theme file rather than a
+   retrofit (E2). Not yet reachable: no toggle ships in Phase 0.
+   ========================================================================== */
+@custom-variant dark (&:where(.dark, .dark *));
+
+.dark {
+  --color-ink-950: #f7f8fa;
+  --color-ink-900: #eff1f4;
+  --color-ink-700: #c7ccd2;
+  --color-ink-600: #9aa1aa;
+  --color-ink-500: #7c848d;
+  --color-ink-400: #5a616a;
+  --color-ink-300: #3a4048;
+  --color-ink-200: #262b31;
+  --color-ink-100: #1a1e23;
+  --color-ink-50: #14171a;
+
+  --color-gold-700: #eec46b;
+  --color-gold-500: #e0a82a;
+  --color-gold-400: #eec46b;
+  --color-gold-50: #2a2113;
+
+  --color-success-700: #6cd3a1;
+  --color-success-50: #10281d;
+  --color-danger-700: #f09b90;
+  --color-danger-50: #2c1613;
+  --color-info-700: #8fb8f5;
+  --color-info-50: #131f31;
+  --color-warn-700: #f3a877;
+  --color-warn-50: #2b1710;
+}
+
+/* =============================================================================
+   Base layer
+   ========================================================================== */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-white);
+    color: var(--color-ink-950);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Focus is always visible and always gold, and gold is used for nothing
+     else at this weight. Focus is not status, so this does not conflict with
+     the rule that brand gold never conveys state. */
+  :focus-visible {
+    outline: 2px solid var(--color-gold-400);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Amounts, counters, countdowns and balances must not jitter as they tick
+     (E3, acceptance criterion 4). */
+  .tabular,
+  [data-tabular="true"] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Inputs render at >=16px on mobile so iOS does not auto-zoom and break the
+     sticky layouts (E3). */
+  @media (max-width: 767px) {
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
+  }
+
+  ::selection {
+    background-color: var(--color-gold-100);
+    color: var(--color-ink-950);
+  }
+}
+
+/* =============================================================================
+   Reduced motion — animation collapses to an instant state change, never to a
+   fade, and no information is lost (H3, acceptance criterion 8).
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
