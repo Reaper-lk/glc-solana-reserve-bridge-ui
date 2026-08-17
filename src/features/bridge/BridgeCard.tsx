@@ -436,6 +436,7 @@ export function BridgeCard() {
         <Button
           fullWidth
           size="lg"
+          variant="primary"
           loading={submitting}
           onClick={() => void submit()}
           {...(!gate.can

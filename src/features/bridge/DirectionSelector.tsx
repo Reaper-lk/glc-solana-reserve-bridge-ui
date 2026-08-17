@@ -20,7 +20,9 @@ export function DirectionSelector({
     <div
       role="radiogroup"
       aria-label="Bridge direction"
-      className="flex items-center gap-2"
+      // Stacked below `sm`: two-across at 360px leaves each button so
+      // little width that both token names truncate to fragments.
+      className="flex flex-col gap-2 sm:flex-row sm:items-center"
     >
       {(Object.keys(directions) as Direction[]).map((id) => {
         const descriptor = directions[id];
