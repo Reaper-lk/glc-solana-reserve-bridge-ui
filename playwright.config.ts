@@ -113,6 +113,11 @@ export default defineConfig({
           env: {
             NEXT_PUBLIC_BRIDGE_API_MODE: "http",
             NEXT_PUBLIC_BRIDGE_API_URL: INTERCEPTED_API_ORIGIN,
+            // Configures the wallet layer so SolanaProvider mounts and
+            // Wallet Standard discovery runs — required by
+            // intercepted-wallet-discovery.spec.ts. Never actually fetched
+            // by that spec; discovery is a window-event handshake.
+            NEXT_PUBLIC_SOLANA_RPC_URL: "http://127.0.0.1:8899",
           },
         },
       ],
