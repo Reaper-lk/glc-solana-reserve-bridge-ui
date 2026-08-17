@@ -84,7 +84,15 @@ export default defineConfig({
       // E2E_REAL_BACKEND_URL is unset.
       name: "real-backend",
       testMatch: /real-backend\/.*\.spec\.ts/,
-      use: { ...devices["Desktop Chrome"], baseURL: realBackendUrl ?? baseURL },
+      use: {
+        ...devices["Desktop Chrome"],
+        baseURL: realBackendUrl ?? baseURL,
+        // The local real-backend UI serves over the self-signed dev TLS
+        // proxy (scripts/dev-https-proxy.mjs) so wallet extensions can
+        // inject. Trusting that cert is a property of this opt-in test
+        // client only — nothing about the app's own security changes.
+        ignoreHTTPSErrors: true,
+      },
     },
   ],
 
