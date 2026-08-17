@@ -27,6 +27,8 @@ export const moreNav: readonly NavItem[] = [
   { label: "Verify an address", href: routes.verify },
   { label: "Wallets", href: routes.wallets },
   { label: "FAQ", href: routes.faq },
+  { label: "Glossary", href: routes.glossary },
+  { label: "Support", href: routes.support },
 ];
 
 export const footerNav: readonly {

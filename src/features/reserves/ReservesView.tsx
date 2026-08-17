@@ -221,7 +221,12 @@ function ReserveHistoryRows({ items }: { items: readonly ReserveHistoryEntryDto[
                       missing tick — {entry.classification}
                     </span>
                   ) : (
-                    <span className="text-ink-700">{entry.classification}</span>
+                    // Case/underscore formatting only — the value itself is
+                    // the backend's real classification, kept verbatim in
+                    // the title attribute.
+                    <span className="text-ink-700" title={entry.classification}>
+                      {humanizeClassification(entry.classification)}
+                    </span>
                   )}
                   {entry.auto_paused && (
                     <span className="text-danger-700 bg-danger-50 ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium">
@@ -237,4 +242,10 @@ function ReserveHistoryRows({ items }: { items: readonly ReserveHistoryEntryDto[
       </table>
     </div>
   );
+}
+
+/** "WITHIN_TOLERANCE" -> "Within tolerance". Formatting only, never data. */
+function humanizeClassification(value: string): string {
+  const lowered = value.replace(/_/g, " ").toLowerCase();
+  return lowered.charAt(0).toUpperCase() + lowered.slice(1);
 }
