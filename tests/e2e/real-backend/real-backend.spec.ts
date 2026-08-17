@@ -45,17 +45,6 @@ test("reserves page shows real per-direction capacity from the real backend", as
   await expect(page.getByText(/did not match its schema/i)).not.toBeVisible();
 });
 
-test("explorer shows real aggregate stats and a real, non-empty event feed", async ({
-  page,
-}) => {
-  await page.goto("/explorer");
-  await expect(page.getByText(/did not match its schema/i)).not.toBeVisible();
-  // At least one settled/created request exists by the time this suite runs
-  // against a stack that has been exercised even once (this suite's own
-  // "creates a real GlcToSol transfer" test, run earlier, guarantees it).
-  await expect(page.getByText(/^#\d+$/).first()).toBeVisible({ timeout: 10_000 });
-});
-
 test("creates a real GlcToSol transfer request and shows real backend-issued deposit instructions", async ({
   page,
 }) => {
@@ -63,6 +52,10 @@ test("creates a real GlcToSol transfer request and shows real backend-issued dep
   // instructions (service/src/api.rs `create_glc_to_sol_transfer`) — it
   // never broadcasts a Goldcoin transaction. Nothing here signs or sends
   // anything.
+  //
+  // Runs BEFORE the explorer spec below (specs in one file run in order):
+  // on a freshly bootstrapped backend with an empty ledger, this is what
+  // guarantees the explorer has at least one event to show.
   await page.goto("/bridge");
   await page.getByLabel(/Amount in GLC/i).fill("5");
   await page
@@ -83,4 +76,14 @@ test("creates a real GlcToSol transfer request and shows real backend-issued dep
   await page.getByRole("button", { name: /I've sent it/i }).click();
   await expect(page).toHaveURL(/\/bridge\/\d+$/);
   await expect(page.getByText(/did not match its schema/i)).not.toBeVisible();
+});
+
+test("explorer shows real aggregate stats and a real, non-empty event feed", async ({
+  page,
+}) => {
+  await page.goto("/explorer");
+  await expect(page.getByText(/did not match its schema/i)).not.toBeVisible();
+  // At least one created request exists by now — the create-transfer spec
+  // above ran first and recorded one, even on a virgin backend.
+  await expect(page.getByText(/^#\d+$/).first()).toBeVisible({ timeout: 10_000 });
 });
