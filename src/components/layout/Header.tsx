@@ -30,7 +30,7 @@ export function Header({ walletSlot }: { walletSlot?: ReactNode }) {
           href={routes.home}
           className="text-heading-3 text-ink-950 flex shrink-0 items-center gap-2"
         >
-          <BrandMark className="text-gold-500 size-7" />
+          <BrandMark />
           <span>Goldcoin Bridge</span>
         </Link>
 
