@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { BrandMark } from "./BrandMark";
 import { moreNav, primaryNav } from "./navigation";
 import { cn } from "@/lib/utils/cn";
 
@@ -54,7 +55,10 @@ export function MobileNav({ walletSlot }: { walletSlot?: ReactNode }) {
           )}
         >
           <div className="border-ink-200 flex h-16 items-center justify-between border-b px-4">
-            <Dialog.Title className="text-heading-3 text-ink-950">Menu</Dialog.Title>
+            <Dialog.Title className="text-heading-3 text-ink-950 flex items-center gap-2">
+              <BrandMark />
+              Goldcoin Bridge
+            </Dialog.Title>
             <Dialog.Close
               className="text-ink-700 hover:bg-ink-50 inline-flex size-11 items-center justify-center rounded-md"
               aria-label="Close navigation menu"
