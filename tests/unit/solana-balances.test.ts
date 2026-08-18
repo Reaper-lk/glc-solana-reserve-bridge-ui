@@ -61,6 +61,38 @@ describe("fetchTokenBalance", () => {
     const balance = await fetchTokenBalance(connection, OWNER, MINT, "GLC");
     expect(balance).toEqual({ raw: "123456", decimals: 6, symbol: "GLC" });
   });
+
+  it("sums every token account for the mint rather than reading only the first", async () => {
+    // A wallet can hold one mint across the associated token account plus
+    // auxiliary accounts created by older tooling — reading value[0] alone
+    // silently under-reports.
+    const account = (amount: string) => ({
+      account: {
+        data: { parsed: { info: { tokenAmount: { amount, decimals: 6 } } } },
+      },
+    });
+    const connection = {
+      getParsedTokenAccountsByOwner: async () => ({
+        value: [account("1000000"), account("250000"), account("3")],
+      }),
+    } as unknown as Connection;
+    const balance = await fetchTokenBalance(connection, OWNER, MINT, "GLC");
+    expect(balance).toEqual({ raw: "1250003", decimals: 6, symbol: "GLC" });
+  });
+
+  it("fails the read when accounts for one mint disagree on decimals", async () => {
+    const account = (amount: string, decimals: number) => ({
+      account: { data: { parsed: { info: { tokenAmount: { amount, decimals } } } } },
+    });
+    const connection = {
+      getParsedTokenAccountsByOwner: async () => ({
+        value: [account("100", 6), account("100", 9)],
+      }),
+    } as unknown as Connection;
+    await expect(fetchTokenBalance(connection, OWNER, MINT, "GLC")).rejects.toThrow(
+      /disagreed on decimals/,
+    );
+  });
 });
 
 describe("parseTokenAmount", () => {
