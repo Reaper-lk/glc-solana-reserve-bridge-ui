@@ -99,6 +99,37 @@ describe("ReservesView", () => {
     expect(await screen.findByText(/missing tick/i)).toBeInTheDocument();
   });
 
+  it("renders the backend's IN_FLIGHT_EXPLAINED classification humanized, as a normal tick", async () => {
+    // Newly reachable on the wire: the backend's reconciliation now
+    // classifies a drop covered by its own broadcast-but-unfolded
+    // settlements as IN_FLIGHT_EXPLAINED instead of spuriously breaching.
+    // It is a routine, healthy observation — rendered readably, never as
+    // a missing tick and never as raw enum text.
+    getReserve.mockResolvedValue(fixtures.reserveFixture());
+    getStats.mockResolvedValue(fixtures.statsFixture());
+    listReserveHistory.mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          direction: "SolanaReserve",
+          detected_at: 0,
+          expected_atomic: 100,
+          observed_atomic: 60,
+          delta_atomic: -40,
+          classification: "IN_FLIGHT_EXPLAINED",
+          auto_paused: false,
+        },
+      ],
+      next_cursor: null,
+      as_of: 0,
+    });
+    renderWithQueryClient(<ReservesView />);
+
+    expect(await screen.findByText("In flight explained")).toBeInTheDocument();
+    expect(screen.queryByText(/missing tick/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("IN_FLIGHT_EXPLAINED")).not.toBeInTheDocument();
+  });
+
   it("shows a real empty state for reconciliation history rather than silently rendering nothing", async () => {
     getReserve.mockResolvedValue(fixtures.reserveFixture());
     getStats.mockResolvedValue(fixtures.statsFixture());
