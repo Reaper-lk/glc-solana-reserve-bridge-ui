@@ -1,0 +1,207 @@
+import type {
+  BridgeStatusDto,
+  PublicHealthDto,
+  ReserveAvailabilityDto,
+  TransferLimitsDto,
+} from "../schemas/status";
+import type { BridgeStatsDto } from "../schemas/stats";
+import type { ExplorerEventDto } from "../schemas/explorer";
+import type { ReserveHistoryEntryDto } from "../schemas/reserves";
+import type { TransferViewDto, RequestState } from "../schemas/transfer";
+
+/**
+ * Typed in-repo fixtures for `NEXT_PUBLIC_BRIDGE_API_MODE=mock`.
+ *
+ * Shapes mirror the real backend (`service/src/api.rs`) exactly, including
+ * its unhappy paths — a paused direction, insufficient liquidity, a
+ * `ManualReview` transfer — so those states are exercised in development
+ * without a live backend.
+ */
+
+const NOW_UNIX = () => Math.floor(Date.now() / 1000);
+
+export const BRIDGE_FEE_BPS = 100;
+
+export function statusFixture(now: () => Date): BridgeStatusDto {
+  void now;
+  return {
+    goldcoin_paused: false,
+    solana_paused: false,
+    vault_address: "GLCVau1t111111111111111111111111111111111",
+    next_solana_obligation_index: 42,
+    glc_to_sol_available: true,
+    sol_to_glc_available: true,
+  };
+}
+
+export function pausedStatusFixture(): BridgeStatusDto {
+  return {
+    goldcoin_paused: false,
+    solana_paused: true,
+    vault_address: "GLCVau1t111111111111111111111111111111111",
+    next_solana_obligation_index: 42,
+    glc_to_sol_available: false,
+    sol_to_glc_available: true,
+  };
+}
+
+export function limitsFixture(): TransferLimitsDto {
+  return {
+    min_transfer_amount: 10_00000000,
+    per_transfer_limit: 250_000_00000000,
+    bridge_fee_bps: BRIDGE_FEE_BPS,
+  };
+}
+
+export function reserveFixture(): ReserveAvailabilityDto {
+  return {
+    goldcoin_available_capacity: 4_250_000_00000000,
+    solana_available_capacity: 3_980_000_00000000,
+  };
+}
+
+export function insufficientReserveFixture(): ReserveAvailabilityDto {
+  return {
+    goldcoin_available_capacity: 4_250_000_00000000,
+    solana_available_capacity: 50_00000000,
+  };
+}
+
+export function healthFixture(): PublicHealthDto {
+  return {
+    healthy: true,
+    goldcoin_indexer_halted: false,
+    manual_review_backlog: 0,
+    post_finality_reorg_events: 0,
+  };
+}
+
+export function statsFixture(): BridgeStatsDto {
+  return {
+    goldcoin_paused: false,
+    solana_paused: false,
+    glc_to_sol_available: true,
+    sol_to_glc_available: true,
+    bridge_fee_bps: BRIDGE_FEE_BPS,
+    glc_to_sol: {
+      total_requests: 1284,
+      in_progress_requests: 6,
+      settled_requests: 1250,
+      manual_review_requests: 2,
+    },
+    sol_to_glc: {
+      total_requests: 968,
+      in_progress_requests: 4,
+      settled_requests: 951,
+      manual_review_requests: 1,
+    },
+    goldcoin_reserve: {
+      paused: false,
+      available_capacity: 4_250_000_00000000,
+      settled_volume_atomic: 82_400_000_00000000,
+      accrued_fees_atomic: 824_000_00000000,
+    },
+    solana_reserve: {
+      paused: false,
+      available_capacity: 3_980_000_00000000,
+      settled_volume_atomic: 61_100_000_00000000,
+      accrued_fees_atomic: 611_000_00000000,
+    },
+    goldcoin_indexer_halted: false,
+    goldcoin_indexer_seconds_since_tick: 8,
+    solana_indexer_seconds_since_tick: 4,
+    post_finality_reorg_events: 0,
+    as_of: NOW_UNIX(),
+  };
+}
+
+const SAMPLE_STATES: readonly RequestState[] = [
+  "AwaitingDeposit",
+  "Confirming",
+  "SourceFinalized",
+  "SettlementAuthorized",
+  "DestinationSubmitted",
+  "Settled",
+  "Settled",
+  "ManualReview",
+  "Expired",
+];
+
+export function transfersFixture(): TransferViewDto[] {
+  const base = NOW_UNIX();
+  return SAMPLE_STATES.map((state, index) => {
+    const direction = index % 2 === 0 ? ("GlcToSol" as const) : ("SolToGlc" as const);
+    const gross = 500_00000000 + index * 37_00000000;
+    const fee = Math.floor((gross * BRIDGE_FEE_BPS) / 10_000);
+    const terminal = state === "Settled" || state === "Expired";
+    return {
+      id: 1000 + index,
+      direction,
+      state,
+      gross_amount_atomic: gross,
+      fee_bps: BRIDGE_FEE_BPS,
+      fee_amount_atomic: fee,
+      net_amount_atomic: gross - fee,
+      created_at: base - (SAMPLE_STATES.length - index) * 900,
+      source_txid: state === "AwaitingDeposit" ? null : "a".repeat(64),
+      source_confirmations: state === "AwaitingDeposit" ? 0 : 12,
+      required_source_confirmations: direction === "GlcToSol" ? 12 : null,
+      destination_txid: terminal ? "b".repeat(64) : null,
+      failure_reason:
+        state === "ManualReview"
+          ? "Deposit amount did not match the reserved quote; routed for manual review."
+          : null,
+    };
+  });
+}
+
+export function explorerEventsFixture(): ExplorerEventDto[] {
+  const base = NOW_UNIX();
+  const transfers = transfersFixture();
+  const events: ExplorerEventDto[] = [];
+  let id = 1;
+  for (const transfer of transfers) {
+    events.push({
+      id: id++,
+      request_id: transfer.id,
+      direction: transfer.direction,
+      from_state: null,
+      to_state: "AwaitingDeposit",
+      at: transfer.created_at,
+      reason: null,
+    });
+    if (transfer.state !== "AwaitingDeposit") {
+      events.push({
+        id: id++,
+        request_id: transfer.id,
+        direction: transfer.direction,
+        from_state: "AwaitingDeposit",
+        to_state: transfer.state,
+        at: transfer.created_at + 300,
+        reason: transfer.failure_reason,
+      });
+    }
+  }
+  return events
+    .sort((a, b) => b.at - a.at)
+    .map((event, index) => ({ ...event, id: base + index }));
+}
+
+export function reserveHistoryFixture(): ReserveHistoryEntryDto[] {
+  const base = NOW_UNIX();
+  return Array.from({ length: 12 }, (_, index) => {
+    const expected = 4_000_000_00000000 + index * 5_000_00000000;
+    const observed = expected - (index === 5 ? 1_200_00000000 : 0);
+    return {
+      id: index + 1,
+      direction:
+        index % 2 === 0 ? ("SolanaReserve" as const) : ("GoldcoinReserve" as const),
+      detected_at: base - (12 - index) * 3600,
+      expected_atomic: expected,
+      observed_atomic: observed,
+      delta_atomic: observed - expected,
+      classification: observed === expected ? "balanced" : "under-observed",
+      auto_paused: false,
+    };
+  });
+}

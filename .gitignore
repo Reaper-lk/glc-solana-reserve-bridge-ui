@@ -1,0 +1,38 @@
+# dependencies
+node_modules
+.pnp
+.pnp.js
+
+# next
+.next
+out
+next-env.d.ts
+*.tsbuildinfo
+
+# testing
+coverage
+playwright-report
+test-results
+blob-report
+.playwright
+
+# env — only .env.example is committed, and it holds no values
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Local AI/editor settings
+.claude/
+
+# misc
+.DS_Store
+*.pem
+.vercel
+.idea
+.vscode/*
+!.vscode/extensions.json
+npm-debug.log*
+
+coverage
