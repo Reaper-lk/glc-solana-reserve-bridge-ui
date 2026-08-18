@@ -1,0 +1,9 @@
+node_modules
+.next
+out
+coverage
+playwright-report
+test-results
+package-lock.json
+app/fonts
+*.woff2
