@@ -66,6 +66,26 @@ const versionBytesSchema = z
 /** The canonical Solana GLC (Token-2022) mint. Public, protocol-level data. */
 const DEFAULT_RESERVE_MINT_ADDRESS = "Hn6Kdxs6cJrXDLvArAief8ueTgdZLkRacLPPUZo2pump";
 
+/**
+ * Program ids the bridge has permanently retired, mirrored from the backend's
+ * own denylist (`service/src/bin/glc-mainnet-bootstrap.rs` /
+ * `scripts/verify-program-id-replacement.sh` in glc-solana-reserve-bridge):
+ *
+ * - `BnCF…v2oY` — the original scaffold/dev id. Still what local validators
+ *   deploy at during development, but never deployed to a public cluster.
+ * - `7h2z…1GNn` — the first mainnet deployment, since permanently closed
+ *   with its rent reclaimed. A transaction sent to it can never succeed.
+ *
+ * A mainnet-beta deployment configured with either is a stale config that
+ *  would build deposit instructions against a dead or never-deployed
+ * program, so it fails startup here rather than failing in users' wallets.
+ * Non-mainnet clusters are exempt: the dev id is the legitimate localnet id.
+ */
+const RETIRED_RESERVE_PROGRAM_IDS = new Set([
+  "BnCFcMaZtpXUzZhXZdQSeQWH4A2BMv5ZaebGe6Ysv2oY",
+  "7h2zSJuqpmbSq4seeXDdaJChVoxhEWwA9b8qG6Ct1GNn",
+]);
+
 const envSchema = z
   .object({
     appUrl: urlSchema,
@@ -146,6 +166,20 @@ const envSchema = z
         path: ["bridgeApiUrl"],
         message:
           "NEXT_PUBLIC_BRIDGE_API_URL is required when NEXT_PUBLIC_BRIDGE_API_MODE is 'http'",
+      });
+    }
+    if (
+      value.solanaCluster === "mainnet-beta" &&
+      value.reserveProgramId !== undefined &&
+      RETIRED_RESERVE_PROGRAM_IDS.has(value.reserveProgramId)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reserveProgramId"],
+        message:
+          `NEXT_PUBLIC_RESERVE_PROGRAM_ID ${value.reserveProgramId} is a ` +
+          "permanently retired bridge program id and cannot be used on " +
+          "mainnet-beta — see .env.example for the current production id",
       });
     }
   });
