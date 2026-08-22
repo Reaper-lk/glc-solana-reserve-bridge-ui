@@ -23,9 +23,17 @@ export interface CspOptions {
   readonly isDev: boolean;
   /** Origins the browser may talk to, from public configuration. */
   readonly connectOrigins: readonly string[];
+  /**
+   * `NEXT_PUBLIC_APP_URL` — decides `upgrade-insecure-requests` by the
+   * scheme the app actually serves on, not by NODE_ENV: a production build
+   * temporarily served over plain HTTP (an IP-only staging box, a proxy
+   * that terminates TLS elsewhere) must not have its own subresource
+   * requests silently rewritten to an https:// listener that doesn't exist.
+   */
+  readonly appUrl: string;
 }
 
-export function buildCsp({ nonce, isDev, connectOrigins }: CspOptions): string {
+export function buildCsp({ nonce, isDev, connectOrigins, appUrl }: CspOptions): string {
   const scriptSrc = [
     "'self'",
     `'nonce-${nonce}'`,
@@ -54,15 +62,18 @@ export function buildCsp({ nonce, isDev, connectOrigins }: CspOptions): string {
     "form-action 'self'",
     "frame-ancestors 'none'",
     /*
-     * Only in production: this upgrades every http:// subresource request the
-     * page makes to https://. localhost/127.0.0.1 are exempt from the upgrade
-     * as "potentially trustworthy" origins, but any other host serving this
-     * dev server over plain HTTP is not — the browser silently rewrites the
-     * stylesheet and script requests to https:// and they fail outright,
-     * since the dev server has no TLS listener. Production is always HTTPS,
-     * so the upgrade is a no-op there and a real defense against mixed content.
+     * Only when the app itself serves over HTTPS: this upgrades every
+     * http:// subresource request the page makes to https://.
+     * localhost/127.0.0.1 are exempt from the upgrade as "potentially
+     * trustworthy" origins, but any other host serving this app over plain
+     * HTTP is not — the browser silently rewrites the stylesheet and script
+     * requests to https:// and they fail outright when no TLS listener
+     * exists. Keyed on the configured app URL's scheme rather than
+     * NODE_ENV, so a production build temporarily served over HTTP (see
+     * CspOptions.appUrl) keeps working, while any HTTPS deployment gets
+     * the real mixed-content defense.
      */
-    ...(isDev ? [] : ["upgrade-insecure-requests"]),
+    ...(appUrl.startsWith("https://") ? ["upgrade-insecure-requests"] : []),
   ].join("; ");
 }
 

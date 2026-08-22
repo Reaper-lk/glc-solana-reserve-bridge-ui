@@ -46,7 +46,13 @@ import {
  * (service/src/api.rs module doc).
  */
 
-const DEFAULT_TIMEOUT_MS = 15_000;
+/**
+ * The client-side default. SSR first-paint uses a shorter caller-supplied
+ * signal instead (src/lib/api/initial-status.ts) — composed with this via
+ * `AbortSignal.any`, never replacing it. Exported so tests can pin the
+ * value rather than re-deriving it.
+ */
+export const DEFAULT_TIMEOUT_MS = 15_000;
 
 export class HttpBridgeClient implements BridgeApiClient {
   private readonly baseUrl: string;

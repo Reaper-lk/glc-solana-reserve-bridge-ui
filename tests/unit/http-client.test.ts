@@ -233,3 +233,31 @@ describe("HttpBridgeClient", () => {
     }
   });
 });
+
+describe("HttpBridgeClient — timeout composition", () => {
+  it("keeps the default client timeout at 15 seconds", async () => {
+    const { DEFAULT_TIMEOUT_MS } = await import("@/lib/api/http");
+    expect(DEFAULT_TIMEOUT_MS).toBe(15_000);
+  });
+
+  it("a caller-supplied signal aborts a hanging request early without changing the default", async () => {
+    // fetch honors the composed signal exactly like the real network stack.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(
+        (_url: unknown, init: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init.signal.addEventListener("abort", () => reject(init.signal.reason), {
+              once: true,
+            });
+          }),
+      ),
+    );
+    const client = new HttpBridgeClient(BASE);
+    const started = Date.now();
+    await expect(client.getStatus(AbortSignal.timeout(100))).rejects.toBeTruthy();
+    // Far below the 15s default: the caller's signal, not the client's,
+    // ended the request.
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});
