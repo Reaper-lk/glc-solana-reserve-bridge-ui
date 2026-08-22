@@ -22,6 +22,14 @@ const NOW_UNIX = () => Math.floor(Date.now() / 1000);
 
 export const BRIDGE_FEE_BPS = 100;
 
+/**
+ * Quota fields are in the on-chain mint's atomic units (6 decimals), the
+ * unit the on-chain rolling window records — NOT the canonical 8-decimal
+ * unit gross/fee/net figures use. Full pilot window: 100,000 GLC per
+ * direction (docs/09-runbook.md 2026-08-22); the operational fixture shows
+ * a partially consumed GlcToSol window (17,500 GLC remaining, matching the
+ * approved display example) and an untouched SolToGlc window.
+ */
 export function statusFixture(now: () => Date): BridgeStatusDto {
   void now;
   return {
@@ -31,6 +39,10 @@ export function statusFixture(now: () => Date): BridgeStatusDto {
     next_solana_obligation_index: 42,
     glc_to_sol_available: true,
     sol_to_glc_available: true,
+    glc_to_sol_quota_exhausted: false,
+    sol_to_glc_quota_exhausted: false,
+    glc_to_sol_rolling_volume_remaining: 17_500_000000,
+    sol_to_glc_rolling_volume_remaining: 100_000_000000,
   };
 }
 
@@ -42,13 +54,61 @@ export function pausedStatusFixture(): BridgeStatusDto {
     next_solana_obligation_index: 42,
     glc_to_sol_available: false,
     sol_to_glc_available: true,
+    glc_to_sol_quota_exhausted: false,
+    sol_to_glc_quota_exhausted: false,
+    glc_to_sol_rolling_volume_remaining: 17_500_000000,
+    sol_to_glc_rolling_volume_remaining: 100_000_000000,
+  };
+}
+
+/**
+ * GlcToSol's rolling window exhausted (remaining below the 100-GLC
+ * minimum) but the operator pause not yet engaged — the brief
+ * quota-only state before the backend's background tick pauses the
+ * direction. SolToGlc stays fully usable.
+ */
+export function quotaExhaustedStatusFixture(): BridgeStatusDto {
+  return {
+    goldcoin_paused: false,
+    solana_paused: false,
+    vault_address: "GLCVau1t111111111111111111111111111111111",
+    next_solana_obligation_index: 42,
+    glc_to_sol_available: false,
+    sol_to_glc_available: true,
+    glc_to_sol_quota_exhausted: true,
+    sol_to_glc_quota_exhausted: false,
+    glc_to_sol_rolling_volume_remaining: 40_000000,
+    sol_to_glc_rolling_volume_remaining: 100_000_000000,
+  };
+}
+
+/**
+ * The steady refill-wait state: quota exhausted AND the operator pause
+ * engaged (never auto-cleared) while reserves are replenished.
+ */
+export function quotaPausedStatusFixture(): BridgeStatusDto {
+  return {
+    goldcoin_paused: false,
+    solana_paused: true,
+    vault_address: "GLCVau1t111111111111111111111111111111111",
+    next_solana_obligation_index: 42,
+    glc_to_sol_available: false,
+    sol_to_glc_available: true,
+    glc_to_sol_quota_exhausted: true,
+    sol_to_glc_quota_exhausted: false,
+    glc_to_sol_rolling_volume_remaining: 0,
+    sol_to_glc_rolling_volume_remaining: 100_000_000000,
   };
 }
 
 export function limitsFixture(): TransferLimitsDto {
+  // The approved production pilot limits — min 100 GLC, max 10,000 GLC per
+  // transfer — in the unit `/limits` actually carries: the on-chain
+  // `BridgeConfig` values raw, which the on-chain checks compare against
+  // MINT-atomic (6-decimal) amounts (limits.rs::enforce_transfer_amount).
   return {
-    min_transfer_amount: 10_00000000,
-    per_transfer_limit: 250_000_00000000,
+    min_transfer_amount: 100_000000,
+    per_transfer_limit: 10_000_000000,
     bridge_fee_bps: BRIDGE_FEE_BPS,
   };
 }
@@ -82,6 +142,10 @@ export function statsFixture(): BridgeStatsDto {
     solana_paused: false,
     glc_to_sol_available: true,
     sol_to_glc_available: true,
+    glc_to_sol_quota_exhausted: false,
+    sol_to_glc_quota_exhausted: false,
+    glc_to_sol_rolling_volume_remaining: 17_500_000000,
+    sol_to_glc_rolling_volume_remaining: 100_000_000000,
     bridge_fee_bps: BRIDGE_FEE_BPS,
     glc_to_sol: {
       total_requests: 1284,

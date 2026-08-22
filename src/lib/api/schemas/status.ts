@@ -9,6 +9,20 @@ export const bridgeStatusSchema = z.object({
   next_solana_obligation_index: z.number().int().nonnegative(),
   glc_to_sol_available: z.boolean(),
   sol_to_glc_available: z.boolean(),
+  /**
+   * Rolling-24h-volume quota state, per direction (backend 2026-08-22
+   * quota workflow). `quota_exhausted` means no transfer of any legal size
+   * can currently succeed; `rolling_volume_remaining` is the raw headroom
+   * still available in that direction's window, in the on-chain mint's
+   * atomic units (6 decimals — the same unit the on-chain limit checks
+   * use, see `programs/glc-reserve-bridge/src/limits.rs`). The backend
+   * never auto-unpauses: once the operator pause engages, reopening is a
+   * manual operator action.
+   */
+  glc_to_sol_quota_exhausted: z.boolean(),
+  sol_to_glc_quota_exhausted: z.boolean(),
+  glc_to_sol_rolling_volume_remaining: atomicAmountSchema,
+  sol_to_glc_rolling_volume_remaining: atomicAmountSchema,
 });
 
 export type BridgeStatusDto = z.infer<typeof bridgeStatusSchema>;

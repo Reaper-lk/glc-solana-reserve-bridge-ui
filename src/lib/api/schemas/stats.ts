@@ -21,6 +21,11 @@ export const bridgeStatsSchema = z.object({
   solana_paused: z.boolean(),
   glc_to_sol_available: z.boolean(),
   sol_to_glc_available: z.boolean(),
+  /** Same quota fields as `GET /status` — see status.ts for units. */
+  glc_to_sol_quota_exhausted: z.boolean(),
+  sol_to_glc_quota_exhausted: z.boolean(),
+  glc_to_sol_rolling_volume_remaining: atomicAmountSchema,
+  sol_to_glc_rolling_volume_remaining: atomicAmountSchema,
   bridge_fee_bps: z.number().int().nonnegative(),
   glc_to_sol: directionStatsSchema,
   sol_to_glc: directionStatsSchema,

@@ -36,3 +36,17 @@ export {
   happyPathFor,
   REQUEST_STATE_LABELS,
 } from "./state";
+
+export {
+  directionGateState,
+  destinationPaused,
+  quotaExhausted,
+  rollingVolumeRemaining,
+  directionAvailable,
+  QUOTA_EXHAUSTED_TITLE,
+  QUOTA_EXHAUSTED_BODY,
+  QUOTA_PAUSED_TITLE,
+  QUOTA_PAUSED_BODY,
+  QUOTA_PAUSED_NEXT,
+} from "./direction-state";
+export type { DirectionGateState } from "./direction-state";
