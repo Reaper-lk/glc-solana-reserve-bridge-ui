@@ -113,7 +113,13 @@ const envSchema = z
      * outside `NEXT_PUBLIC_BRIDGE_API_MODE=mock`.
      */
     mockScenario: z
-      .enum(["operational", "paused", "insufficient-liquidity"])
+      .enum([
+        "operational",
+        "paused",
+        "insufficient-liquidity",
+        "quota-exhausted",
+        "quota-paused",
+      ])
       .default("operational"),
 
     solanaCluster: z

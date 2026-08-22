@@ -203,19 +203,12 @@ describe("BridgeCard — POST /quote integration and fee presentation", () => {
 
 describe("BridgeCard — reserve capacity and pause gating", () => {
   it("disables submission with a stated reason when the direction is paused", async () => {
-    getStatus.mockResolvedValue({
-      goldcoin_paused: false,
-      solana_paused: true,
-      vault_address: "GLCVau1t111111111111111111111111111111111",
-      next_solana_obligation_index: 1,
-      glc_to_sol_available: false,
-      sol_to_glc_available: true,
-    });
+    getStatus.mockResolvedValue(fixtures.pausedStatusFixture());
     renderWithQueryClient(<BridgeCard />);
 
-    expect(
-      await screen.findByText(/currently paused or unavailable/i),
-    ).toBeInTheDocument();
+    expect((await screen.findAllByText(/is currently paused\./i)).length).toBeGreaterThan(
+      0,
+    );
     const submit = screen.getByRole("button", { name: /Create deposit request/i });
     expect(submit).toBeDisabled();
   });
@@ -327,5 +320,115 @@ describe("BridgeCard — loading states", () => {
     expect(
       screen.getByRole("button", { name: /Create deposit request/i }),
     ).toBeDisabled();
+  });
+});
+
+describe("BridgeCard — rolling 24h quota states (backend 2026-08-22 workflow)", () => {
+  it("shows the approved quota-exhausted message and disables submission", async () => {
+    getStatus.mockResolvedValue(fixtures.quotaExhaustedStatusFixture());
+    renderWithQueryClient(<BridgeCard />);
+
+    expect(
+      await screen.findByText("24-hour bridge capacity reached for this direction."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/New transfers are temporarily unavailable\./).length,
+    ).toBeGreaterThan(0);
+    const submit = screen.getByRole("button", { name: /Create deposit request/i });
+    expect(submit).toBeDisabled();
+  });
+
+  it("shows the approved quota-paused refill message, including the Telegram line", async () => {
+    getStatus.mockResolvedValue(fixtures.quotaPausedStatusFixture());
+    renderWithQueryClient(<BridgeCard />);
+
+    expect(
+      await screen.findByText("Bridge capacity reached for this direction."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText(
+        /Transfers are temporarily paused while reserves are replenished\./,
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/Please check the official Telegram for reopening updates\./),
+    ).toBeInTheDocument();
+  });
+
+  it("never renders automatic-reset promises in any quota state", async () => {
+    for (const fixture of [
+      fixtures.quotaExhaustedStatusFixture(),
+      fixtures.quotaPausedStatusFixture(),
+    ]) {
+      getStatus.mockResolvedValue(fixture);
+      const { unmount } = renderWithQueryClient(<BridgeCard />);
+      await screen.findAllByText(/capacity reached for this direction/i);
+      const text = document.body.textContent as string;
+      expect(text).not.toMatch(/midnight/i);
+      expect(text).not.toMatch(/automatic/i);
+      expect(text).not.toMatch(/resets?\s+(at|in)/i);
+      expect(text).not.toMatch(/reopens?\s+in\s+24/i);
+      unmount();
+    }
+  });
+
+  it("keeps the opposite direction fully usable while one is quota-blocked", async () => {
+    // GlcToSol exhausted, SolToGlc healthy in the fixture.
+    getStatus.mockResolvedValue(fixtures.quotaExhaustedStatusFixture());
+    const user = userEvent.setup();
+    renderWithQueryClient(<BridgeCard />);
+    await screen.findByText("24-hour bridge capacity reached for this direction.");
+
+    await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("24-hour bridge capacity reached for this direction."),
+      ).not.toBeInTheDocument(),
+    );
+    // The form is workable: the amount field accepts input and the only
+    // remaining gate is the wallet connection, not a direction blocker.
+    await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
+    expect(screen.getByLabelText(/Amount in GLC/i)).toHaveValue("500");
+  });
+
+  it("displays the remaining 24h capacity from /status", async () => {
+    // Default fixture: 17,500 GLC remaining for GlcToSol (mint-atomic 6dp).
+    renderWithQueryClient(<BridgeCard />);
+    expect(await screen.findByText(/17,500 GLC\s+remaining today/)).toBeInTheDocument();
+  });
+
+  it("blocks submission when the amount exceeds remaining capacity, without altering the amount", async () => {
+    getStatus.mockResolvedValue({
+      ...fixtures.statusFixture(() => new Date()),
+      glc_to_sol_rolling_volume_remaining: 5_000_000000, // 5,000 GLC left
+    });
+    const user = userEvent.setup();
+    renderWithQueryClient(<BridgeCard />);
+    await waitFor(() => expect(getLimits).toHaveBeenCalled());
+
+    // 9,000 GLC: inside the 10,000 per-transfer max, above the 5,000
+    // remaining window.
+    await user.type(screen.getByLabelText(/Amount in GLC/i), "9000");
+
+    expect(
+      await screen.findByText(
+        /exceeds the remaining 24-hour bridge capacity for this direction \(5,000 GLC remaining\)/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Amount in GLC/i)).toHaveValue("9000");
+    const submit = screen.getByRole("button", { name: /Create deposit request/i });
+    expect(submit).toBeDisabled();
+  });
+
+  it("keeps the backend-unavailable state distinct from every quota state", async () => {
+    getStatus.mockRejectedValue(new Error("network down"));
+    renderWithQueryClient(<BridgeCard />);
+    expect(
+      await screen.findByText(/We could not reach the bridge status service/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/capacity reached for this direction/i),
+    ).not.toBeInTheDocument();
   });
 });

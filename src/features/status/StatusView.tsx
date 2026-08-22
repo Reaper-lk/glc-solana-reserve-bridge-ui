@@ -4,7 +4,11 @@ import { Activity, HeartPulse } from "lucide-react";
 import { Card, ErrorState, Skeleton, StatusBadge, TokenAmount } from "@/components/ui";
 import { useBridgeStatus, useHealth, useReserve } from "@/lib/query/hooks";
 import { directionAvailabilityStatus, systemStatus } from "@/lib/status";
-import { directions, GOLDCOIN_GLC, SOLANA_GLC } from "@/lib/bridge";
+import type { DirectionAvailability } from "@/lib/status";
+import { directionGateState, directions, GOLDCOIN_GLC, SOLANA_GLC } from "@/lib/bridge";
+import type { DirectionGateState } from "@/lib/bridge";
+import type { BridgeStatusDto } from "@/lib/api/schemas/status";
+import type { Direction } from "@/lib/api/schemas/common";
 
 export function StatusView() {
   const status = useBridgeStatus();
@@ -27,27 +31,37 @@ export function StatusView() {
   const data = status.data;
   const h = health.data;
 
-  const availability = (available: boolean, paused: boolean) =>
-    paused
-      ? directionAvailabilityStatus.paused
-      : available
-        ? directionAvailabilityStatus.available
-        : directionAvailabilityStatus["insufficient-liquidity"];
+  // Per-direction state from the same derivation the bridge form uses —
+  // quota states are distinguished from an operator pause and from
+  // reserve-capacity constraints, matching the backend's own composition.
+  const GATE_TO_BADGE: Record<DirectionGateState, DirectionAvailability> = {
+    active: "available",
+    "operator-paused": "paused",
+    "capacity-constrained": "insufficient-liquidity",
+    "quota-exhausted": "quota-exhausted",
+    "quota-paused": "quota-paused",
+  };
+  const availability = (direction: Direction) =>
+    directionAvailabilityStatus[GATE_TO_BADGE[directionGateState(data, direction)]];
 
   return (
     <div className="flex flex-col gap-6">
       <div className="grid gap-4 sm:grid-cols-2">
         <DirectionStatusCard
           title={directions.GlcToSol.label}
-          status={availability(data.glc_to_sol_available, data.solana_paused)}
+          status={availability("GlcToSol")}
           capacityRaw={String(Math.max(reserve.data.solana_available_capacity, 0))}
           token={SOLANA_GLC}
+          statusData={data}
+          direction="GlcToSol"
         />
         <DirectionStatusCard
           title={directions.SolToGlc.label}
-          status={availability(data.sol_to_glc_available, data.goldcoin_paused)}
+          status={availability("SolToGlc")}
           capacityRaw={String(Math.max(reserve.data.goldcoin_available_capacity, 0))}
           token={GOLDCOIN_GLC}
+          statusData={data}
+          direction="SolToGlc"
         />
       </div>
 
@@ -100,12 +114,21 @@ function DirectionStatusCard({
   status,
   capacityRaw,
   token,
+  statusData,
+  direction,
 }: {
   title: string;
   status: (typeof directionAvailabilityStatus)[keyof typeof directionAvailabilityStatus];
   capacityRaw: string;
   token: { decimals: number; symbol: string };
+  statusData: BridgeStatusDto;
+  direction: Direction;
 }) {
+  // Quota fields are mint-atomic (6 decimals) — see schemas/status.ts.
+  const remaining =
+    direction === "GlcToSol"
+      ? statusData.glc_to_sol_rolling_volume_remaining
+      : statusData.sol_to_glc_rolling_volume_remaining;
   return (
     <Card>
       <div className="flex items-center justify-between gap-3">
@@ -123,6 +146,16 @@ function DirectionStatusCard({
           className="text-heading-2"
         />
         <p className="text-body-sm text-ink-500 mt-1">Destination reserve capacity</p>
+      </div>
+      <div className="mt-2">
+        <TokenAmount
+          raw={String(remaining)}
+          decimals={SOLANA_GLC.decimals}
+          symbol="GLC"
+        />
+        <p className="text-body-sm text-ink-500 mt-1">
+          Remaining 24-hour capacity for this direction
+        </p>
       </div>
     </Card>
   );
