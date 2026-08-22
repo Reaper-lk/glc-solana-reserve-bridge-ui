@@ -21,6 +21,7 @@ export function middleware(request: NextRequest) {
   const csp = buildCsp({
     nonce,
     isDev: process.env.NODE_ENV !== "production",
+    appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
     connectOrigins: connectOriginsFrom([
       process.env.NEXT_PUBLIC_BRIDGE_API_URL,
       process.env.NEXT_PUBLIC_SOLANA_RPC_URL,
