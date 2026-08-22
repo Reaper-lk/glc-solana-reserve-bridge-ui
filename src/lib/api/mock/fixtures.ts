@@ -46,9 +46,12 @@ export function pausedStatusFixture(): BridgeStatusDto {
 }
 
 export function limitsFixture(): TransferLimitsDto {
+  // The approved production pilot limits (backend docs/09-runbook.md,
+  // 2026-08-21): min 100 GLC, max 10,000 GLC per transfer, in canonical
+  // 8-decimal atomic units — kept in sync so mock mode shows real policy.
   return {
-    min_transfer_amount: 10_00000000,
-    per_transfer_limit: 250_000_00000000,
+    min_transfer_amount: 100_00000000,
+    per_transfer_limit: 10_000_00000000,
     bridge_fee_bps: BRIDGE_FEE_BPS,
   };
 }
