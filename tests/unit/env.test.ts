@@ -35,6 +35,53 @@ describe("public environment schema", () => {
     ).toBe(true);
   });
 
+  describe("retired program ids on mainnet-beta", () => {
+    // Mirrors the backend's own permanently-retired denylist
+    // (glc-solana-reserve-bridge: service/src/bin/glc-mainnet-bootstrap.rs):
+    // the scaffold/dev id was never deployed to a public cluster, and the
+    // first mainnet deployment has been closed with its rent reclaimed. A
+    // mainnet config carrying either would build deposit instructions
+    // against a dead program, so startup fails instead.
+    const SCAFFOLD_DEV_ID = "BnCFcMaZtpXUzZhXZdQSeQWH4A2BMv5ZaebGe6Ysv2oY";
+    const CLOSED_MAINNET_ID = "7h2zSJuqpmbSq4seeXDdaJChVoxhEWwA9b8qG6Ct1GNn";
+    const PRODUCTION_ID = "6tmLSP2j2thito2RpByqgfKHuVRSLcNd9c5FkrLJMjja";
+
+    it.each([SCAFFOLD_DEV_ID, CLOSED_MAINNET_ID])(
+      "refuses retired id %s when the cluster is mainnet-beta",
+      (retired) => {
+        const result = envSchema.safeParse({
+          ...base,
+          solanaCluster: "mainnet-beta",
+          reserveProgramId: retired,
+        });
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.issues[0]?.message).toContain("permanently retired");
+        }
+      },
+    );
+
+    it("accepts the current production id on mainnet-beta", () => {
+      expect(
+        envSchema.safeParse({
+          ...base,
+          solanaCluster: "mainnet-beta",
+          reserveProgramId: PRODUCTION_ID,
+        }).success,
+      ).toBe(true);
+    });
+
+    it("still accepts the dev id on localnet, where local validators genuinely deploy at it", () => {
+      expect(
+        envSchema.safeParse({
+          ...base,
+          solanaCluster: "localnet",
+          reserveProgramId: SCAFFOLD_DEV_ID,
+        }).success,
+      ).toBe(true);
+    });
+  });
+
   it("requires an API URL when the mode is http", () => {
     const result = envSchema.safeParse({ ...base, bridgeApiMode: "http" });
     expect(result.success).toBe(false);
