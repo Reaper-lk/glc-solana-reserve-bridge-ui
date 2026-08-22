@@ -23,8 +23,7 @@ export type ApiErrorKind =
   | "not-found"
   | "rate-limited"
   | "server"
-  | "insufficient-liquidity"
-  | "paused"
+  | "direction-unavailable"
   | "bad-request"
   | "validation";
 
@@ -131,30 +130,27 @@ export function badRequestError(message: string): ApiError {
   });
 }
 
-export function insufficientLiquidityError(message: string): ApiError {
+/**
+ * The single 409 the backend emits for a direction that cannot accept a
+ * new transfer. Since the 2026-08-22 quota workflow, `ApiError::Paused`,
+ * `ApiError::InsufficientLiquidity`, and `ApiError::QuotaExhausted` all
+ * return the SAME cause-agnostic, approved message
+ * (`DIRECTION_UNAVAILABLE_MESSAGE` in api.rs) — the message text can no
+ * longer distinguish causes, so this maps all of them to one error and the
+ * UI reads the specific cause from `GET /status`'s boolean fields instead.
+ * Deliberately no reset-time or automatic-reopening claim: there is none.
+ */
+export function directionUnavailableError(message?: string): ApiError {
   return new ApiError({
-    kind: "insufficient-liquidity",
-    message,
+    kind: "direction-unavailable",
+    message: message ?? "Bridge capacity reached for this direction.",
     retryable: true,
     status: 409,
     presentation: {
-      what: "This direction does not currently have enough reserve liquidity for that amount.",
-      funds: "No funds have left your wallet. Nothing has been sent yet.",
-      next: "Try a smaller amount, or check back once reserve capacity recovers.",
-    },
-  });
-}
-
-export function pausedError(): ApiError {
-  return new ApiError({
-    kind: "paused",
-    message: "The destination reserve is paused",
-    retryable: true,
-    status: 409,
-    presentation: {
-      what: "This direction is temporarily paused.",
-      funds: "No funds have left your wallet. Nothing has been sent yet.",
-      next: "Check the status page, or try again once the pause is lifted.",
+      what: "Bridge capacity reached for this direction.",
+      funds:
+        "No funds have left your wallet. Nothing has been sent yet. Transfers are temporarily paused while reserves are replenished.",
+      next: "Please check the official Telegram for reopening updates.",
     },
   });
 }

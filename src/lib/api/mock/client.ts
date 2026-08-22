@@ -4,12 +4,7 @@ import type {
   ListReserveHistoryParams,
   ListTransfersParams,
 } from "../client";
-import {
-  badRequestError,
-  insufficientLiquidityError,
-  notFoundError,
-  pausedError,
-} from "../errors";
+import { badRequestError, directionUnavailableError, notFoundError } from "../errors";
 import {
   bridgeStatusSchema,
   publicHealthSchema,
@@ -31,7 +26,12 @@ import {
 } from "../schemas/transfer";
 import * as fixtures from "./fixtures";
 
-export type MockScenario = "operational" | "paused" | "insufficient-liquidity";
+export type MockScenario =
+  | "operational"
+  | "paused"
+  | "insufficient-liquidity"
+  | "quota-exhausted"
+  | "quota-paused";
 
 export interface MockClientOptions {
   readonly scenario?: MockScenario;
@@ -76,7 +76,11 @@ export class MockBridgeClient implements BridgeApiClient {
     const raw =
       this.scenario === "paused"
         ? fixtures.pausedStatusFixture()
-        : fixtures.statusFixture(this.now);
+        : this.scenario === "quota-exhausted"
+          ? fixtures.quotaExhaustedStatusFixture()
+          : this.scenario === "quota-paused"
+            ? fixtures.quotaPausedStatusFixture()
+            : fixtures.statusFixture(this.now);
     return this.delay(bridgeStatusSchema.parse(raw));
   }
 
@@ -145,12 +149,9 @@ export class MockBridgeClient implements BridgeApiClient {
   async createTransfer(request: CreateTransferRequest): Promise<CreateTransferOutputDto> {
     const validated = createTransferRequestSchema.parse(request);
 
-    if (this.scenario === "paused") throw pausedError();
-    if (this.scenario === "insufficient-liquidity") {
-      throw insufficientLiquidityError(
-        `the destination reserve cannot currently cover this amount (available: ${fixtures.insufficientReserveFixture().solana_available_capacity})`,
-      );
-    }
+    // Every unavailable cause returns the backend's single cause-agnostic
+    // 409, exactly like the real service (DIRECTION_UNAVAILABLE_MESSAGE).
+    if (this.scenario !== "operational") throw directionUnavailableError();
 
     const id = this.nextId++;
     const feeBps = fixtures.BRIDGE_FEE_BPS;

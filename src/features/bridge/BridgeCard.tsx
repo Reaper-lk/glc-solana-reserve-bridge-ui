@@ -12,19 +12,27 @@ import {
   TokenAmount,
 } from "@/components/ui";
 import {
+  directionGateState,
   directions,
   display,
   goldcoinAddressRules,
   isReportableAddressProblem,
   isReportableProblem,
+  QUOTA_EXHAUSTED_BODY,
+  QUOTA_EXHAUSTED_TITLE,
+  QUOTA_PAUSED_BODY,
+  QUOTA_PAUSED_NEXT,
+  QUOTA_PAUSED_TITLE,
+  rollingVolumeRemaining,
+  SOLANA_GLC,
   validateAmount,
   validateGoldcoinAddress,
 } from "@/lib/bridge";
 import { routes } from "@/lib/config/links";
 import {
-  canonicalToSourceRawCeil,
+  atomicRescaleCeil,
+  atomicRescaleFloor,
   canonicalToSourceRawExact,
-  canonicalToSourceRawFloor,
   sourceRawToCanonical,
 } from "@/lib/bridge/canonical";
 import {
@@ -74,12 +82,20 @@ export function BridgeCard() {
 
   const amountBounds = useMemo(() => {
     if (!limits.data) return null;
-    const minimum = canonicalToSourceRawCeil(
+    // `/limits` passes the on-chain `BridgeConfig` values through raw, and
+    // the on-chain checks compare them against MINT-atomic amounts
+    // (6 decimals; `limits.rs::enforce_transfer_amount`) — so these are
+    // mint units, not the canonical 8-decimal unit quotes use. Ceil the
+    // minimum and floor the maximum so the client-side bound is never more
+    // permissive than the on-chain one.
+    const minimum = atomicRescaleCeil(
       String(limits.data.min_transfer_amount),
+      SOLANA_GLC.decimals,
       sourceToken.decimals,
     );
-    const maximum = canonicalToSourceRawFloor(
+    const maximum = atomicRescaleFloor(
       String(limits.data.per_transfer_limit),
+      SOLANA_GLC.decimals,
       sourceToken.decimals,
     );
     return {
@@ -121,10 +137,13 @@ export function BridgeCard() {
       : reserve.data.goldcoin_available_capacity
     : null;
 
-  const directionAvailable =
-    direction === "GlcToSol"
-      ? status.data?.glc_to_sol_available
-      : status.data?.sol_to_glc_available;
+  // Why a direction is unavailable comes from the /status booleans, not
+  // from any backend message string: the backend deliberately returns one
+  // cause-agnostic message for every unavailable cause on submit.
+  const dirState = status.data ? directionGateState(status.data, direction) : null;
+  const remainingMintRaw = status.data
+    ? String(rollingVolumeRemaining(status.data, direction))
+    : null;
 
   const gate = useMemo(() => {
     if (status.isPending || limits.isPending || reserve.isPending) {
@@ -143,15 +162,34 @@ export function BridgeCard() {
         blocker: "unavailable" as const,
       };
     }
-    if (directionAvailable === false) {
+    if (dirState === "quota-paused") {
       return {
         can: false,
-        reason: `${descriptor.label} is currently paused or unavailable.`,
+        reason: `${QUOTA_PAUSED_TITLE} ${QUOTA_PAUSED_BODY}`,
+        reasonShownInline: false,
+        blocker: "quota-paused" as const,
+      };
+    }
+    if (dirState === "quota-exhausted") {
+      return {
+        can: false,
+        reason: `${QUOTA_EXHAUSTED_TITLE} ${QUOTA_EXHAUSTED_BODY}`,
+        reasonShownInline: false,
+        blocker: "quota-exhausted" as const,
+      };
+    }
+    if (dirState === "operator-paused") {
+      return {
+        can: false,
+        reason: `${descriptor.label} is currently paused.`,
         reasonShownInline: false,
         blocker: "paused" as const,
       };
     }
-    if (destinationReserveCapacity !== null && destinationReserveCapacity <= 0) {
+    if (
+      dirState === "capacity-constrained" ||
+      (destinationReserveCapacity !== null && destinationReserveCapacity <= 0)
+    ) {
       return {
         can: false,
         reason: "Insufficient reserve liquidity for this direction right now.",
@@ -168,6 +206,32 @@ export function BridgeCard() {
         reasonShownInline: reportable,
         blocker: null,
       };
+    }
+    if (remainingMintRaw !== null) {
+      // Mirror of the backend's proactive quota check on POST /transfers:
+      // compare the requested amount against this direction's remaining
+      // 24h window, in the canonical unit so no precision is lost. The
+      // amount is never silently altered — the submit is blocked with the
+      // remaining figure stated.
+      const remainingCanonical = BigInt(
+        sourceRawToCanonical(remainingMintRaw, SOLANA_GLC.decimals),
+      );
+      const grossCanonical = BigInt(
+        sourceRawToCanonical(amountValidation.raw, sourceToken.decimals),
+      );
+      if (grossCanonical > remainingCanonical) {
+        const remainingDisplay = display(
+          atomicRescaleFloor(remainingMintRaw, SOLANA_GLC.decimals, sourceToken.decimals),
+          sourceToken.decimals,
+          sourceToken.symbol,
+        );
+        return {
+          can: false,
+          reason: `That amount exceeds the remaining 24-hour bridge capacity for this direction (${remainingDisplay} remaining). Enter a smaller amount, or check back after capacity is replenished.`,
+          reasonShownInline: false,
+          blocker: null,
+        };
+      }
     }
     if (!recipientValidation.valid) {
       const reportable = recipient.trim() !== "" && recipientValidation.message !== null;
@@ -213,7 +277,8 @@ export function BridgeCard() {
     status.isError,
     limits.isPending,
     reserve.isPending,
-    directionAvailable,
+    dirState,
+    remainingMintRaw,
     destinationReserveCapacity,
     amountValidation,
     recipientValidation,
@@ -223,6 +288,7 @@ export function BridgeCard() {
     quote.isPending,
     quote.isError,
     descriptor.label,
+    sourceToken,
   ]);
 
   async function submit() {
@@ -378,6 +444,22 @@ export function BridgeCard() {
               {display(amountBounds.minimum, amountBounds.decimals, amountBounds.symbol)}{" "}
               · Max{" "}
               {display(amountBounds.maximum, amountBounds.decimals, amountBounds.symbol)}
+              {remainingMintRaw !== null && (
+                <span title="Remaining 24-hour bridge capacity for this direction. Reopening after exhaustion is a manual operator action, not automatic.">
+                  {" "}
+                  ·{" "}
+                  {display(
+                    atomicRescaleFloor(
+                      remainingMintRaw,
+                      SOLANA_GLC.decimals,
+                      amountBounds.decimals,
+                    ),
+                    amountBounds.decimals,
+                    amountBounds.symbol,
+                  )}{" "}
+                  remaining today
+                </span>
+              )}
             </p>
           )}
         </div>
@@ -458,7 +540,12 @@ export function BridgeCard() {
   );
 }
 
-type Blocker = "unavailable" | "paused" | "insufficient-liquidity";
+type Blocker =
+  | "unavailable"
+  | "paused"
+  | "insufficient-liquidity"
+  | "quota-exhausted"
+  | "quota-paused";
 
 /**
  * Bridge-wide, backend-driven blockers get their own callout rather than
@@ -490,14 +577,32 @@ function BlockerAlert({
       funds:
         "Nothing you enter below will submit until capacity is available — no funds move.",
     },
+    // The two quota states carry the approved copy verbatim. Neither may
+    // ever promise a reset time or an automatic reopening: the backend's
+    // pause after exhaustion only clears by manual operator action
+    // (docs/09-runbook.md, 2026-08-22).
+    "quota-exhausted": {
+      title: QUOTA_EXHAUSTED_TITLE,
+      funds: `${QUOTA_EXHAUSTED_BODY} Nothing you enter below will submit — no funds move.`,
+    },
+    "quota-paused": {
+      title: QUOTA_PAUSED_TITLE,
+      funds: `${QUOTA_PAUSED_BODY} Nothing you enter below will submit — no funds move.`,
+    },
   };
+  const next =
+    blocker === "quota-paused"
+      ? QUOTA_PAUSED_NEXT
+      : blocker === "quota-exhausted"
+        ? "See the current status page for live capacity."
+        : "Check your connection and try again, or see the current status.";
 
   return (
     <Alert
       level="warn"
       title={copy[blocker].title}
       funds={copy[blocker].funds}
-      next="Check your connection and try again, or see the current status."
+      next={next}
       actions={
         <ButtonLink href={routes.status} variant="secondary" size="sm">
           View status

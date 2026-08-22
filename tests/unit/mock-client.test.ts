@@ -43,7 +43,7 @@ describe("MockBridgeClient — direction availability / reserve scenarios", () =
     expect(reserve.solana_available_capacity).toBeGreaterThan(0);
   });
 
-  it("paused scenario: createTransfer is refused with a paused error", async () => {
+  it("paused scenario: createTransfer is refused with the single direction-unavailable 409", async () => {
     const client = new MockBridgeClient({ latencyMs: 0, scenario: "paused" });
     const status = await client.getStatus();
     expect(status.solana_paused).toBe(true);
@@ -53,11 +53,11 @@ describe("MockBridgeClient — direction availability / reserve scenarios", () =
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);
-      if (isApiError(error)) expect(error.kind).toBe("paused");
+      if (isApiError(error)) expect(error.kind).toBe("direction-unavailable");
     }
   });
 
-  it("insufficient-liquidity scenario: createTransfer is refused with that error kind", async () => {
+  it("insufficient-liquidity scenario: createTransfer is refused with the same direction-unavailable 409", async () => {
     const client = new MockBridgeClient({
       latencyMs: 0,
       scenario: "insufficient-liquidity",
@@ -72,7 +72,7 @@ describe("MockBridgeClient — direction availability / reserve scenarios", () =
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);
-      if (isApiError(error)) expect(error.kind).toBe("insufficient-liquidity");
+      if (isApiError(error)) expect(error.kind).toBe("direction-unavailable");
     }
   });
 });

@@ -61,3 +61,28 @@ export function canonicalToSourceRawCeil(
   const value = BigInt(canonical);
   return ((value + divisor - 1n) / divisor).toString();
 }
+
+/**
+ * General atomic-unit rescaling between two decimal precisions.
+ *
+ * Needed because the wire carries TWO unit families: gross/fee/net figures
+ * are canonical (8 decimals, docs/20-bridge-fee.md), while `/limits` and the
+ * rolling-volume quota fields pass the on-chain `BridgeConfig` values
+ * through raw — and the on-chain limit checks compare them against
+ * mint-atomic amounts (6 decimals; `limits.rs::enforce_transfer_amount`),
+ * so those fields are mint-atomic. Rounding direction is the caller's
+ * safety decision: ceil a minimum, floor a maximum/remaining, so a rounded
+ * bound is never more permissive than the backend's.
+ */
+export function atomicRescaleFloor(raw: string, from: number, to: number): string {
+  if (from === to) return raw;
+  if (from < to) return `${raw}${"0".repeat(to - from)}`;
+  const divisor = 10n ** BigInt(from - to);
+  return (BigInt(raw) / divisor).toString();
+}
+
+export function atomicRescaleCeil(raw: string, from: number, to: number): string {
+  if (from <= to) return atomicRescaleFloor(raw, from, to);
+  const divisor = 10n ** BigInt(from - to);
+  return ((BigInt(raw) + divisor - 1n) / divisor).toString();
+}
