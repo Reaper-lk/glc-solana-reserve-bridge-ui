@@ -7,9 +7,8 @@ import "./globals.css";
 import { AppShell } from "@/components/layout/AppShell";
 import { QueryProvider } from "@/lib/query/provider";
 import { SolanaProvider } from "@/lib/solana";
-import { bridgeApi } from "@/lib/api";
+import { loadInitialStatus } from "@/lib/api/initial-status";
 import { env } from "@/lib/config/env";
-import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 
 export const metadata: Metadata = {
   metadataBase: new URL(env.appUrl),
@@ -30,18 +29,12 @@ export const viewport: Viewport = {
   maximumScale: 5,
 };
 
-/**
- * Fetch the status snapshot on the server so the global trust strip is
- * correct on first paint. A failure here degrades to a client fetch rather
- * than taking the whole page down.
+/*
+ * The status snapshot is fetched server-side so the global trust strip is
+ * correct on first paint — with an SSR-only 1.5s fail-fast budget
+ * (src/lib/api/initial-status.ts) so an offline backend degrades the page
+ * quickly instead of blocking every route for the client's full timeout.
  */
-async function loadInitialStatus(): Promise<BridgeStatusDto | undefined> {
-  try {
-    return await bridgeApi.getStatus();
-  } catch {
-    return undefined;
-  }
-}
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   /*

@@ -3,26 +3,68 @@ import { buildCsp, connectOriginsFrom, createNonce } from "@/lib/security/csp";
 
 describe("buildCsp", () => {
   it("includes the nonce and strict-dynamic in script-src", () => {
-    const csp = buildCsp({ nonce: "abc123", isDev: false, connectOrigins: ["'self'"] });
+    const csp = buildCsp({
+      appUrl: "https://bridge.example.test",
+      nonce: "abc123",
+      isDev: false,
+      connectOrigins: ["'self'"],
+    });
     expect(csp).toContain("script-src 'self' 'nonce-abc123' 'strict-dynamic'");
   });
 
   it("adds unsafe-eval only in dev", () => {
-    const dev = buildCsp({ nonce: "n", isDev: true, connectOrigins: ["'self'"] });
-    const prod = buildCsp({ nonce: "n", isDev: false, connectOrigins: ["'self'"] });
+    const dev = buildCsp({
+      appUrl: "https://bridge.example.test",
+      nonce: "n",
+      isDev: true,
+      connectOrigins: ["'self'"],
+    });
+    const prod = buildCsp({
+      appUrl: "https://bridge.example.test",
+      nonce: "n",
+      isDev: false,
+      connectOrigins: ["'self'"],
+    });
     expect(dev).toContain("'unsafe-eval'");
     expect(prod).not.toContain("'unsafe-eval'");
   });
 
-  it("adds upgrade-insecure-requests only in production", () => {
-    const dev = buildCsp({ nonce: "n", isDev: true, connectOrigins: ["'self'"] });
-    const prod = buildCsp({ nonce: "n", isDev: false, connectOrigins: ["'self'"] });
-    expect(dev).not.toContain("upgrade-insecure-requests");
+  it("adds upgrade-insecure-requests when the app is served over HTTPS", () => {
+    const prod = buildCsp({
+      appUrl: "https://bridge.example.test",
+      nonce: "n",
+      isDev: false,
+      connectOrigins: ["'self'"],
+    });
     expect(prod).toContain("upgrade-insecure-requests");
+  });
+
+  it("omits upgrade-insecure-requests for an HTTP app URL, even in a production build", () => {
+    // A production build temporarily served over plain HTTP (IP-only
+    // staging, TLS terminated elsewhere) must not have its own subresource
+    // requests rewritten to a non-existent https:// listener.
+    const httpProd = buildCsp({
+      appUrl: "http://5.0.0.1:3000",
+      nonce: "n",
+      isDev: false,
+      connectOrigins: ["'self'"],
+    });
+    expect(httpProd).not.toContain("upgrade-insecure-requests");
+  });
+
+  it("omits upgrade-insecure-requests in HTTP development", () => {
+    const dev = buildCsp({
+      appUrl: "http://localhost:3000",
+      nonce: "n",
+      isDev: true,
+      connectOrigins: ["'self'"],
+    });
+    expect(dev).not.toContain("upgrade-insecure-requests");
   });
 
   it("includes every configured connect origin", () => {
     const csp = buildCsp({
+      appUrl: "https://bridge.example.test",
       nonce: "n",
       isDev: false,
       connectOrigins: ["'self'", "https://api.example.test"],
@@ -31,7 +73,12 @@ describe("buildCsp", () => {
   });
 
   it("never allows object-src or framing", () => {
-    const csp = buildCsp({ nonce: "n", isDev: false, connectOrigins: ["'self'"] });
+    const csp = buildCsp({
+      appUrl: "https://bridge.example.test",
+      nonce: "n",
+      isDev: false,
+      connectOrigins: ["'self'"],
+    });
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("frame-ancestors 'none'");
   });
