@@ -88,7 +88,7 @@ describe("HttpBridgeClient", () => {
     }
   });
 
-  it("maps a 409 with 'paused' in the message to kind paused", async () => {
+  it("maps a 409 to the single direction-unavailable kind (the backend's message is cause-agnostic)", async () => {
     respondError(409, "the destination reserve is paused");
     const client = new HttpBridgeClient(BASE);
     try {
@@ -96,11 +96,11 @@ describe("HttpBridgeClient", () => {
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);
-      if (isApiError(error)) expect(error.kind).toBe("paused");
+      if (isApiError(error)) expect(error.kind).toBe("direction-unavailable");
     }
   });
 
-  it("maps a 409 without 'paused' in the message to insufficient-liquidity", async () => {
+  it("maps every 409 to direction-unavailable regardless of message text", async () => {
     respondError(
       409,
       "the destination reserve cannot currently cover this amount (available: 5)",
@@ -111,7 +111,7 @@ describe("HttpBridgeClient", () => {
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);
-      if (isApiError(error)) expect(error.kind).toBe("insufficient-liquidity");
+      if (isApiError(error)) expect(error.kind).toBe("direction-unavailable");
     }
   });
 

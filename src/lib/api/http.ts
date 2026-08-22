@@ -7,10 +7,9 @@ import type {
 } from "./client";
 import {
   badRequestError,
-  insufficientLiquidityError,
+  directionUnavailableError,
   networkError,
   notFoundError,
-  pausedError,
   rateLimitedError,
   serverError,
   timeoutError,
@@ -191,8 +190,11 @@ export class HttpBridgeClient implements BridgeApiClient {
         : `Bridge API responded ${response.status}`;
 
       if (response.status === 409) {
-        if (/paused/i.test(message)) throw pausedError();
-        throw insufficientLiquidityError(message);
+        // Every 409 cause (paused, insufficient liquidity, quota
+        // exhausted) now carries the same approved backend message — the
+        // specific cause is read from /status's fields, never parsed from
+        // this string (api.rs's DIRECTION_UNAVAILABLE_MESSAGE docs).
+        throw directionUnavailableError(message);
       }
       if (response.status === 400) throw badRequestError(message);
 

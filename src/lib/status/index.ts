@@ -88,7 +88,8 @@ export const requestStateStatus: Record<RequestState, StatusDescriptor> = {
 /* Reserve / direction availability                                            */
 /* -------------------------------------------------------------------------- */
 
-export type DirectionAvailability = "available" | "paused" | "insufficient-liquidity";
+export type DirectionAvailability =
+  "available" | "paused" | "insufficient-liquidity" | "quota-exhausted" | "quota-paused";
 
 export const directionAvailabilityStatus: Record<
   DirectionAvailability,
@@ -100,6 +101,18 @@ export const directionAvailabilityStatus: Record<
     label: "Insufficient liquidity",
     tone: "warn",
     icon: TriangleAlert,
+  },
+  // Rolling-24h-volume quota states (backend 2026-08-22 workflow). Labels
+  // deliberately promise no reset time and no automatic reopening.
+  "quota-exhausted": {
+    label: "24h capacity reached",
+    tone: "warn",
+    icon: TriangleAlert,
+  },
+  "quota-paused": {
+    label: "Paused for refill",
+    tone: "danger",
+    icon: Pause,
   },
 };
 

@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { INTERCEPTED_API_ORIGIN } from "../../playwright.config";
 import { mockHappyBackend, respondJson } from "./intercepted-helpers";
+import * as fixtures from "../../src/lib/api/mock/fixtures";
 
 /**
  * Every scenario here runs against a real NEXT_PUBLIC_BRIDGE_API_MODE=http
@@ -44,21 +45,80 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
   }) => {
     await mockHappyBackend(page);
     await page.route(`${INTERCEPTED_API_ORIGIN}/status`, (route) =>
-      respondJson(route, {
-        goldcoin_paused: false,
-        solana_paused: true,
-        vault_address: "GLCVau1t111111111111111111111111111111111",
-        next_solana_obligation_index: 1,
-        glc_to_sol_available: false,
-        sol_to_glc_available: true,
-      }),
+      respondJson(route, fixtures.pausedStatusFixture()),
     );
 
     await page.goto("/bridge");
-    await expect(page.getByText(/currently paused or unavailable/i)).toBeVisible();
+    await expect(page.getByText(/is currently paused\./i).first()).toBeVisible();
     await expect(
       page.getByRole("button", { name: /Create deposit request/i }),
     ).toBeDisabled();
+  });
+
+  test("quota exhausted: exact approved message, submit disabled, opposite direction usable", async ({
+    page,
+  }) => {
+    await mockHappyBackend(page);
+    await page.route(`${INTERCEPTED_API_ORIGIN}/status`, (route) =>
+      respondJson(route, fixtures.quotaExhaustedStatusFixture()),
+    );
+
+    await page.goto("/bridge");
+    await expect(
+      page.getByText("24-hour bridge capacity reached for this direction.").first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/New transfers are temporarily unavailable\./).first(),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Create deposit request/i }),
+    ).toBeDisabled();
+
+    // No automatic-reset promises anywhere on the page.
+    const body = (await page.textContent("body")) ?? "";
+    expect(body).not.toMatch(/midnight/i);
+    expect(body).not.toMatch(/automatic/i);
+    expect(body).not.toMatch(/resets?\s+(at|in)/i);
+
+    // The opposite (healthy) direction stays usable.
+    await page.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }).click();
+    await expect(
+      page.getByText("24-hour bridge capacity reached for this direction.").first(),
+    ).not.toBeVisible();
+    await page.getByLabel(/Amount in GLC/i).fill("500");
+    await expect(page.getByLabel(/Amount in GLC/i)).toHaveValue("500");
+  });
+
+  test("quota exhausted + operator paused: the approved refill message with the Telegram line", async ({
+    page,
+  }) => {
+    await mockHappyBackend(page);
+    await page.route(`${INTERCEPTED_API_ORIGIN}/status`, (route) =>
+      respondJson(route, fixtures.quotaPausedStatusFixture()),
+    );
+
+    await page.goto("/bridge");
+    await expect(
+      page.getByText("Bridge capacity reached for this direction.").first(),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByText(/Transfers are temporarily paused while reserves are replenished\./)
+        .first(),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByText(/Please check the official Telegram for reopening updates\./)
+        .first(),
+    ).toBeVisible();
+  });
+
+  test("shows the remaining 24h capacity from /status on the bridge form", async ({
+    page,
+  }) => {
+    await mockHappyBackend(page);
+    await page.goto("/bridge");
+    await expect(page.getByText(/17,500 GLC\s+remaining today/)).toBeVisible();
   });
 
   test("a paused-reserve 409 on submit is shown as an error, not a fabricated success", async ({
@@ -86,9 +146,12 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
     ).not.toBeVisible();
   });
 
-  test("an insufficient-liquidity 409 on submit is shown with its own message, not a generic error", async ({
+  test("every 409 cause maps to the single approved direction-unavailable message", async ({
     page,
   }) => {
+    // The backend returns the same cause-agnostic text for paused,
+    // insufficient-liquidity, and quota-exhausted — the UI must render
+    // the approved message, not parse the string for a cause.
     await mockHappyBackend(page);
     await page.route(`${INTERCEPTED_API_ORIGIN}/transfers`, (route) => {
       if (route.request().method() === "OPTIONS") return respondJson(route, null);
@@ -97,7 +160,7 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
         route,
         {
           error:
-            "the destination reserve cannot currently cover this amount (available: 5)",
+            "Bridge capacity reached for this direction.\nTransfers are temporarily paused while reserves are replenished.\nPlease check the official Telegram for reopening updates.",
         },
         409,
       );
@@ -111,7 +174,10 @@ test.describe("backend failure and unhappy-path scenarios (real HTTP client)", (
     await page.getByRole("button", { name: /Create deposit request/i }).click();
 
     await expect(
-      page.getByRole("alert").filter({ hasText: "reserve liquidity" }),
+      page.getByRole("alert").filter({ hasText: "Bridge capacity reached" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "official Telegram" }),
     ).toBeVisible();
   });
 
