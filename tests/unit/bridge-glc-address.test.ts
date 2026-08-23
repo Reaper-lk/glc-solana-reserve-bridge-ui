@@ -115,6 +115,49 @@ describe("validateGoldcoinAddress — wrong network", () => {
   });
 });
 
+describe("validateGoldcoinAddress — real Goldcoin mainnet deployment", () => {
+  // Real, node-verified values (not stand-ins like `RULES` above) —
+  // glc-solana-reserve-bridge: service/src/goldcoin/address.rs,
+  // verified against a real, isolated goldcoind mainnet session.
+  const GOLDCOIN_MAINNET_P2PKH = 32;
+  const GOLDCOIN_MAINNET_P2SH = 50;
+  const GOLDCOIN_TESTNET_P2PKH = 111;
+
+  // The backend's Solana -> Goldcoin payout only ever builds a P2PKH
+  // destination output (service/src/signing/goldcoin_vault.rs calls
+  // `address::decode_p2pkh` exclusively) — a correct mainnet deployment's
+  // NEXT_PUBLIC_GLC_ADDRESS_VERSIONS configures ONLY 32, never also 50.
+  const MAINNET_RULES = { versions: [GOLDCOIN_MAINNET_P2PKH] };
+
+  it("accepts a real Goldcoin mainnet P2PKH address", () => {
+    const address = encodeBase58Check(GOLDCOIN_MAINNET_P2PKH, PAYLOAD);
+    const result = validateGoldcoinAddress(address, MAINNET_RULES);
+    expect(result.valid).toBe(true);
+    expect(result.version).toBe(GOLDCOIN_MAINNET_P2PKH);
+  });
+
+  it("rejects a Goldcoin mainnet P2SH (vault) address — payouts are P2PKH-only", () => {
+    const address = encodeBase58Check(GOLDCOIN_MAINNET_P2SH, PAYLOAD);
+    const result = validateGoldcoinAddress(address, MAINNET_RULES);
+    expect(result.valid).toBe(false);
+    expect(result.problem).toBe("wrong-network");
+  });
+
+  it("rejects a Goldcoin testnet address under mainnet rules", () => {
+    const address = encodeBase58Check(GOLDCOIN_TESTNET_P2PKH, PAYLOAD);
+    const result = validateGoldcoinAddress(address, MAINNET_RULES);
+    expect(result.valid).toBe(false);
+    expect(result.problem).toBe("wrong-network");
+  });
+
+  it("still rejects a malformed address once mainnet rules are correctly configured", () => {
+    const address = encodeBase58Check(GOLDCOIN_MAINNET_P2PKH, PAYLOAD);
+    const last = address.at(-1) as string;
+    const mutated = `${address.slice(0, -1)}${last === "a" ? "b" : "a"}`;
+    expect(validateGoldcoinAddress(mutated, MAINNET_RULES).valid).toBe(false);
+  });
+});
+
 describe("validateGoldcoinAddress — hostile and confused input", () => {
   it("rejects a Solana address pasted into the Goldcoin field", () => {
     // Base58, plausible length, entirely wrong chain. A user with both wallets
