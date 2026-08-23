@@ -55,8 +55,8 @@ type Phase =
   | {
       kind: "glc-to-sol-deposit";
       requestId: number;
-      depositVaultAddress: string;
-      depositBindingHex: string;
+      depositAddress: string;
+      amountAtomic: string;
     }
   | { kind: "sol-to-glc-waiting"; signature: string };
 
@@ -304,8 +304,12 @@ export function BridgeCard() {
         setPhase({
           kind: "glc-to-sol-deposit",
           requestId: output.request_id,
-          depositVaultAddress: output.deposit_vault_address,
-          depositBindingHex: output.deposit_binding_hex,
+          depositAddress: output.deposit_address,
+          // GOLDCOIN_GLC has zero canonical padding, so this is the exact
+          // amount_atomic just sent to the API, as a base-unit string —
+          // never re-derived from the `number` above, which exists only
+          // for the wire request field.
+          amountAtomic: amountValidation.raw,
         });
       } else {
         if (!status.data) throw new Error("Bridge status is not loaded");
@@ -350,8 +354,8 @@ export function BridgeCard() {
       <Card variant="raised" padding="lg">
         <h1 className="text-heading-2 mb-4">Send your deposit</h1>
         <DepositInstructions
-          depositVaultAddress={phase.depositVaultAddress}
-          depositBindingHex={phase.depositBindingHex}
+          depositAddress={phase.depositAddress}
+          amountAtomic={phase.amountAtomic}
         />
         <Button
           className="mt-4"

@@ -68,11 +68,17 @@ export const createTransferRequestSchema = z.object({
 
 export type CreateTransferRequest = z.infer<typeof createTransferRequestSchema>;
 
-/** `201` body for `POST /transfers` — `CreateTransferOutput`. */
+/**
+ * `201` body for `POST /transfers` — `CreateTransferOutput`.
+ *
+ * `deposit_address` is unique to this one request (`goldcoin::derivation`
+ * in glc-solana-reserve-bridge) — the user sends the exact amount they
+ * requested to it directly. No OP_RETURN or other binding value is
+ * needed or returned.
+ */
 export const createTransferOutputSchema = z.object({
   request_id: z.number().int(),
-  deposit_vault_address: z.string().min(1),
-  deposit_binding_hex: z.string().min(1),
+  deposit_address: z.string().min(1),
 });
 
 export type CreateTransferOutputDto = z.infer<typeof createTransferOutputSchema>;

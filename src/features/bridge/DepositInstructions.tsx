@@ -1,43 +1,43 @@
-import { AddressChunks, Alert, CopyButton } from "@/components/ui";
+import { AddressChunks, CopyButton } from "@/components/ui";
+import { GOLDCOIN_GLC } from "@/lib/bridge/direction";
+import { formatBaseUnits } from "@/lib/format/amount";
 import { CollapsibleQR } from "./CollapsibleQR";
 
 /**
  * Deposit instructions for the Goldcoin -> Solana direction, exactly as
- * `POST /transfers` returned them. The OP_RETURN requirement is not
- * optional decoration — without it the deposit cannot be bound to this
- * request id (`goldcoin/deposit.rs` in glc-solana-reserve-bridge), so it is
- * stated as plainly as the address itself.
+ * `POST /transfers` returned them: a deposit address unique to this one
+ * request (`goldcoin::derivation` in glc-solana-reserve-bridge). The user
+ * sends the exact amount they requested to it directly — no OP_RETURN, no
+ * memo, no salted amount, no special wallet functionality.
  */
 export function DepositInstructions({
-  depositVaultAddress,
-  depositBindingHex,
+  depositAddress,
+  amountAtomic,
 }: {
-  depositVaultAddress: string;
-  depositBindingHex: string;
+  depositAddress: string;
+  /** Integer base-unit (8-decimal) GLC string — the exact amount to send. */
+  amountAtomic: string;
 }) {
+  const amountDisplay = formatBaseUnits(amountAtomic, GOLDCOIN_GLC.decimals);
+
   return (
     <div className="flex flex-col gap-4">
-      <CollapsibleQR value={depositVaultAddress} label="deposit address" />
+      <div>
+        <p className="text-body-sm text-ink-600 mb-1">Send exactly</p>
+        <p className="text-heading-3">
+          {amountDisplay} {GOLDCOIN_GLC.symbol}
+        </p>
+      </div>
+
+      <CollapsibleQR value={depositAddress} label="deposit address" />
 
       <div>
         <p className="text-body-sm text-ink-600 mb-1">Send to</p>
         <div className="border-ink-200 flex items-center justify-between gap-2 rounded-lg border p-3">
-          <AddressChunks address={depositVaultAddress} size="sm" />
-          <CopyButton value={depositVaultAddress} label="deposit address" />
+          <AddressChunks address={depositAddress} size="sm" />
+          <CopyButton value={depositAddress} label="deposit address" />
         </div>
       </div>
-
-      <Alert
-        level="warn"
-        title="This deposit requires an OP_RETURN output"
-        funds="No funds have moved yet. Nothing is at risk until you broadcast a transaction."
-        next="Your Goldcoin transaction must include an OP_RETURN output carrying the binding value below, in addition to the payment. A wallet that cannot add a custom OP_RETURN output cannot complete this deposit."
-      >
-        <div className="border-ink-200 mt-2 flex items-center justify-between gap-2 rounded-lg border p-3">
-          <span className="text-mono-sm break-all">{depositBindingHex}</span>
-          <CopyButton value={depositBindingHex} label="OP_RETURN binding value" />
-        </div>
-      </Alert>
     </div>
   );
 }

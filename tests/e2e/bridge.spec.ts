@@ -54,7 +54,7 @@ test.describe("bridge form", () => {
     await expect(cta).toHaveAccessibleDescription(/.+/);
   });
 
-  test("creates a GlcToSol transfer and shows real deposit instructions with the OP_RETURN binding", async ({
+  test("creates a GlcToSol transfer and shows the unique deposit address and exact amount, with no OP_RETURN", async ({
     page,
   }) => {
     await page.goto("/bridge");
@@ -68,7 +68,9 @@ test.describe("bridge form", () => {
     await cta.click();
 
     await expect(page.getByRole("heading", { name: /Send your deposit/i })).toBeVisible();
-    await expect(page.getByText(/OP_RETURN/i).first()).toBeVisible();
+    await expect(page.getByText(/Send exactly/i)).toBeVisible();
+    await expect(page.getByText(/1,000\.00/)).toBeVisible();
+    await expect(page.getByText(/OP_RETURN/i)).toHaveCount(0);
 
     await page.getByRole("button", { name: /track this transfer/i }).click();
     await expect(page).toHaveURL(/\/bridge\/\d+/);
