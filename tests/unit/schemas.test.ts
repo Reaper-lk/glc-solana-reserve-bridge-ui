@@ -76,8 +76,8 @@ describe("schemas reject malformed backend responses", () => {
     expect(transferViewSchema.safeParse(malformed).success).toBe(false);
   });
 
-  it("rejects a create-transfer output missing deposit_binding_hex", () => {
-    const malformed = { request_id: 1, deposit_vault_address: "abc" };
+  it("rejects a create-transfer output missing deposit_address", () => {
+    const malformed = { request_id: 1 };
     expect(createTransferOutputSchema.safeParse(malformed).success).toBe(false);
   });
 

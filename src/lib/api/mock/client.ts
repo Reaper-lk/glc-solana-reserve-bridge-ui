@@ -173,10 +173,11 @@ export class MockBridgeClient implements BridgeApiClient {
       failure_reason: null,
     });
 
+    // A distinct mock address per request id, so dev/test flows exercise
+    // "each new request gets a different deposit address" realistically.
     const output = {
       request_id: id,
-      deposit_vault_address: "GLCVau1t111111111111111111111111111111111",
-      deposit_binding_hex: id.toString(16).padStart(64, "0"),
+      deposit_address: `GLCDep0sit${id.toString().padStart(6, "0")}1111111111111111111111`,
     };
     return this.delay(createTransferOutputSchema.parse(output));
   }
