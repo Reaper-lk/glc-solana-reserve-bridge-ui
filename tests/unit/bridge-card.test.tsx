@@ -230,11 +230,10 @@ describe("BridgeCard — reserve capacity and pause gating", () => {
 });
 
 describe("BridgeCard — transfer submission", () => {
-  it("creates a GlcToSol transfer and shows deposit instructions with the OP_RETURN binding", async () => {
+  it("creates a GlcToSol transfer and shows the unique deposit address and exact amount, with no OP_RETURN", async () => {
     createTransfer.mockResolvedValue({
       request_id: 4242,
-      deposit_vault_address: "GLCVau1t111111111111111111111111111111111",
-      deposit_binding_hex: "ab".repeat(32),
+      deposit_address: "GLCVau1t111111111111111111111111111111111",
     });
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeCard />);
@@ -251,8 +250,9 @@ describe("BridgeCard — transfer submission", () => {
     await user.click(submit);
 
     expect(await screen.findByText(/Send your deposit/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/OP_RETURN/i).length).toBeGreaterThan(0);
-    expect(screen.getByText("ab".repeat(32))).toBeInTheDocument();
+    expect(screen.getByText(/Send exactly/i)).toBeInTheDocument();
+    expect(screen.getByText(/1,000\.00/)).toBeInTheDocument();
+    expect(screen.queryByText(/OP_RETURN/i)).not.toBeInTheDocument();
     expect(createTransfer).toHaveBeenCalledWith({
       amount_atomic: 1_000_00000000,
       recipient: VALID_SOLANA_ADDRESS,

@@ -68,10 +68,12 @@ test("creates a real GlcToSol transfer request and shows real backend-issued dep
   await expect(page.getByRole("heading", { name: /send your deposit/i })).toBeVisible({
     timeout: 10_000,
   });
-  // The deposit address and OP_RETURN binding are the real backend's own
-  // response fields (CreateTransferOutput), never invented client-side.
+  // The deposit address is the real backend's own response field
+  // (CreateTransferOutput.deposit_address), never invented client-side —
+  // unique per request, no OP_RETURN binding required.
   await expect(page.getByText("Send to")).toBeVisible();
-  await expect(page.getByText(/OP_RETURN/i).first()).toBeVisible();
+  await expect(page.getByText(/Send exactly/i)).toBeVisible();
+  await expect(page.getByText(/OP_RETURN/i)).toHaveCount(0);
 
   await page.getByRole("button", { name: /I've sent it/i }).click();
   await expect(page).toHaveURL(/\/bridge\/\d+$/);
