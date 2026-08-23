@@ -90,8 +90,7 @@ export async function mockHappyBackend(page: Page): Promise<void> {
         route,
         {
           request_id: 4242,
-          deposit_vault_address: "GLCVau1t111111111111111111111111111111111",
-          deposit_binding_hex: "ab".repeat(32),
+          deposit_address: "GLCVau1t111111111111111111111111111111111",
         },
         201,
       );
