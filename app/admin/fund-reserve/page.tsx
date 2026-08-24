@@ -6,10 +6,13 @@ import { FundReserveView } from "@/features/admin/FundReserveView";
  * Operator-only Solana reserve funding — deliberately unlinked from every
  * public navigation surface (see `src/components/layout/AppShell.tsx`),
  * and excluded from indexing here as well. This page's own visibility is
- * NOT its access control: production additionally protects `/admin/*` at
- * the reverse-proxy layer (outside this repository), and the funding
- * action itself is separately gated by the server-side operator allowlist
- * check in `middleware.ts`.
+ * NOT its access control: production protects `/admin/*` with Nginx Basic
+ * Auth at the reverse-proxy layer, entirely outside this repository. Any
+ * operator who passes that reaches this page and may connect a wallet to
+ * fund the reserve — the connected Phantom wallet itself is still the
+ * thing that must sign every transfer (see `useFundReserve`), and the
+ * transaction's destination is independently validated regardless of who
+ * is operating the page (`assertIsReserveTokenAccount`).
  */
 export const metadata: Metadata = {
   title: "Fund reserve",
