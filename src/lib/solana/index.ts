@@ -27,16 +27,11 @@ export { MAX_GLC_ADDRESS_LEN, isDepositProgramConfigured } from "./deposit";
 export {
   useFundReserve,
   useReserveTokenAccountBalance,
-  useOperatorAuthorization,
   RESERVE_TOKEN_ACCOUNT_ADDRESS,
   RESERVE_MINT_DECIMALS,
   glcToAtomic,
 } from "./fund-reserve";
-export type {
-  FundReserveParams,
-  FundReserveResult,
-  OperatorAuthorization,
-} from "./fund-reserve";
+export type { FundReserveParams, FundReserveResult } from "./fund-reserve";
 export { fetchTokenAccountBalance } from "./balances";
 
 export { detectPlatform, needsDeepLink, canOfferInstall } from "./platform";
