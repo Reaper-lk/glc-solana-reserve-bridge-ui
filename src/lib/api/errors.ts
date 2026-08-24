@@ -25,7 +25,8 @@ export type ApiErrorKind =
   | "server"
   | "direction-unavailable"
   | "bad-request"
-  | "validation";
+  | "validation"
+  | "solana-transaction";
 
 export interface ErrorPresentation {
   readonly what: string;
@@ -179,6 +180,66 @@ export function validationError(endpoint: string, cause: unknown): ApiError {
       what: "The bridge returned data this page could not read.",
       funds: READ_ONLY_FUNDS_NOTE,
       next: "This is a fault on our side. Please report it with the diagnostic details.",
+    },
+  });
+}
+
+/**
+ * A short, safe-to-render hint pulled from a thrown wallet/RPC error's own
+ * message — never a full stack trace, never anything from request/response
+ * bodies that could carry secrets. `sendTransaction`/`confirmTransaction`
+ * failures from `@solana/web3.js`/wallet-adapter always carry their detail
+ * in `.message` (e.g. an RPC's rejection reason, or "User rejected the
+ * request"), so this is enough to be useful without being a debug console.
+ */
+function safeDiagnostic(cause: unknown): string | undefined {
+  if (!(cause instanceof Error)) return undefined;
+  const message = cause.message.trim();
+  return message.length > 0 ? message.slice(0, 200) : undefined;
+}
+
+/**
+ * `adapter.sendTransaction` failed — the transaction was never broadcast
+ * (a rejected RPC request, e.g. a 403 from an endpoint that doesn't accept
+ * browser-origin traffic, or the wallet itself refusing to sign/send), so
+ * it is safe to say plainly that nothing left the wallet.
+ */
+export function solanaSendError(cause: unknown): ApiError {
+  const diagnostic = safeDiagnostic(cause);
+  return new ApiError({
+    kind: "solana-transaction",
+    message: "Solana transaction could not be submitted",
+    retryable: true,
+    cause,
+    presentation: {
+      what: "The Solana transaction could not be submitted.",
+      funds: "No funds have left your wallet — the transaction was never sent.",
+      next: diagnostic
+        ? `Check your wallet and network connection, then try again. Reason: ${diagnostic}`
+        : "Check your wallet and network connection, then try again.",
+    },
+  });
+}
+
+/**
+ * The transaction was broadcast (it has a `signature`), but confirming it
+ * failed or timed out — unlike a send failure, this is genuinely
+ * ambiguous: the transaction may have already landed. Never claim funds
+ * are safe here; point at the one place that can actually answer that.
+ */
+export function solanaConfirmationError(cause: unknown, signature: string): ApiError {
+  const diagnostic = safeDiagnostic(cause);
+  return new ApiError({
+    kind: "solana-transaction",
+    message: "Solana transaction confirmation failed",
+    retryable: false,
+    cause,
+    presentation: {
+      what: "The Solana transaction was submitted, but its confirmation could not be verified.",
+      funds: `Check signature ${signature} on a Solana explorer before retrying — it may have already succeeded.`,
+      next: diagnostic
+        ? `If the explorer shows no successful transaction, try again. Reason: ${diagnostic}`
+        : "If the explorer shows no successful transaction, try again.",
     },
   });
 }
