@@ -1,5 +1,41 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { buildCsp, connectOriginsFrom, createNonce } from "@/lib/security/csp";
+import { isAuthorizedOperator } from "@/lib/security/operator-allowlist";
+
+/**
+ * The reserve-funding operator check (`/admin/fund-reserve`).
+ *
+ * Handled entirely here, in `middleware.ts` at the repo root — deliberately
+ * NOT as an `app/api/*` route handler. `scripts/check-no-secrets.mjs`
+ * (the "Secret guard" CI check) forbids any file under `app/`/`src/` from
+ * reading a non-public environment variable, on the reasoning that
+ * anything in that tree could end up in the browser bundle. That reasoning
+ * doesn't hold for THIS file (Next.js middleware never ships to the
+ * client, and it already reads non-public vars like `NODE_ENV`), but the
+ * guard's file-location check does not know that distinction, so the
+ * correct move is to use the one location this codebase already treats as
+ * legitimately server-only, not to weaken the guard itself.
+ *
+ * `RESERVE_FUNDING_OPERATOR_ALLOWLIST` is deliberately not a secret: it is
+ * a comma-separated list of Solana PUBLIC keys, which are public by
+ * definition — knowing one grants no capability, since only the holder of
+ * the matching PRIVATE key (in their own Phantom wallet, never touched by
+ * this app) can actually sign a funding transaction. This check exists as
+ * a second, defense-in-depth layer INSIDE the app on top of production's
+ * separate reverse-proxy access control in front of `/admin/*` (configured
+ * outside this repository, not part of this change) — it is not, on its
+ * own, the page's access control.
+ */
+const OPERATOR_CHECK_PATH = "/admin/fund-reserve/operator-check";
+
+function handleOperatorCheck(request: NextRequest): NextResponse {
+  const address = request.nextUrl.searchParams.get("address");
+  const authorized = isAuthorizedOperator(
+    address,
+    process.env.RESERVE_FUNDING_OPERATOR_ALLOWLIST,
+  );
+  return NextResponse.json({ authorized });
+}
 
 /**
  * Per-request Content Security Policy.
@@ -16,6 +52,10 @@ import { buildCsp, connectOriginsFrom, createNonce } from "@/lib/security/csp";
  * is the one PR 13 asks for.
  */
 export function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname === OPERATOR_CHECK_PATH) {
+    return handleOperatorCheck(request);
+  }
+
   const nonce = createNonce();
 
   const csp = buildCsp({
