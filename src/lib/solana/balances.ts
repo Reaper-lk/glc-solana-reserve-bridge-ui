@@ -39,6 +39,28 @@ export async function fetchSolBalance(
 }
 
 /**
+ * The balance of ONE SPECIFIC, already-known token account — distinct from
+ * `fetchTokenBalance`, which sums every account a given OWNER holds for a
+ * mint. This reads exactly the account at `tokenAccountAddress`, never
+ * derives or guesses at which account to read (used for the reserve's own
+ * token account, which is a fixed, given address, not something derived
+ * from an owner).
+ */
+export async function fetchTokenAccountBalance(
+  connection: Connection,
+  tokenAccountAddress: string,
+  symbol: string,
+): Promise<WalletBalance> {
+  const { value } = await connection.getTokenAccountBalance(
+    new PublicKey(tokenAccountAddress),
+  );
+  if (!/^\d+$/.test(value.amount)) {
+    throw new Error("Token account returned a malformed amount");
+  }
+  return { raw: value.amount, decimals: value.decimals, symbol };
+}
+
+/**
  * The SPL balance for one mint.
  *
  * Returns a zero balance when the owner has no token account for the mint —
