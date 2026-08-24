@@ -117,7 +117,11 @@ function anchorDiscriminator(instructionName: string): Uint8Array {
   return sha256(`global:${instructionName}`).slice(0, 8);
 }
 
-function findAssociatedTokenAddress(owner: PublicKey, mint: PublicKey): PublicKey {
+/** Exported for reuse by other modules in this directory that need to derive
+ * a wallet's own Token-2022 ATA (e.g. `fund-reserve.ts`'s SOURCE account) —
+ * never for deriving a fixed, already-existing destination account, which
+ * must always be taken as given, not computed. */
+export function findAssociatedTokenAddress(owner: PublicKey, mint: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
     [owner.toBuffer(), TOKEN_2022_PROGRAM_ID.toBuffer(), mint.toBuffer()],
     ASSOCIATED_TOKEN_PROGRAM_ID,
