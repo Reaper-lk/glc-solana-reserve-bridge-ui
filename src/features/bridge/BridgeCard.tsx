@@ -24,13 +24,13 @@ import {
   QUOTA_PAUSED_NEXT,
   QUOTA_PAUSED_TITLE,
   rollingVolumeRemaining,
+  MINIMUM_GROSS_BRIDGE_AMOUNT_GLC,
   SOLANA_GLC,
   validateAmount,
   validateGoldcoinAddress,
 } from "@/lib/bridge";
 import { routes } from "@/lib/config/links";
 import {
-  atomicRescaleCeil,
   atomicRescaleFloor,
   canonicalToSourceRawExact,
   sourceRawToCanonical,
@@ -82,17 +82,21 @@ export function BridgeCard() {
 
   const amountBounds = useMemo(() => {
     if (!limits.data) return null;
-    // `/limits` passes the on-chain `BridgeConfig` values through raw, and
-    // the on-chain checks compare them against MINT-atomic amounts
-    // (6 decimals; `limits.rs::enforce_transfer_amount`) — so these are
-    // mint units, not the canonical 8-decimal unit quotes use. Ceil the
-    // minimum and floor the maximum so the client-side bound is never more
-    // permissive than the on-chain one.
-    const minimum = atomicRescaleCeil(
-      String(limits.data.min_transfer_amount),
-      SOLANA_GLC.decimals,
-      sourceToken.decimals,
-    );
+    // The minimum is a fixed GROSS-side product floor
+    // (MINIMUM_GROSS_BRIDGE_AMOUNT_GLC), never `/limits`' own
+    // `min_transfer_amount` — that figure is a NET-side on-chain check
+    // (`limits.rs::enforce_transfer_amount`), and displaying/enforcing it
+    // as if it were the minimum a user enters understates the true floor
+    // by exactly the bridge fee (this was the "Min 99 GLC" bug).
+    const minimum = (
+      BigInt(MINIMUM_GROSS_BRIDGE_AMOUNT_GLC) *
+      10n ** BigInt(sourceToken.decimals)
+    ).toString();
+    // `/limits` passes the on-chain `BridgeConfig` value through raw, and
+    // the on-chain check compares it against MINT-atomic amounts (6
+    // decimals) — so this one IS in mint units, not the canonical
+    // 8-decimal unit quotes use. Floor it so the client-side bound is
+    // never more permissive than the on-chain one.
     const maximum = atomicRescaleFloor(
       String(limits.data.per_transfer_limit),
       SOLANA_GLC.decimals,
