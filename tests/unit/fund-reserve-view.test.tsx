@@ -9,6 +9,14 @@ import { FundReserveView } from "@/features/admin/FundReserveView";
  * Component-level coverage for the operator-only reserve funding page.
  * Every wallet/chain call is mocked (`@/lib/solana` in full) so each test
  * controls exactly one condition without a real Phantom connection or RPC.
+ *
+ * Access control for this page is entirely external (Nginx Basic Auth on
+ * `/admin/*` in production, plus staying unlinked from public navigation
+ * — see `app/admin/fund-reserve/page.tsx`) — there is no in-app
+ * authorization gate to test here. What IS still tested at this layer:
+ * the connected wallet must sign every transfer, and the safety checks
+ * (exact destination, confirmation screen, transaction-specific errors)
+ * hold regardless of who is operating the page.
  */
 
 const WALLET_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
@@ -16,7 +24,6 @@ const WALLET_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const {
   RESERVE_ADDRESS,
   walletConnection,
-  authorizationResult,
   fundFn,
   walletBalanceRefetch,
   reserveBalanceRefetch,
@@ -34,7 +41,6 @@ const {
     disconnect: vi.fn(),
     dismissError: vi.fn(),
   },
-  authorizationResult: vi.fn(),
   fundFn: vi.fn(),
   walletBalanceRefetch: vi.fn(),
   reserveBalanceRefetch: vi.fn(),
@@ -50,7 +56,6 @@ vi.mock("@/lib/solana", () => ({
     data: { raw: "10000000000", decimals: 6, symbol: "GLC" },
     refetch: reserveBalanceRefetch,
   }),
-  useOperatorAuthorization: () => authorizationResult(),
   useFundReserve: () => ({
     ready: true,
     walletAddress: walletConnection.address,
@@ -76,14 +81,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   walletConnection.status = "disconnected";
   walletConnection.address = null;
-  authorizationResult.mockReturnValue({
-    isPending: false,
-    isError: false,
-    data: { authorized: false },
-  });
 });
 
-describe("FundReserveView — access", () => {
+describe("FundReserveView — wallet connection gate", () => {
   it("prompts to connect a wallet when none is connected, with no funding form", () => {
     renderWithQueryClient(<FundReserveView />);
     expect(
@@ -92,45 +92,20 @@ describe("FundReserveView — access", () => {
     expect(screen.queryByLabelText(/Amount in GLC/i)).not.toBeInTheDocument();
   });
 
-  it("shows an unauthorized message and renders no funding form for a connected but non-allowlisted wallet", () => {
+  it("shows the funding form as soon as any wallet connects — access control is external, not an in-app allowlist", () => {
     walletConnection.status = "connected";
     walletConnection.address = WALLET_ADDRESS;
-    authorizationResult.mockReturnValue({
-      isPending: false,
-      isError: false,
-      data: { authorized: false },
-    });
     renderWithQueryClient(<FundReserveView />);
 
-    expect(screen.getByText(/not authorized to fund the reserve/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/Amount in GLC/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(RESERVE_ADDRESS)).not.toBeInTheDocument();
-  });
-
-  it("treats an authorization check failure the same as unauthorized — never renders the funding form", () => {
-    walletConnection.status = "connected";
-    walletConnection.address = WALLET_ADDRESS;
-    authorizationResult.mockReturnValue({
-      isPending: false,
-      isError: true,
-      data: undefined,
-    });
-    renderWithQueryClient(<FundReserveView />);
-
-    expect(screen.getByText(/not authorized to fund the reserve/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/Amount in GLC/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Amount in GLC/i)).toBeInTheDocument();
+    expect(screen.getAllByText(RESERVE_ADDRESS).length).toBeGreaterThan(0);
   });
 });
 
-describe("FundReserveView — authorized operator flow", () => {
+describe("FundReserveView — connected operator flow", () => {
   beforeEach(() => {
     walletConnection.status = "connected";
     walletConnection.address = WALLET_ADDRESS;
-    authorizationResult.mockReturnValue({
-      isPending: false,
-      isError: false,
-      data: { authorized: true },
-    });
   });
 
   it("shows the connected address, both balances, and the exact reserve token account", () => {
