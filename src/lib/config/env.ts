@@ -86,6 +86,22 @@ const RETIRED_RESERVE_PROGRAM_IDS = new Set([
   "7h2zSJuqpmbSq4seeXDdaJChVoxhEWwA9b8qG6Ct1GNn",
 ]);
 
+/**
+ * Solana Labs' shared public RPC — free, unauthenticated, and explicitly
+ * not meant for production traffic: it heavily rate-limits and, in
+ * practice, outright rejects (403) many browser-origin requests, including
+ * the `sendTransaction`/`getLatestBlockhash` calls this app's wallet flow
+ * depends on. A mainnet-beta deployment pointed at it fails wallet
+ * transactions in a way that looks like this app is broken, not like a
+ * config problem — so that misconfiguration fails loudly at startup
+ * instead. Every other cluster (devnet/testnet/localnet) keeps its own
+ * public endpoint, which is the normal, supported way to use them.
+ */
+const PUBLIC_UNTHROTTLED_MAINNET_RPC_URLS = new Set([
+  "https://api.mainnet-beta.solana.com",
+  "https://api.mainnet-beta.solana.com/",
+]);
+
 const envSchema = z
   .object({
     appUrl: urlSchema,
@@ -186,6 +202,21 @@ const envSchema = z
           `NEXT_PUBLIC_RESERVE_PROGRAM_ID ${value.reserveProgramId} is a ` +
           "permanently retired bridge program id and cannot be used on " +
           "mainnet-beta — see .env.example for the current production id",
+      });
+    }
+    if (
+      value.solanaCluster === "mainnet-beta" &&
+      value.solanaRpcUrl !== undefined &&
+      PUBLIC_UNTHROTTLED_MAINNET_RPC_URLS.has(value.solanaRpcUrl)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["solanaRpcUrl"],
+        message:
+          `NEXT_PUBLIC_SOLANA_RPC_URL ${value.solanaRpcUrl} is the public, ` +
+          "shared Solana RPC endpoint — it rejects many browser-origin " +
+          "requests and must not be used for a mainnet-beta deployment. " +
+          "Use a dedicated RPC provider instead — see .env.example.",
       });
     }
   });
