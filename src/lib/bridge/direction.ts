@@ -62,6 +62,22 @@ export const SOLANA_GLC: TokenDescriptor = {
   decimals: 6,
 };
 
+/**
+ * The minimum GROSS amount a user may enter/bridge, in either direction —
+ * a fixed product floor, deliberately NOT derived from `GET /limits`'
+ * `min_transfer_amount`.
+ *
+ * `min_transfer_amount` (99 GLC-equivalent on-chain) is checked by the
+ * program against the NET amount AFTER the 1% bridge fee is deducted
+ * (`release_from_reserve`'s `limits.rs::enforce_transfer_amount`,
+ * glc-solana-reserve-bridge) — it is a net-side protocol floor, not a
+ * gross entry-side one, and displaying or enforcing it as the latter is
+ * exactly the "Min 99 GLC" bug this constant replaces. 100 GLC gross is
+ * the amount that nets to exactly 99 GLC after the fee, so entering
+ * anything from 100 GLC up always clears that on-chain check.
+ */
+export const MINIMUM_GROSS_BRIDGE_AMOUNT_GLC = "100";
+
 export const directions: Record<Direction, DirectionDescriptor> = {
   GlcToSol: {
     id: "GlcToSol",

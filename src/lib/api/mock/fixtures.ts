@@ -102,12 +102,19 @@ export function quotaPausedStatusFixture(): BridgeStatusDto {
 }
 
 export function limitsFixture(): TransferLimitsDto {
-  // The approved production pilot limits — min 100 GLC, max 10,000 GLC per
-  // transfer — in the unit `/limits` actually carries: the on-chain
-  // `BridgeConfig` values raw, which the on-chain checks compare against
-  // MINT-atomic (6-decimal) amounts (limits.rs::enforce_transfer_amount).
+  // Real production values, in the unit `/limits` actually carries: the
+  // on-chain `BridgeConfig` values raw, which the on-chain checks compare
+  // against MINT-atomic (6-decimal) amounts
+  // (limits.rs::enforce_transfer_amount). `min_transfer_amount` is
+  // deliberately 99 GLC-equivalent, not 100 — it is checked against the
+  // NET amount after the 1% bridge fee, so a 100 GLC gross transfer (the
+  // UI's own, separate, fixed entry-side floor —
+  // `MINIMUM_GROSS_BRIDGE_AMOUNT_GLC`) nets to exactly 99 GLC and clears
+  // it. Kept at this real value (not a rounder 100) so tests exercise the
+  // actual production divergence between the two, not a coincidence where
+  // they happen to already match.
   return {
-    min_transfer_amount: 100_000000,
+    min_transfer_amount: 99_000000,
     per_transfer_limit: 10_000_000000,
     bridge_fee_bps: BRIDGE_FEE_BPS,
   };
