@@ -82,6 +82,54 @@ describe("public environment schema", () => {
     });
   });
 
+  describe("public Solana RPC endpoint on mainnet-beta", () => {
+    // The free, unauthenticated, shared endpoint — real-world root cause of
+    // wallet transactions failing with a browser-console 403 in production.
+    const PUBLIC_RPC = "https://api.mainnet-beta.solana.com";
+
+    it("refuses the public RPC endpoint when the cluster is mainnet-beta", () => {
+      const result = envSchema.safeParse({
+        ...base,
+        solanaCluster: "mainnet-beta",
+        solanaRpcUrl: PUBLIC_RPC,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0]?.message).toContain("must not be used");
+      }
+    });
+
+    it("refuses the public RPC endpoint with a trailing slash too", () => {
+      expect(
+        envSchema.safeParse({
+          ...base,
+          solanaCluster: "mainnet-beta",
+          solanaRpcUrl: `${PUBLIC_RPC}/`,
+        }).success,
+      ).toBe(false);
+    });
+
+    it("accepts a dedicated RPC provider on mainnet-beta", () => {
+      expect(
+        envSchema.safeParse({
+          ...base,
+          solanaCluster: "mainnet-beta",
+          solanaRpcUrl: "https://my-provider.example.com/rpc",
+        }).success,
+      ).toBe(true);
+    });
+
+    it("still accepts the public endpoint on devnet, where it is the normal choice", () => {
+      expect(
+        envSchema.safeParse({
+          ...base,
+          solanaCluster: "devnet",
+          solanaRpcUrl: "https://api.devnet.solana.com",
+        }).success,
+      ).toBe(true);
+    });
+  });
+
   it("requires an API URL when the mode is http", () => {
     const result = envSchema.safeParse({ ...base, bridgeApiMode: "http" });
     expect(result.success).toBe(false);

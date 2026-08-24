@@ -3,10 +3,15 @@
 import { useCallback } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction } from "@solana/web3.js";
+import { solanaConfirmationError, solanaSendError } from "@/lib/api/errors";
 import { env } from "@/lib/config/env";
 import { useIsMounted } from "@/lib/hooks/useIsMounted";
 import { useWalletRuntime } from "./adapter/provider";
-import { buildDepositToReserveInstruction, isDepositProgramConfigured } from "./deposit";
+import {
+  attachRecentBlockhash,
+  buildDepositToReserveInstruction,
+  isDepositProgramConfigured,
+} from "./deposit";
 import { getDepositCapability, type DepositCapability } from "./deposit";
 
 /**
@@ -78,9 +83,34 @@ export function useDepositToReserve(): {
       });
 
       const transaction = new Transaction().add(instruction);
-      const signature = await adapter.sendTransaction(transaction, connection);
-      const latest = await connection.getLatestBlockhash("confirmed");
-      await connection.confirmTransaction({ signature, ...latest }, "confirmed");
+      // Fetched ONCE, before signing/sending, and reused as-is for
+      // confirmation below. Fetching a second, later blockhash afterward
+      // (as this used to do) would confirm the already-broadcast
+      // transaction against a `lastValidBlockHeight` that has nothing to
+      // do with the one it was actually signed with — an unrelated,
+      // always-later expiry window, not the real one.
+      const { blockhash, lastValidBlockHeight, feePayer } = await attachRecentBlockhash(
+        connection,
+        publicKey,
+      );
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = feePayer;
+
+      let signature: string;
+      try {
+        signature = await adapter.sendTransaction(transaction, connection);
+      } catch (cause) {
+        throw solanaSendError(cause);
+      }
+
+      try {
+        await connection.confirmTransaction(
+          { signature, blockhash, lastValidBlockHeight },
+          "confirmed",
+        );
+      } catch (cause) {
+        throw solanaConfirmationError(cause, signature);
+      }
 
       return { signature };
     },
