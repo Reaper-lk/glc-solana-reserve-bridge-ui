@@ -10,7 +10,6 @@ import {
   RESERVE_MINT_DECIMALS,
   RESERVE_TOKEN_ACCOUNT_ADDRESS,
   useFundReserve,
-  useOperatorAuthorization,
   useReserveTokenAccountBalance,
   useTokenBalance,
   useWalletConnection,
@@ -33,9 +32,6 @@ export function FundReserveView() {
   const wallet = useWalletConnection();
   const walletBalance = useTokenBalance();
   const reserveBalance = useReserveTokenAccountBalance();
-  const authorization = useOperatorAuthorization(
-    wallet.status === "connected" ? wallet.address : null,
-  );
   const fundReserve = useFundReserve();
 
   const [amountInput, setAmountInput] = useState("");
@@ -70,21 +66,6 @@ export function FundReserveView() {
   }
 
   const walletAddress = wallet.address;
-
-  if (authorization.isPending) {
-    return <div className="h-40" aria-hidden="true" />;
-  }
-
-  if (authorization.isError || !authorization.data.authorized) {
-    return (
-      <Alert
-        level="danger"
-        title="This wallet is not authorized to fund the reserve."
-        funds="No funds moved."
-        next="Connect an authorized operator wallet. If you believe this is wrong, contact whoever manages the operator allowlist."
-      />
-    );
-  }
 
   let amountAtomic: bigint | null = null;
   let amountError: string | null = null;
