@@ -316,13 +316,26 @@ export function BridgeCard() {
         const sourceAtomic = BigInt(
           canonicalToSourceRawExact(String(canonicalGrossAmount), sourceToken.decimals),
         );
+        // `GET /transfers` has no way to ask for "the request this exact
+        // deposit created" — SolToGlc requests carry no source_txid (see
+        // pollForTransfer's docs) — so the highest request id that already
+        // exists for this wallet, captured BEFORE the wallet even signs, is
+        // the strongest available correlator: whatever request this deposit
+        // creates is guaranteed to land with an id greater than every id
+        // captured here, regardless of what else is in the list or how it's
+        // ordered. A failure here must not abort the deposit itself (the
+        // wallet transaction is independent of this read), so it falls back
+        // to `null`, which `pollForTransfer` treats as "cannot correlate."
+        const baselineRequestId = await highestKnownRequestId(wallet.address).catch(
+          () => null,
+        );
         const result = await depositToReserve.deposit({
           amountAtomic: sourceAtomic,
           goldcoinAddress: recipient.trim(),
           obligationIndex: status.data.next_solana_obligation_index,
         });
         setPhase({ kind: "sol-to-glc-waiting", signature: result.signature });
-        void pollForTransfer(wallet.address);
+        void pollForTransfer(wallet.address, baselineRequestId);
       }
     } catch (error) {
       setSubmitError(error);
@@ -331,22 +344,68 @@ export function BridgeCard() {
     }
   }
 
-  async function pollForTransfer(address: string | null) {
+  /** The highest `bridge_requests.id` this wallet already has, across both
+   * directions (ids are a single shared auto-increment sequence — see
+   * `service/src/ledger/schema.rs` in glc-solana-reserve-bridge), or `0` if
+   * the wallet has no transfers yet — every real id is positive, so `0`
+   * still correctly matches "any id that appears is unambiguously new."
+   * `null` is reserved for "this read itself failed," a DIFFERENT case
+   * `pollForTransfer` must not treat the same way (there, no id is safe to
+   * trust as a floor, so it must not guess at all). */
+  async function highestKnownRequestId(address: string | null): Promise<number | null> {
+    if (!address) return null;
+    const page = await bridgeApi.listTransfers({ address, limit: 1 });
+    return page.items[0]?.id ?? 0;
+  }
+
+  /**
+   * Finds the bridge request this specific deposit created and redirects to
+   * it.
+   *
+   * The backend has no field correlating a SolToGlc request to the wallet
+   * transaction that created it (`source_txid` is only ever populated for
+   * GlcToSol — a SolToGlc request folds from an on-chain obligation INDEX,
+   * not a stored transaction id; see `fold_sol_deposit` in
+   * glc-solana-reserve-bridge). So this must NOT just take the first
+   * `SolToGlc` item in the list: if the wallet has any older SolToGlc
+   * request (in any state — completed, abandoned, anything), that item is
+   * already in the very first poll response and would be matched
+   * immediately, before the new one has even been indexed yet — the exact
+   * wrong-request bug this replaces. Requiring `id > baselineRequestId`
+   * (captured before submission) rules out every request that could
+   * possibly have existed before this one.
+   *
+   * If `baselineRequestId` could not be established (the pre-submission
+   * read failed) or polling times out without a qualifying match, this
+   * deliberately does NOT guess — it sends the user to their own
+   * wallet-scoped activity list instead, where the new transfer will show
+   * up once it's indexed, rather than risking a redirect to someone else's
+   * or an old request.
+   */
+  async function pollForTransfer(
+    address: string | null,
+    baselineRequestId: number | null,
+  ) {
     if (!address) return;
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 4_000));
-      try {
-        const page = await bridgeApi.listTransfers({ address, limit: 5 });
-        const match = page.items.find((item) => item.direction === "SolToGlc");
-        if (match) {
-          router.push(`/bridge/${match.id}`);
-          return;
+    if (baselineRequestId !== null) {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 4_000));
+        try {
+          const page = await bridgeApi.listTransfers({ address, limit: 5 });
+          const match = page.items.find(
+            (item) => item.direction === "SolToGlc" && item.id > baselineRequestId,
+          );
+          if (match) {
+            router.push(`/bridge/${match.id}`);
+            return;
+          }
+        } catch {
+          // Keep polling silently; the waiting-state copy already tells the
+          // user their deposit is on-chain regardless of this poll's outcome.
         }
-      } catch {
-        // Keep polling silently; the waiting-state copy already tells the
-        // user their deposit is on-chain regardless of this poll's outcome.
       }
     }
+    router.push(`${routes.activity}?address=${encodeURIComponent(address)}`);
   }
 
   if (phase.kind === "glc-to-sol-deposit") {
