@@ -23,9 +23,7 @@ import {
   QUOTA_PAUSED_BODY,
   QUOTA_PAUSED_NEXT,
   QUOTA_PAUSED_TITLE,
-  RECIPIENT_RATE_LIMIT_FUNDS,
   RECIPIENT_RATE_LIMIT_TITLE,
-  recipientRateLimitNext,
   rollingVolumeRemaining,
   SOLANA_GLC,
   validateAmount,
@@ -299,9 +297,7 @@ export function BridgeCard() {
       if (recipientEligibility.data && !recipientEligibility.data.eligible) {
         return {
           can: false,
-          reason: `${RECIPIENT_RATE_LIMIT_TITLE} ${recipientRateLimitNext(
-            recipientEligibility.data.retry_after,
-          )}`,
+          reason: RECIPIENT_RATE_LIMIT_TITLE,
           reasonShownInline: false,
           blocker: "recipient-rate-limited" as const,
         };
@@ -397,7 +393,7 @@ export function BridgeCard() {
           // surfaces as the persistent blocker callout + disabled button,
           // not only as this one submit error.
           void recipientEligibility.refetch();
-          throw recipientRateLimitedError(finalEligibility.retry_after);
+          throw recipientRateLimitedError();
         }
         const sourceAtomic = BigInt(
           canonicalToSourceRawExact(String(canonicalGrossAmount), sourceToken.decimals),
@@ -561,11 +557,7 @@ export function BridgeCard() {
         </div>
 
         {gate.blocker && (
-          <BlockerAlert
-            blocker={gate.blocker}
-            directionLabel={descriptor.label}
-            recipientRetryAfter={recipientEligibility.data?.retry_after ?? null}
-          />
+          <BlockerAlert blocker={gate.blocker} directionLabel={descriptor.label} />
         )}
 
         <div>
@@ -711,16 +703,9 @@ type Blocker =
 function BlockerAlert({
   blocker,
   directionLabel,
-  recipientRetryAfter = null,
 }: {
   blocker: Blocker;
   directionLabel: string;
-  /**
-   * `retry_after` from the recipient-eligibility response — only
-   * meaningful for the "recipient-rate-limited" blocker, where it renders
-   * the backend's absolute reopen time into "Try again after <time>".
-   */
-  recipientRetryAfter?: number | null;
 }) {
   const copy: Record<Blocker, { title: string; funds: string }> = {
     unavailable: {
@@ -751,12 +736,15 @@ function BlockerAlert({
       funds: `${QUOTA_PAUSED_BODY} Nothing you enter below will submit — no funds move.`,
     },
     // Unlike every blocker above, this one is specific to the ADDRESS the
-    // user typed, not to the bridge or the direction — so its "next" step
-    // is a concrete reopen time / different address, and the status-page
-    // link (which would show a perfectly healthy bridge) is omitted.
+    // user typed, not to the bridge or the direction. Per the product
+    // decision in `@/lib/bridge/recipient-rate-limit`, it shows exactly
+    // one sentence: empty `funds`/`next` render nothing, and the
+    // status-page link (which would show a perfectly healthy bridge) is
+    // omitted too. The retry-after time the backend still returns is
+    // deliberately not displayed.
     "recipient-rate-limited": {
       title: RECIPIENT_RATE_LIMIT_TITLE,
-      funds: `${RECIPIENT_RATE_LIMIT_FUNDS} Nothing you enter below will submit for this address — no funds move.`,
+      funds: "",
     },
   };
   const next =
@@ -765,7 +753,7 @@ function BlockerAlert({
       : blocker === "quota-exhausted"
         ? "See the current status page for live capacity."
         : blocker === "recipient-rate-limited"
-          ? recipientRateLimitNext(recipientRetryAfter)
+          ? ""
           : "Check your connection and try again, or see the current status.";
 
   return (

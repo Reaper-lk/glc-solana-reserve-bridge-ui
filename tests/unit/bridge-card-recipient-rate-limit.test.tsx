@@ -170,7 +170,7 @@ describe("BridgeCard — SolToGlc recipient rate limit", () => {
     );
   });
 
-  it("blocks a recently paid recipient: warning with retry time, submit disabled, wallet never invoked", async () => {
+  it("blocks a recently paid recipient: single-sentence warning, submit disabled, wallet never invoked", async () => {
     getSolToGlcRecipientEligibility.mockResolvedValue(
       eligibilityFor(PAID_ADDRESS, false),
     );
@@ -179,11 +179,13 @@ describe("BridgeCard — SolToGlc recipient rate limit", () => {
     renderWithQueryClient(<BridgeCard />);
     await fillSolToGlcForm(user, PAID_ADDRESS);
 
-    // The exact required copy, plus the backend's absolute reopen time.
-    expect(await screen.findByText(RECIPIENT_RATE_LIMIT_TITLE)).toBeInTheDocument();
-    // (also echoed into the submit button's accessible disabled reason,
-    // so match all occurrences rather than exactly one)
-    expect(screen.getAllByText(/Try again after/i).length).toBeGreaterThan(0);
+    // The exact required copy — and ONLY it: the retry-after time the
+    // backend still returns is deliberately not displayed anywhere
+    // (product decision, see @/lib/bridge/recipient-rate-limit).
+    expect(
+      (await screen.findAllByText(RECIPIENT_RATE_LIMIT_TITLE)).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/Try again/i)).not.toBeInTheDocument();
     await waitFor(() => expect(submitButton()).toBeDisabled());
 
     // A click on the disabled button must be inert: no wallet prompt, no
@@ -204,7 +206,9 @@ describe("BridgeCard — SolToGlc recipient rate limit", () => {
     renderWithQueryClient(<BridgeCard />);
     await fillSolToGlcForm(user, PAID_ADDRESS);
 
-    expect(await screen.findByText(RECIPIENT_RATE_LIMIT_TITLE)).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText(RECIPIENT_RATE_LIMIT_TITLE)).length,
+    ).toBeGreaterThan(0);
     await waitFor(() => expect(submitButton()).toBeDisabled());
 
     // The eligibility query refetches every 30s while the form is open.
@@ -223,7 +227,9 @@ describe("BridgeCard — SolToGlc recipient rate limit", () => {
     renderWithQueryClient(<BridgeCard />);
     await fillSolToGlcForm(user, PAID_ADDRESS);
 
-    expect(await screen.findByText(RECIPIENT_RATE_LIMIT_TITLE)).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText(RECIPIENT_RATE_LIMIT_TITLE)).length,
+    ).toBeGreaterThan(0);
     await waitFor(() => expect(submitButton()).toBeDisabled());
 
     const recipientInput = screen.getByLabelText("Goldcoin destination address");
