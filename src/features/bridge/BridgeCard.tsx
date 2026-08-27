@@ -24,15 +24,17 @@ import {
   QUOTA_PAUSED_NEXT,
   QUOTA_PAUSED_TITLE,
   rollingVolumeRemaining,
-  MINIMUM_GROSS_BRIDGE_AMOUNT_GLC,
   SOLANA_GLC,
   validateAmount,
   validateGoldcoinAddress,
 } from "@/lib/bridge";
+import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { routes } from "@/lib/config/links";
 import {
+  atomicRescaleCeil,
   atomicRescaleFloor,
   canonicalToSourceRawExact,
+  minimumGrossCanonicalForMinTransferAmount,
   sourceRawToCanonical,
 } from "@/lib/bridge/canonical";
 import {
@@ -82,16 +84,24 @@ export function BridgeCard() {
 
   const amountBounds = useMemo(() => {
     if (!limits.data) return null;
-    // The minimum is a fixed GROSS-side product floor
-    // (MINIMUM_GROSS_BRIDGE_AMOUNT_GLC), never `/limits`' own
-    // `min_transfer_amount` — that figure is a NET-side on-chain check
-    // (`limits.rs::enforce_transfer_amount`), and displaying/enforcing it
-    // as if it were the minimum a user enters understates the true floor
-    // by exactly the bridge fee (this was the "Min 99 GLC" bug).
-    const minimum = (
-      BigInt(MINIMUM_GROSS_BRIDGE_AMOUNT_GLC) *
-      10n ** BigInt(sourceToken.decimals)
-    ).toString();
+    // The minimum is a GROSS-side product floor, DERIVED from `/limits`'
+    // own `min_transfer_amount` and `bridge_fee_bps` — never `/limits`'
+    // `min_transfer_amount` used directly, since that figure is a
+    // NET-side on-chain check (`limits.rs::enforce_transfer_amount`), and
+    // displaying/enforcing it as if it were the minimum a user enters
+    // understates the true floor by exactly the bridge fee (this was the
+    // "Min 99 GLC" bug). Computed, not hardcoded, so it never goes stale
+    // again the way a fixed constant did when the real fee moved from 1%
+    // to 6% — see `minimumGrossCanonicalForMinTransferAmount`.
+    const minimumCanonical = minimumGrossCanonicalForMinTransferAmount(
+      String(limits.data.min_transfer_amount),
+      limits.data.bridge_fee_bps,
+      SOLANA_GLC.decimals,
+    );
+    // Ceil when narrowing to this direction's own source decimals — same
+    // "never more permissive than the backend's" convention `atomicRescaleCeil`
+    // documents; a no-op at 8 decimals (Goldcoin, already canonical).
+    const minimum = atomicRescaleCeil(minimumCanonical, GOLDCOIN_DECIMALS, sourceToken.decimals);
     // `/limits` passes the on-chain `BridgeConfig` value through raw, and
     // the on-chain check compares it against MINT-atomic amounts (6
     // decimals) — so this one IS in mint units, not the canonical
