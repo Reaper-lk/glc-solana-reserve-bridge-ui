@@ -7,13 +7,7 @@
  * fee, and net amounts; see `src/lib/query/hooks.ts`'s `useQuote`.
  */
 
-export {
-  directions,
-  oppositeDirection,
-  GOLDCOIN_GLC,
-  SOLANA_GLC,
-  MINIMUM_GROSS_BRIDGE_AMOUNT_GLC,
-} from "./direction";
+export { directions, oppositeDirection, GOLDCOIN_GLC, SOLANA_GLC } from "./direction";
 export type {
   ChainDescriptor,
   DirectionDescriptor,

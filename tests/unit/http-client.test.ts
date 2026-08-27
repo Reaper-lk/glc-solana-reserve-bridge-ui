@@ -192,7 +192,7 @@ describe("HttpBridgeClient", () => {
     const client = new HttpBridgeClient(BASE);
 
     respondOk(fixtures.limitsFixture());
-    await expect(client.getLimits()).resolves.toMatchObject({ bridge_fee_bps: 100 });
+    await expect(client.getLimits()).resolves.toMatchObject({ bridge_fee_bps: 600 });
 
     respondOk(fixtures.reserveFixture());
     await expect(client.getReserve()).resolves.toHaveProperty(
