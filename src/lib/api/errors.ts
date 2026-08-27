@@ -1,9 +1,5 @@
 import { type ApiErrorBody } from "./schemas/common";
-import {
-  RECIPIENT_RATE_LIMIT_FUNDS,
-  RECIPIENT_RATE_LIMIT_TITLE,
-  recipientRateLimitNext,
-} from "@/lib/bridge/recipient-rate-limit";
+import { RECIPIENT_RATE_LIMIT_TITLE } from "@/lib/bridge/recipient-rate-limit";
 
 /**
  * The error contract, mapped once into the shape the UI is required to
@@ -167,19 +163,22 @@ export function directionUnavailableError(message?: string): ApiError {
  * this Goldcoin destination already received a SolToGlc payout inside the
  * backend's rolling 24-hour window (it may have been eligible when typed —
  * another deposit can land in between). Thrown before the wallet is ever
- * invoked, so "no funds moved" is guaranteed, not hopeful. Copy comes from
- * `@/lib/bridge/recipient-rate-limit` so the form-level blocker and this
- * submit-time error can never say different things.
+ * invoked. Copy comes from `@/lib/bridge/recipient-rate-limit` so the
+ * form-level blocker and this submit-time error can never say different
+ * things — and per the same product decision, it is exactly one sentence:
+ * `funds`/`next` are deliberately empty (Alert renders nothing for them),
+ * with no retry-after time shown even though the enforcement path still
+ * has the full backend verdict.
  */
-export function recipientRateLimitedError(retryAfterUnix: number | null): ApiError {
+export function recipientRateLimitedError(): ApiError {
   return new ApiError({
     kind: "recipient-rate-limited",
     message: RECIPIENT_RATE_LIMIT_TITLE,
     retryable: false,
     presentation: {
       what: RECIPIENT_RATE_LIMIT_TITLE,
-      funds: RECIPIENT_RATE_LIMIT_FUNDS,
-      next: recipientRateLimitNext(retryAfterUnix),
+      funds: "",
+      next: "",
     },
   });
 }
