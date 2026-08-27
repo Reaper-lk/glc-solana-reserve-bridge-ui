@@ -192,7 +192,7 @@ describe("HttpBridgeClient", () => {
     const client = new HttpBridgeClient(BASE);
 
     respondOk(fixtures.limitsFixture());
-    await expect(client.getLimits()).resolves.toMatchObject({ bridge_fee_bps: 100 });
+    await expect(client.getLimits()).resolves.toMatchObject({ bridge_fee_bps: 600 });
 
     respondOk(fixtures.reserveFixture());
     await expect(client.getReserve()).resolves.toHaveProperty(
@@ -219,6 +219,24 @@ describe("HttpBridgeClient", () => {
     await expect(
       client.listReserveHistory({ direction: "solana" }),
     ).resolves.toHaveProperty("items");
+
+    respondOk({
+      direction: "SolToGlc",
+      address: "GLCRecipient1111111111111111111111",
+      eligible: false,
+      retry_after: 1_787_000_000,
+      retry_after_seconds: 40_000,
+      window_seconds: 86_400,
+    });
+    await expect(
+      client.getSolToGlcRecipientEligibility("GLCRecipient1111111111111111111111"),
+    ).resolves.toMatchObject({ eligible: false, retry_after: 1_787_000_000 });
+    // GET with the address as a query parameter — the exact path the
+    // backend routes (`/recipients/sol-to-glc/eligibility?address=`).
+    const [eligibilityUrl] = vi.mocked(fetch).mock.calls.at(-1) ?? [];
+    expect(String(eligibilityUrl)).toBe(
+      `${BASE}/recipients/sol-to-glc/eligibility?address=GLCRecipient1111111111111111111111`,
+    );
   });
 
   it("normalises the 'resource' fallback description for a non-transfer 404", async () => {

@@ -26,6 +26,7 @@ import { bridgeStatsSchema } from "./schemas/stats";
 import { explorerEventListSchema } from "./schemas/explorer";
 import { reserveHistoryListSchema } from "./schemas/reserves";
 import { quoteOutputSchema } from "./schemas/quote";
+import { recipientEligibilitySchema } from "./schemas/eligibility";
 import {
   createTransferOutputSchema,
   createTransferRequestSchema,
@@ -88,6 +89,15 @@ export class HttpBridgeClient implements BridgeApiClient {
     signal?: AbortSignal,
   ) {
     return this.request("/quote", quoteOutputSchema, {}, signal, request);
+  }
+
+  getSolToGlcRecipientEligibility(address: string, signal?: AbortSignal) {
+    return this.request(
+      "/recipients/sol-to-glc/eligibility",
+      recipientEligibilitySchema,
+      { address },
+      signal,
+    );
   }
 
   getTransfer(id: number, signal?: AbortSignal) {

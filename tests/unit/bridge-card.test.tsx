@@ -18,8 +18,9 @@ const getReserve = vi.fn();
 const getQuote = vi.fn();
 const createTransfer = vi.fn();
 const listTransfers = vi.fn();
+const getSolToGlcRecipientEligibility = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
@@ -27,7 +28,12 @@ vi.mock("@/lib/api", () => ({
     getQuote: (...args: unknown[]) => getQuote(...args),
     createTransfer: (...args: unknown[]) => createTransfer(...args),
     listTransfers: (...args: unknown[]) => listTransfers(...args),
+    getSolToGlcRecipientEligibility: (...args: unknown[]) =>
+      getSolToGlcRecipientEligibility(...args),
   },
+  // BridgeCard imports this error factory alongside bridgeApi; the real
+  // implementation is pure copy/shaping, so pass it through unmocked.
+  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
 }));
 
 const push = vi.fn();
@@ -72,11 +78,11 @@ function baseQuote() {
     direction: "GlcToSol" as const,
     gross_amount: 1_000_00000000,
     gross_display_amount: "1000.00000000",
-    fee_bps: 100,
-    fee_amount: 10_00000000,
-    fee_display_amount: "10.00000000",
-    net_amount: 990_00000000,
-    net_display_amount: "990.00000000",
+    fee_bps: 600,
+    fee_amount: 60_00000000,
+    fee_display_amount: "60.00000000",
+    net_amount: 940_00000000,
+    net_display_amount: "940.00000000",
     source_decimals: 8,
     destination_decimals: 6,
     source_asset: "GLC (Goldcoin)",
@@ -93,6 +99,14 @@ beforeEach(() => {
   getLimits.mockResolvedValue(fixtures.limitsFixture());
   getReserve.mockResolvedValue(fixtures.reserveFixture());
   getQuote.mockResolvedValue(baseQuote());
+  getSolToGlcRecipientEligibility.mockResolvedValue({
+    direction: "SolToGlc",
+    address: "unused-in-these-tests",
+    eligible: true,
+    retry_after: null,
+    retry_after_seconds: null,
+    window_seconds: 86_400,
+  });
   depositCapability.mockReturnValue({
     available: false,
     reason: "wallet-disconnected",
@@ -160,7 +174,7 @@ describe("BridgeCard — amount entry and validation", () => {
 });
 
 describe("BridgeCard — POST /quote integration and fee presentation", () => {
-  it("requests a quote for the canonical gross amount and shows the exact 1% breakdown", async () => {
+  it("requests a quote for the canonical gross amount and shows the exact 6% breakdown", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeCard />);
 
@@ -179,11 +193,11 @@ describe("BridgeCard — POST /quote integration and fee presentation", () => {
     await waitFor(() =>
       expect(screen.getAllByText("You bridge").length).toBeGreaterThan(0),
     );
-    expect(screen.getByText("Bridge fee (1%)")).toBeInTheDocument();
+    expect(screen.getByText("Bridge fee (6%)")).toBeInTheDocument();
     expect(screen.getByText("You receive")).toBeInTheDocument();
     expect(screen.getByText(/1000\.00000000/)).toBeInTheDocument();
-    expect(screen.getByText(/−10\.00000000/)).toBeInTheDocument();
-    expect(screen.getByText(/990\.00000000/)).toBeInTheDocument();
+    expect(screen.getByText(/−60\.00000000/)).toBeInTheDocument();
+    expect(screen.getByText(/940\.00000000/)).toBeInTheDocument();
   });
 
   it("never displays a fee/net figure it computed itself — only what the quote returned", async () => {

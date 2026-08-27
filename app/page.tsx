@@ -8,7 +8,7 @@ const TRUST_POINTS = [
   "No new GLC is ever created.",
   "No GLC is wrapped into a substitute token.",
   "Every transfer is fulfilled from existing, pre-funded reserves.",
-  "A flat 1% bridge fee applies, computed by the bridge backend.",
+  "A flat 6% bridge fee applies, computed by the bridge backend.",
 ] as const;
 
 export default function HomePage() {
