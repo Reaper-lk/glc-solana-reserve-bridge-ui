@@ -9,13 +9,13 @@ export default function FeesPage() {
   return (
     <ContentPage
       title="Fees & limits"
-      intro="The bridge charges a flat 1% service fee. Minimums, maximums, and reserve capacity are set by the bridge backend and can change without notice — the figures shown on the bridge form at the time you request a quote are always authoritative."
+      intro="The bridge charges a flat 6% service fee. Minimums, maximums, and reserve capacity are set by the bridge backend and can change without notice — the figures shown on the bridge form at the time you request a quote are always authoritative."
       sections={SECTIONS}
     >
       <ContentSection id="bridge-fee" title="Bridge fee">
         <p>
-          Every transfer, in either direction, is charged a 1% fee on the gross amount.
-          For example, bridging 1,000 GLC charges a 10 GLC fee and releases 990 GLC to the
+          Every transfer, in either direction, is charged a 6% fee on the gross amount.
+          For example, bridging 1,000 GLC charges a 60 GLC fee and releases 940 GLC to the
           destination.
         </p>
         <p>

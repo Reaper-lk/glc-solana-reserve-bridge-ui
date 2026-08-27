@@ -25,7 +25,7 @@ export default function FaqPage() {
       </ContentSection>
       <ContentSection id="what-is-the-fee" title="What is the fee?">
         <p>
-          A flat 1% of the gross amount, computed by the bridge backend on every quote and
+          A flat 6% of the gross amount, computed by the bridge backend on every quote and
           transfer.
         </p>
       </ContentSection>
