@@ -8,6 +8,7 @@ import type { BridgeStatsDto } from "./schemas/stats";
 import type { ExplorerEventListDto } from "./schemas/explorer";
 import type { ReserveHistoryListDto, ReserveDirectionParam } from "./schemas/reserves";
 import type { QuoteOutputDto } from "./schemas/quote";
+import type { RecipientEligibilityDto } from "./schemas/eligibility";
 import type {
   CreateTransferOutputDto,
   CreateTransferRequest,
@@ -65,6 +66,20 @@ export interface BridgeApiClient {
     request: { direction: Direction; gross_amount: number },
     signal?: AbortSignal,
   ): Promise<QuoteOutputDto>;
+
+  /**
+   * SolToGlc only — whether this Goldcoin destination address is currently
+   * eligible for a new bridge payout, or still inside the backend's rolling
+   * 24-hour per-recipient window (`GET /recipients/sol-to-glc/eligibility`).
+   * Advisory: the backend re-checks the same ledger rule authoritatively at
+   * admission time; the UI calls this to warn BEFORE the wallet is invoked,
+   * and again immediately before submission so a stale form-time answer
+   * never reaches the wallet.
+   */
+  getSolToGlcRecipientEligibility(
+    address: string,
+    signal?: AbortSignal,
+  ): Promise<RecipientEligibilityDto>;
 
   getTransfer(id: number, signal?: AbortSignal): Promise<TransferViewDto>;
   /** GlcToSol only — the backend has no create endpoint for SolToGlc. */

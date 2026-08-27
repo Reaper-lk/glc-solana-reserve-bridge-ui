@@ -123,7 +123,7 @@ describe("minimumGrossCanonicalForMinTransferAmount", () => {
     const gross = BigInt(result);
     const fee = (gross * 600n) / 10_000n;
     expect(gross - fee).toBeGreaterThanOrEqual(100n);
-    expect((gross - 1n) - ((gross - 1n) * 600n) / 10_000n).toBeLessThan(100n);
+    expect(gross - 1n - ((gross - 1n) * 600n) / 10_000n).toBeLessThan(100n);
   });
 
   it("returns zero for a zero minimum", () => {

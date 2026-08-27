@@ -28,8 +28,9 @@ const getReserve = vi.fn();
 const getQuote = vi.fn();
 const createTransfer = vi.fn();
 const listTransfers = vi.fn();
+const getSolToGlcRecipientEligibility = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
@@ -37,7 +38,12 @@ vi.mock("@/lib/api", () => ({
     getQuote: (...args: unknown[]) => getQuote(...args),
     createTransfer: (...args: unknown[]) => createTransfer(...args),
     listTransfers: (...args: unknown[]) => listTransfers(...args),
+    getSolToGlcRecipientEligibility: (...args: unknown[]) =>
+      getSolToGlcRecipientEligibility(...args),
   },
+  // BridgeCard imports this error factory alongside bridgeApi; the real
+  // implementation is pure copy/shaping, so pass it through unmocked.
+  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
 }));
 
 const push = vi.fn();
@@ -147,6 +153,14 @@ beforeEach(() => {
   getLimits.mockResolvedValue(fixtures.limitsFixture());
   getReserve.mockResolvedValue(fixtures.reserveFixture());
   getQuote.mockResolvedValue(quote());
+  getSolToGlcRecipientEligibility.mockResolvedValue({
+    direction: "SolToGlc",
+    address: GOLDCOIN_ADDRESS,
+    eligible: true,
+    retry_after: null,
+    retry_after_seconds: null,
+    window_seconds: 86_400,
+  });
   depositCapability.mockReturnValue({ available: true });
 });
 

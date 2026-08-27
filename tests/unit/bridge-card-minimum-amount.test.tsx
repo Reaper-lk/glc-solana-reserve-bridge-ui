@@ -55,7 +55,7 @@ const getQuote = vi.fn();
 const createTransfer = vi.fn();
 const listTransfers = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
@@ -63,7 +63,22 @@ vi.mock("@/lib/api", () => ({
     getQuote: (...args: unknown[]) => getQuote(...args),
     createTransfer: (...args: unknown[]) => createTransfer(...args),
     listTransfers: (...args: unknown[]) => listTransfers(...args),
+    // These tests exercise the minimum-amount bound, not the recipient
+    // rate limit — every address here reads as eligible so the amount
+    // validation stays the only variable under test.
+    getSolToGlcRecipientEligibility: (address: unknown) =>
+      Promise.resolve({
+        direction: "SolToGlc",
+        address: String(address),
+        eligible: true,
+        retry_after: null,
+        retry_after_seconds: null,
+        window_seconds: 86_400,
+      }),
   },
+  // BridgeCard imports this error factory alongside bridgeApi; the real
+  // implementation is pure copy/shaping, so pass it through unmocked.
+  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -169,8 +184,11 @@ async function typeGlcToSolAmount(
  * `findByText` (which throws on more than one match). */
 async function expectMinimumMessage(minimumDisplay: string) {
   expect(
-    (await screen.findAllByText(new RegExp(`The minimum transfer is ${minimumDisplay}`, "i")))
-      .length,
+    (
+      await screen.findAllByText(
+        new RegExp(`The minimum transfer is ${minimumDisplay}`, "i"),
+      )
+    ).length,
   ).toBeGreaterThan(0);
 }
 
@@ -196,7 +214,9 @@ describe("BridgeCard — minimum bridge amount (Goldcoin -> Solana)", () => {
   it("displays the fee-derived 106.38297872 GLC minimum, never the backend's raw 100 GLC net-side figure", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, "500");
-    expect(await screen.findByText(new RegExp(`Min ${GLC_TO_SOL_MINIMUM_DISPLAY}`))).toBeInTheDocument();
+    expect(
+      await screen.findByText(new RegExp(`Min ${GLC_TO_SOL_MINIMUM_DISPLAY}`)),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Min 100 GLC\b/)).not.toBeInTheDocument();
   });
 
@@ -243,7 +263,9 @@ describe("BridgeCard — minimum bridge amount (Solana -> Goldcoin)", () => {
   it("displays the fee-derived 106.382979 GLC minimum, never the backend's raw 100 GLC net-side figure", async () => {
     const user = userEvent.setup();
     await typeSolToGlcAmount(user, "500");
-    expect(await screen.findByText(new RegExp(`Min ${SOL_TO_GLC_MINIMUM_DISPLAY}`))).toBeInTheDocument();
+    expect(
+      await screen.findByText(new RegExp(`Min ${SOL_TO_GLC_MINIMUM_DISPLAY}`)),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Min 100 GLC\b/)).not.toBeInTheDocument();
   });
 
