@@ -23,16 +23,21 @@ import {
   QUOTA_PAUSED_BODY,
   QUOTA_PAUSED_NEXT,
   QUOTA_PAUSED_TITLE,
+  RECIPIENT_RATE_LIMIT_FUNDS,
+  RECIPIENT_RATE_LIMIT_TITLE,
+  recipientRateLimitNext,
   rollingVolumeRemaining,
-  MINIMUM_GROSS_BRIDGE_AMOUNT_GLC,
   SOLANA_GLC,
   validateAmount,
   validateGoldcoinAddress,
 } from "@/lib/bridge";
+import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { routes } from "@/lib/config/links";
 import {
+  atomicRescaleCeil,
   atomicRescaleFloor,
   canonicalToSourceRawExact,
+  minimumGrossCanonicalForMinTransferAmount,
   sourceRawToCanonical,
 } from "@/lib/bridge/canonical";
 import {
@@ -41,10 +46,12 @@ import {
   useLimits,
   useQuote,
   useReserve,
+  useSolToGlcRecipientEligibility,
 } from "@/lib/query/hooks";
 import { isValidAddress, useDepositToReserve, useWalletConnection } from "@/lib/solana";
-import { bridgeApi } from "@/lib/api";
+import { bridgeApi, recipientRateLimitedError } from "@/lib/api";
 import type { Direction } from "@/lib/api/schemas/common";
+import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 import { DirectionSelector } from "./DirectionSelector";
 import { QuoteBreakdown } from "./QuoteBreakdown";
 import { DepositInstructions } from "./DepositInstructions";
@@ -82,16 +89,28 @@ export function BridgeCard() {
 
   const amountBounds = useMemo(() => {
     if (!limits.data) return null;
-    // The minimum is a fixed GROSS-side product floor
-    // (MINIMUM_GROSS_BRIDGE_AMOUNT_GLC), never `/limits`' own
-    // `min_transfer_amount` — that figure is a NET-side on-chain check
-    // (`limits.rs::enforce_transfer_amount`), and displaying/enforcing it
-    // as if it were the minimum a user enters understates the true floor
-    // by exactly the bridge fee (this was the "Min 99 GLC" bug).
-    const minimum = (
-      BigInt(MINIMUM_GROSS_BRIDGE_AMOUNT_GLC) *
-      10n ** BigInt(sourceToken.decimals)
-    ).toString();
+    // The minimum is a GROSS-side product floor, DERIVED from `/limits`'
+    // own `min_transfer_amount` and `bridge_fee_bps` — never `/limits`'
+    // `min_transfer_amount` used directly, since that figure is a
+    // NET-side on-chain check (`limits.rs::enforce_transfer_amount`), and
+    // displaying/enforcing it as if it were the minimum a user enters
+    // understates the true floor by exactly the bridge fee (this was the
+    // "Min 99 GLC" bug). Computed, not hardcoded, so it never goes stale
+    // again the way a fixed constant did when the real fee moved from 1%
+    // to 6% — see `minimumGrossCanonicalForMinTransferAmount`.
+    const minimumCanonical = minimumGrossCanonicalForMinTransferAmount(
+      String(limits.data.min_transfer_amount),
+      limits.data.bridge_fee_bps,
+      SOLANA_GLC.decimals,
+    );
+    // Ceil when narrowing to this direction's own source decimals — same
+    // "never more permissive than the backend's" convention `atomicRescaleCeil`
+    // documents; a no-op at 8 decimals (Goldcoin, already canonical).
+    const minimum = atomicRescaleCeil(
+      minimumCanonical,
+      GOLDCOIN_DECIMALS,
+      sourceToken.decimals,
+    );
     // `/limits` passes the on-chain `BridgeConfig` value through raw, and
     // the on-chain check compares it against MINT-atomic amounts (6
     // decimals) — so this one IS in mint units, not the canonical
@@ -134,6 +153,17 @@ export function BridgeCard() {
       message: isReportableAddressProblem(result.problem) ? result.message : null,
     };
   }, [direction, recipient]);
+
+  // The FORM-level recipient rate-limit check: fires once a syntactically
+  // valid Goldcoin address is entered for SolToGlc, so the user learns
+  // "this address already got a payout in the last 24 hours" before ever
+  // reaching for their wallet. `submit()` re-fetches the same answer
+  // fresh immediately before invoking the wallet — this hook's cached
+  // verdict is never what authorizes opening Phantom.
+  const recipientEligibility = useSolToGlcRecipientEligibility(
+    recipient.trim(),
+    direction === "SolToGlc" && recipientValidation.valid,
+  );
 
   const destinationReserveCapacity = reserve.data
     ? descriptor.destinationReserve === "solana"
@@ -258,6 +288,29 @@ export function BridgeCard() {
           reasonShownInline: false,
           blocker: null,
         };
+      if (recipientEligibility.isPending) {
+        return {
+          can: false,
+          reason: "Checking this address's recent bridge activity…",
+          reasonShownInline: false,
+          blocker: null,
+        };
+      }
+      if (recipientEligibility.data && !recipientEligibility.data.eligible) {
+        return {
+          can: false,
+          reason: `${RECIPIENT_RATE_LIMIT_TITLE} ${recipientRateLimitNext(
+            recipientEligibility.data.retry_after,
+          )}`,
+          reasonShownInline: false,
+          blocker: "recipient-rate-limited" as const,
+        };
+      }
+      // A FAILED eligibility read (recipientEligibility.isError)
+      // deliberately does not block the form: the backend re-checks the
+      // same rule authoritatively at admission either way, and submit()
+      // makes one more fresh attempt right before the wallet opens — a
+      // transient API blip should not brick the whole direction.
     }
     if (quote.isPending) {
       return {
@@ -289,6 +342,8 @@ export function BridgeCard() {
     direction,
     recipient,
     depositToReserve,
+    recipientEligibility.isPending,
+    recipientEligibility.data,
     quote.isPending,
     quote.isError,
     descriptor.label,
@@ -317,6 +372,33 @@ export function BridgeCard() {
         });
       } else {
         if (!status.data) throw new Error("Bridge status is not loaded");
+        // FINAL pre-submit rate-limit re-check, fetched fresh through the
+        // client (never the form hook's cache): the address may have
+        // received a payout between being typed and this click — another
+        // tab, another user, a deposit that just finalized. A blocked
+        // verdict here stops everything BEFORE the wallet is invoked: no
+        // Phantom prompt, no Solana obligation, no funds moved. A read
+        // that FAILS is a different case and does not stop the submit —
+        // the backend re-checks the same rule authoritatively at
+        // admission, and a deposit admitted while actually rate-limited
+        // is parked and auto-resumed once the window clears
+        // (glc-solana-reserve-bridge docs/09-runbook.md), so failing open
+        // here degrades to a slower transfer, never a lost one.
+        let finalEligibility: RecipientEligibilityDto | null = null;
+        try {
+          finalEligibility = await bridgeApi.getSolToGlcRecipientEligibility(
+            recipient.trim(),
+          );
+        } catch {
+          finalEligibility = null;
+        }
+        if (finalEligibility && !finalEligibility.eligible) {
+          // Refresh the form-level hook too, so the same verdict also
+          // surfaces as the persistent blocker callout + disabled button,
+          // not only as this one submit error.
+          void recipientEligibility.refetch();
+          throw recipientRateLimitedError(finalEligibility.retry_after);
+        }
         const sourceAtomic = BigInt(
           canonicalToSourceRawExact(String(canonicalGrossAmount), sourceToken.decimals),
         );
@@ -479,7 +561,11 @@ export function BridgeCard() {
         </div>
 
         {gate.blocker && (
-          <BlockerAlert blocker={gate.blocker} directionLabel={descriptor.label} />
+          <BlockerAlert
+            blocker={gate.blocker}
+            directionLabel={descriptor.label}
+            recipientRetryAfter={recipientEligibility.data?.retry_after ?? null}
+          />
         )}
 
         <div>
@@ -612,7 +698,8 @@ type Blocker =
   | "paused"
   | "insufficient-liquidity"
   | "quota-exhausted"
-  | "quota-paused";
+  | "quota-paused"
+  | "recipient-rate-limited";
 
 /**
  * Bridge-wide, backend-driven blockers get their own callout rather than
@@ -624,9 +711,16 @@ type Blocker =
 function BlockerAlert({
   blocker,
   directionLabel,
+  recipientRetryAfter = null,
 }: {
   blocker: Blocker;
   directionLabel: string;
+  /**
+   * `retry_after` from the recipient-eligibility response — only
+   * meaningful for the "recipient-rate-limited" blocker, where it renders
+   * the backend's absolute reopen time into "Try again after <time>".
+   */
+  recipientRetryAfter?: number | null;
 }) {
   const copy: Record<Blocker, { title: string; funds: string }> = {
     unavailable: {
@@ -656,13 +750,23 @@ function BlockerAlert({
       title: QUOTA_PAUSED_TITLE,
       funds: `${QUOTA_PAUSED_BODY} Nothing you enter below will submit — no funds move.`,
     },
+    // Unlike every blocker above, this one is specific to the ADDRESS the
+    // user typed, not to the bridge or the direction — so its "next" step
+    // is a concrete reopen time / different address, and the status-page
+    // link (which would show a perfectly healthy bridge) is omitted.
+    "recipient-rate-limited": {
+      title: RECIPIENT_RATE_LIMIT_TITLE,
+      funds: `${RECIPIENT_RATE_LIMIT_FUNDS} Nothing you enter below will submit for this address — no funds move.`,
+    },
   };
   const next =
     blocker === "quota-paused"
       ? QUOTA_PAUSED_NEXT
       : blocker === "quota-exhausted"
         ? "See the current status page for live capacity."
-        : "Check your connection and try again, or see the current status.";
+        : blocker === "recipient-rate-limited"
+          ? recipientRateLimitNext(recipientRetryAfter)
+          : "Check your connection and try again, or see the current status.";
 
   return (
     <Alert
@@ -671,9 +775,11 @@ function BlockerAlert({
       funds={copy[blocker].funds}
       next={next}
       actions={
-        <ButtonLink href={routes.status} variant="secondary" size="sm">
-          View status
-        </ButtonLink>
+        blocker === "recipient-rate-limited" ? undefined : (
+          <ButtonLink href={routes.status} variant="secondary" size="sm">
+            View status
+          </ButtonLink>
+        )
       }
     />
   );

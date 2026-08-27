@@ -25,18 +25,18 @@ test.describe("bridge form", () => {
     await expect(page.getByLabel("Goldcoin destination address")).toBeVisible();
   });
 
-  test("requests a live quote and shows the exact 1% gross/fee/net breakdown", async ({
+  test("requests a live quote and shows the exact 6% gross/fee/net breakdown", async ({
     page,
   }) => {
     await page.goto("/bridge");
     await page.getByLabel(/Amount in GLC/i).fill("1000");
 
     await expect(page.getByText("You bridge")).toBeVisible();
-    await expect(page.getByText("Bridge fee (1%)")).toBeVisible();
+    await expect(page.getByText("Bridge fee (6%)")).toBeVisible();
     await expect(page.getByText("You receive")).toBeVisible();
     await expect(page.getByText(/1000\.00000000/)).toBeVisible();
-    await expect(page.getByText(/−10\.00000000/)).toBeVisible();
-    await expect(page.getByText(/990\.00000000/)).toBeVisible();
+    await expect(page.getByText(/−60\.00000000/)).toBeVisible();
+    await expect(page.getByText(/940\.00000000/)).toBeVisible();
   });
 
   test("publishes min/max limits from the backend rather than hardcoding them", async ({

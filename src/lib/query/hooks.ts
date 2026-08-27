@@ -18,6 +18,7 @@ import type { BridgeStatsDto } from "@/lib/api/schemas/stats";
 import type { ExplorerEventListDto } from "@/lib/api/schemas/explorer";
 import type { ReserveHistoryListDto } from "@/lib/api/schemas/reserves";
 import type { QuoteOutputDto } from "@/lib/api/schemas/quote";
+import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 import type {
   CreateTransferOutputDto,
   CreateTransferRequest,
@@ -101,6 +102,29 @@ export function useQuote(
       bridgeApi.getQuote({ direction, gross_amount: grossAmount }, signal),
     enabled: grossAmount > 0,
     staleTime: 5_000,
+    retry: false,
+  });
+}
+
+/**
+ * The SolToGlc recipient rate-limit check for the Goldcoin address in the
+ * form (`GET /recipients/sol-to-glc/eligibility`). Enabled only once the
+ * address has passed local validation — never fired per keystroke on
+ * half-typed input. This is the FORM-level check; `BridgeCard.submit`
+ * additionally re-fetches through `bridgeApi` directly immediately before
+ * invoking the wallet, so a stale cached "eligible" here can never be what
+ * authorizes opening Phantom.
+ */
+export function useSolToGlcRecipientEligibility(
+  address: string,
+  enabled: boolean,
+): UseQueryResult<RecipientEligibilityDto> {
+  return useQuery({
+    queryKey: queryKeys.recipientEligibility(address),
+    queryFn: ({ signal }) => bridgeApi.getSolToGlcRecipientEligibility(address, signal),
+    enabled: enabled && address.length > 0,
+    refetchInterval: pollIntervals.recipientEligibility,
+    staleTime: 15_000,
     retry: false,
   });
 }

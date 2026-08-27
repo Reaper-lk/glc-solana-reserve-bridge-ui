@@ -7,13 +7,7 @@
  * fee, and net amounts; see `src/lib/query/hooks.ts`'s `useQuote`.
  */
 
-export {
-  directions,
-  oppositeDirection,
-  GOLDCOIN_GLC,
-  SOLANA_GLC,
-  MINIMUM_GROSS_BRIDGE_AMOUNT_GLC,
-} from "./direction";
+export { directions, oppositeDirection, GOLDCOIN_GLC, SOLANA_GLC } from "./direction";
 export type {
   ChainDescriptor,
   DirectionDescriptor,
@@ -32,6 +26,12 @@ export {
 export type { AddressProblem, AddressRules, AddressValidation } from "./glc-address";
 
 export { goldcoinAddressRules } from "./address-rules";
+
+export {
+  RECIPIENT_RATE_LIMIT_TITLE,
+  RECIPIENT_RATE_LIMIT_FUNDS,
+  recipientRateLimitNext,
+} from "./recipient-rate-limit";
 
 export {
   isTerminalState,
