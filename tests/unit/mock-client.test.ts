@@ -45,6 +45,21 @@ describe("MockBridgeClient — quote / fee presentation", () => {
   });
 });
 
+describe("MockBridgeClient — SolToGlc recipient eligibility", () => {
+  it("reports every recipient eligible (the mock records no SolToGlc payouts) through the real schema", async () => {
+    const client = new MockBridgeClient({ latencyMs: 0 });
+    const out = await client.getSolToGlcRecipientEligibility("  GLCAddr111  ");
+    expect(out).toMatchObject({
+      direction: "SolToGlc",
+      address: "GLCAddr111", // trimmed, like the real endpoint
+      eligible: true,
+      retry_after: null,
+      retry_after_seconds: null,
+      window_seconds: 86_400,
+    });
+  });
+});
+
 describe("MockBridgeClient — direction availability / reserve scenarios", () => {
   it("operational scenario: both directions available, positive capacity", async () => {
     const client = new MockBridgeClient({ latencyMs: 0, scenario: "operational" });

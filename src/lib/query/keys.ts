@@ -14,6 +14,8 @@ export const queryKeys = {
   stats: () => ["bridge", "stats"] as const,
   quote: (direction: string, grossAmount: number) =>
     ["bridge", "quote", direction, grossAmount] as const,
+  recipientEligibility: (address: string) =>
+    ["bridge", "recipient-eligibility", address] as const,
   transfer: (id: number) => ["bridge", "transfer", id] as const,
   transfers: (params: ListTransfersParams) => ["bridge", "transfers", params] as const,
   explorerEvents: (params: ListExplorerEventsParams) =>
@@ -40,6 +42,14 @@ export const pollIntervals = {
   reserve: 30_000,
   health: 60_000,
   stats: 60_000,
+  /**
+   * The SolToGlc recipient rate-limit check for the address currently in
+   * the form. Refetching while the form sits open both catches an address
+   * that got paid from elsewhere in the meantime and lets a blocked
+   * address unblock on its own once its 24-hour window passes — without
+   * the user having to retype anything.
+   */
+  recipientEligibility: 30_000,
   /** A transfer the user is actively watching. */
   activeTransfer: 8_000,
   /** A transfer that has reached a terminal state. */

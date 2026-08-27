@@ -1,4 +1,9 @@
 import { type ApiErrorBody } from "./schemas/common";
+import {
+  RECIPIENT_RATE_LIMIT_FUNDS,
+  RECIPIENT_RATE_LIMIT_TITLE,
+  recipientRateLimitNext,
+} from "@/lib/bridge/recipient-rate-limit";
 
 /**
  * The error contract, mapped once into the shape the UI is required to
@@ -26,7 +31,8 @@ export type ApiErrorKind =
   | "direction-unavailable"
   | "bad-request"
   | "validation"
-  | "solana-transaction";
+  | "solana-transaction"
+  | "recipient-rate-limited";
 
 export interface ErrorPresentation {
   readonly what: string;
@@ -152,6 +158,28 @@ export function directionUnavailableError(message?: string): ApiError {
       funds:
         "No funds have left your wallet. Nothing has been sent yet. Transfers are temporarily paused while reserves are replenished.",
       next: "Please check the official Telegram for reopening updates.",
+    },
+  });
+}
+
+/**
+ * The FINAL pre-submit recipient-eligibility re-check came back blocked:
+ * this Goldcoin destination already received a SolToGlc payout inside the
+ * backend's rolling 24-hour window (it may have been eligible when typed —
+ * another deposit can land in between). Thrown before the wallet is ever
+ * invoked, so "no funds moved" is guaranteed, not hopeful. Copy comes from
+ * `@/lib/bridge/recipient-rate-limit` so the form-level blocker and this
+ * submit-time error can never say different things.
+ */
+export function recipientRateLimitedError(retryAfterUnix: number | null): ApiError {
+  return new ApiError({
+    kind: "recipient-rate-limited",
+    message: RECIPIENT_RATE_LIMIT_TITLE,
+    retryable: false,
+    presentation: {
+      what: RECIPIENT_RATE_LIMIT_TITLE,
+      funds: RECIPIENT_RATE_LIMIT_FUNDS,
+      next: recipientRateLimitNext(retryAfterUnix),
     },
   });
 }

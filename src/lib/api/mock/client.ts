@@ -15,6 +15,7 @@ import { bridgeStatsSchema } from "../schemas/stats";
 import { explorerEventListSchema } from "../schemas/explorer";
 import { reserveHistoryListSchema } from "../schemas/reserves";
 import { quoteOutputSchema, type QuoteOutputDto } from "../schemas/quote";
+import { recipientEligibilitySchema } from "../schemas/eligibility";
 import {
   createTransferOutputSchema,
   createTransferRequestSchema,
@@ -135,6 +136,23 @@ export class MockBridgeClient implements BridgeApiClient {
         request.direction === "GlcToSol" ? "GLC (Solana)" : "GLC (Goldcoin)",
     };
     return this.delay(quoteOutputSchema.parse(output));
+  }
+
+  async getSolToGlcRecipientEligibility(address: string) {
+    // The mock never records SolToGlc payouts (that direction is created
+    // on-chain, not through this API), so every recipient reads as
+    // eligible — the blocked shape is exercised by unit tests, not by a
+    // mock-mode scenario.
+    return this.delay(
+      recipientEligibilitySchema.parse({
+        direction: "SolToGlc",
+        address: address.trim(),
+        eligible: true,
+        retry_after: null,
+        retry_after_seconds: null,
+        window_seconds: 86_400,
+      }),
+    );
   }
 
   async getTransfer(id: number) {
