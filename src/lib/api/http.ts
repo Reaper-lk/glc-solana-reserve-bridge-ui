@@ -91,11 +91,17 @@ export class HttpBridgeClient implements BridgeApiClient {
     return this.request("/quote", quoteOutputSchema, {}, signal, request);
   }
 
-  getSolToGlcRecipientEligibility(address: string, signal?: AbortSignal) {
+  getSolToGlcRecipientEligibility(
+    address: string,
+    wallet: string | null,
+    signal?: AbortSignal,
+  ) {
+    const query: Record<string, string> = { address };
+    if (wallet) query.wallet = wallet;
     return this.request(
       "/recipients/sol-to-glc/eligibility",
       recipientEligibilitySchema,
-      { address },
+      query,
       signal,
     );
   }

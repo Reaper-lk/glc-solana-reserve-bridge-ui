@@ -14,8 +14,8 @@ export const queryKeys = {
   stats: () => ["bridge", "stats"] as const,
   quote: (direction: string, grossAmount: number) =>
     ["bridge", "quote", direction, grossAmount] as const,
-  recipientEligibility: (address: string) =>
-    ["bridge", "recipient-eligibility", address] as const,
+  recipientEligibility: (address: string, wallet: string | null) =>
+    ["bridge", "recipient-eligibility", address, wallet] as const,
   transfer: (id: number) => ["bridge", "transfer", id] as const,
   transfers: (params: ListTransfersParams) => ["bridge", "transfers", params] as const,
   explorerEvents: (params: ListExplorerEventsParams) =>
