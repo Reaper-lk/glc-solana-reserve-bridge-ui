@@ -68,16 +68,21 @@ export interface BridgeApiClient {
   ): Promise<QuoteOutputDto>;
 
   /**
-   * SolToGlc only — whether this Goldcoin destination address is currently
-   * eligible for a new bridge payout, or still inside the backend's rolling
-   * 24-hour per-recipient window (`GET /recipients/sol-to-glc/eligibility`).
-   * Advisory: the backend re-checks the same ledger rule authoritatively at
-   * admission time; the UI calls this to warn BEFORE the wallet is invoked,
-   * and again immediately before submission so a stale form-time answer
-   * never reaches the wallet.
+   * SolToGlc only — whether this Goldcoin destination address AND (when
+   * given) this Solana source wallet are currently eligible for a new
+   * bridge payout, or either is still inside the backend's rolling 24-hour
+   * window (`GET /recipients/sol-to-glc/eligibility`). `wallet` is the
+   * connected wallet's base58 pubkey, or `null` before a wallet is
+   * connected — omitting it simply means the source-wallet leg is not
+   * checked yet, the recipient leg still is. Advisory: the backend
+   * re-checks both rules authoritatively at admission time; the UI calls
+   * this to warn BEFORE the wallet is invoked, and again immediately
+   * before submission so a stale form-time answer never reaches the
+   * wallet.
    */
   getSolToGlcRecipientEligibility(
     address: string,
+    wallet: string | null,
     signal?: AbortSignal,
   ): Promise<RecipientEligibilityDto>;
 

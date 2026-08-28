@@ -5,23 +5,24 @@ import { renderWithQueryClient } from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { encodeBase58Check } from "@/lib/bridge/glc-address";
 import { RECIPIENT_RATE_LIMIT_TITLE } from "@/lib/bridge/recipient-rate-limit";
+import { SOURCE_WALLET_RATE_LIMIT_TITLE } from "@/lib/bridge/source-wallet-rate-limit";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
 import type * as EnvModule from "@/lib/config/env";
+import type { WalletStatus } from "@/lib/solana/types";
 
 /**
- * The SolToGlc per-recipient rate limit, from the form's point of view: a
- * Goldcoin destination that already received a bridge payout inside the
- * backend's rolling 24-hour window must be warned about BEFORE the wallet
- * is ever invoked — blocked at the form gate once the address is typed,
- * and re-checked fresh immediately before submission so a verdict that
- * changed in between still never reaches the wallet. The backend stays
- * the enforcing authority either way; what these tests pin down is that
- * the UI never opens Phantom (`depositFn`) and never creates a Solana
- * obligation for an address the backend has already said is blocked.
- *
- * Own file (not bridge-card.test.tsx) for the same reason as
- * bridge-card-sol-to-glc-redirect.test.tsx: it needs the env mock
- * (`glcAddressVersions`) to get real Goldcoin addresses past validation.
+ * The SolToGlc per-source-wallet rate limit, from the form's point of
+ * view — the dual-key twin of bridge-card-recipient-rate-limit.test.tsx.
+ * A single Solana wallet may make at most one qualifying deposit inside
+ * the backend's rolling 24-hour window, REGARDLESS of which Goldcoin
+ * address it targets — this is the exact production bypass the dual
+ * limit closes (previously: one wallet, many different recipients, many
+ * deposits inside the same 24 hours). These tests pin down that the form
+ * warns before the wallet is invoked, re-checks fresh immediately before
+ * submission, and never opens Phantom or creates a Solana obligation for
+ * a wallet the backend has already said is blocked — while confirming
+ * the pre-existing, independent recipient rule keeps working unchanged
+ * alongside it.
  */
 
 const getStatus = vi.fn();
@@ -43,8 +44,6 @@ vi.mock("@/lib/api", async () => ({
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
   },
-  // BridgeCard imports this error factory alongside bridgeApi; the real
-  // implementation is pure copy/shaping, so pass it through unmocked.
   recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
   sourceWalletRateLimitedError: (await import("@/lib/api/errors"))
     .sourceWalletRateLimitedError,
@@ -66,11 +65,11 @@ vi.mock("@/lib/config/env", async (importOriginal) => {
 
 const WALLET_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const FRESH_ADDRESS = encodeBase58Check(111, new Uint8Array(20));
-const PAID_ADDRESS = encodeBase58Check(111, new Uint8Array(20).fill(1));
+const OTHER_ADDRESS = encodeBase58Check(111, new Uint8Array(20).fill(1));
 const RETRY_AFTER_UNIX = 1_787_000_000;
 
 const walletConnection = {
-  status: "connected" as const,
+  status: "connected" as WalletStatus,
   address: WALLET_ADDRESS as string | null,
   wallet: null,
   wallets: [],
@@ -91,15 +90,41 @@ vi.mock("@/lib/solana", () => ({
   isValidAddress: (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value),
 }));
 
-function eligibilityFor(address: string, eligible: boolean) {
+function eligible(address: string) {
   return {
     direction: "SolToGlc" as const,
     address,
     wallet: WALLET_ADDRESS as string | null,
-    eligible,
-    blocked_reason: eligible ? null : ("recipient_rate_limited" as const),
-    retry_after: eligible ? null : RETRY_AFTER_UNIX,
-    retry_after_seconds: eligible ? null : 40_000,
+    eligible: true,
+    blocked_reason: null,
+    retry_after: null,
+    retry_after_seconds: null,
+    window_seconds: 86_400,
+  };
+}
+
+function sourceWalletBlocked(address: string) {
+  return {
+    direction: "SolToGlc" as const,
+    address,
+    wallet: WALLET_ADDRESS as string | null,
+    eligible: false,
+    blocked_reason: "source_wallet_rate_limited" as const,
+    retry_after: RETRY_AFTER_UNIX,
+    retry_after_seconds: 40_000,
+    window_seconds: 86_400,
+  };
+}
+
+function recipientBlocked(address: string) {
+  return {
+    direction: "SolToGlc" as const,
+    address,
+    wallet: WALLET_ADDRESS as string | null,
+    eligible: false,
+    blocked_reason: "recipient_rate_limited" as const,
+    retry_after: RETRY_AFTER_UNIX,
+    retry_after_seconds: 40_000,
     window_seconds: 86_400,
   };
 }
@@ -156,17 +181,16 @@ beforeEach(() => {
   depositCapability.mockReturnValue({ available: true });
 });
 
-describe("BridgeCard — SolToGlc recipient rate limit", () => {
-  it("allows an unused recipient: no warning, submit enabled", async () => {
-    getSolToGlcRecipientEligibility.mockResolvedValue(
-      eligibilityFor(FRESH_ADDRESS, true),
-    );
+describe("BridgeCard — SolToGlc source-wallet rate limit", () => {
+  it("allows a fresh wallet and a fresh (different) recipient: no warning, submit enabled", async () => {
+    getSolToGlcRecipientEligibility.mockResolvedValue(eligible(FRESH_ADDRESS));
 
     const user = userEvent.setup({ delay: null });
     renderWithQueryClient(<BridgeCard />);
     await fillSolToGlcForm(user, FRESH_ADDRESS);
 
     await waitFor(() => expect(submitButton()).toBeEnabled());
+    expect(screen.queryByText(SOURCE_WALLET_RATE_LIMIT_TITLE)).not.toBeInTheDocument();
     expect(screen.queryByText(RECIPIENT_RATE_LIMIT_TITLE)).not.toBeInTheDocument();
     expect(getSolToGlcRecipientEligibility).toHaveBeenCalledWith(
       FRESH_ADDRESS,
@@ -175,116 +199,112 @@ describe("BridgeCard — SolToGlc recipient rate limit", () => {
     );
   });
 
-  it("blocks a recently paid recipient: single-sentence warning, submit disabled, wallet never invoked", async () => {
-    getSolToGlcRecipientEligibility.mockResolvedValue(
-      eligibilityFor(PAID_ADDRESS, false),
-    );
-
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await fillSolToGlcForm(user, PAID_ADDRESS);
-
-    // The exact required copy — and ONLY it: the retry-after time the
-    // backend still returns is deliberately not displayed anywhere
-    // (product decision, see @/lib/bridge/recipient-rate-limit).
-    expect(
-      (await screen.findAllByText(RECIPIENT_RATE_LIMIT_TITLE)).length,
-    ).toBeGreaterThan(0);
-    expect(screen.queryByText(/Try again/i)).not.toBeInTheDocument();
-    await waitFor(() => expect(submitButton()).toBeDisabled());
-
-    // A click on the disabled button must be inert: no wallet prompt, no
-    // Solana obligation, no GlcToSol request either.
-    await user.click(submitButton());
-    expect(depositFn).not.toHaveBeenCalled();
-    expect(createTransfer).not.toHaveBeenCalled();
-  });
-
-  it("unblocks on its own once the 24-hour window expires (next poll returns eligible)", async () => {
-    // First verdict: blocked. Every later verdict (the 30s background
-    // refetch after the window has passed): eligible.
-    getSolToGlcRecipientEligibility
-      .mockResolvedValueOnce(eligibilityFor(PAID_ADDRESS, false))
-      .mockResolvedValue(eligibilityFor(PAID_ADDRESS, true));
-
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await fillSolToGlcForm(user, PAID_ADDRESS);
-
-    expect(
-      (await screen.findAllByText(RECIPIENT_RATE_LIMIT_TITLE)).length,
-    ).toBeGreaterThan(0);
-    await waitFor(() => expect(submitButton()).toBeDisabled());
-
-    // The eligibility query refetches every 30s while the form is open.
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    await waitFor(() => expect(submitButton()).toBeEnabled());
-    expect(screen.queryByText(RECIPIENT_RATE_LIMIT_TITLE)).not.toBeInTheDocument();
-  });
-
-  it("treats recipients independently: switching to a different address clears the block", async () => {
-    getSolToGlcRecipientEligibility.mockImplementation((address: unknown) =>
-      Promise.resolve(eligibilityFor(String(address), String(address) !== PAID_ADDRESS)),
-    );
-
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await fillSolToGlcForm(user, PAID_ADDRESS);
-
-    expect(
-      (await screen.findAllByText(RECIPIENT_RATE_LIMIT_TITLE)).length,
-    ).toBeGreaterThan(0);
-    await waitFor(() => expect(submitButton()).toBeDisabled());
-
-    const recipientInput = screen.getByLabelText("Goldcoin destination address");
-    await user.clear(recipientInput);
-    await user.type(recipientInput, FRESH_ADDRESS);
-
-    await waitFor(() => expect(submitButton()).toBeEnabled());
-    expect(screen.queryByText(RECIPIENT_RATE_LIMIT_TITLE)).not.toBeInTheDocument();
-  });
-
-  it("re-checks at submit time: a recipient paid between the form check and the click never reaches the wallet", async () => {
-    // Form-time verdict: eligible — the button enables. Every later
-    // verdict (the fresh pre-submit re-check, and the refetch it
-    // triggers): blocked — the payout landed in between.
-    getSolToGlcRecipientEligibility
-      .mockResolvedValueOnce(eligibilityFor(PAID_ADDRESS, true))
-      .mockResolvedValue(eligibilityFor(PAID_ADDRESS, false));
-
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await fillSolToGlcForm(user, PAID_ADDRESS);
-    await waitFor(() => expect(submitButton()).toBeEnabled());
-
-    await user.click(submitButton());
-
-    // The submit-time error carries the same required copy…
-    expect(await screen.findAllByText(RECIPIENT_RATE_LIMIT_TITLE)).not.toHaveLength(0);
-    // …and, decisively: the wallet was never invoked and no Solana
-    // obligation was created.
-    expect(depositFn).not.toHaveBeenCalled();
-    expect(createTransfer).not.toHaveBeenCalled();
-    expect(push).not.toHaveBeenCalled();
-    // The pre-submit check really was a second, fresh read — not a reuse
-    // of the form-time answer.
-    expect(getSolToGlcRecipientEligibility.mock.calls.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it("fails open on an eligibility READ error, leaving enforcement to the backend", async () => {
-    // A network blip is not a blocked verdict: the form must not brick
-    // the direction, and the backend still enforces at admission.
-    getSolToGlcRecipientEligibility.mockRejectedValue(new Error("network down"));
-    depositFn.mockResolvedValue({ signature: "sig-abc" });
+  it("same wallet, different (fresh) Goldcoin address: blocked with ONLY the wallet message, submit disabled, wallet never invoked", async () => {
+    // The recipient itself has no history (it would read eligible on its
+    // own) — only the source-wallet leg blocks. This is exactly the
+    // bypass the dual limit closes: one wallet, a fresh recipient.
+    getSolToGlcRecipientEligibility.mockResolvedValue(sourceWalletBlocked(FRESH_ADDRESS));
 
     const user = userEvent.setup({ delay: null });
     renderWithQueryClient(<BridgeCard />);
     await fillSolToGlcForm(user, FRESH_ADDRESS);
 
+    expect(
+      (await screen.findAllByText(SOURCE_WALLET_RATE_LIMIT_TITLE)).length,
+    ).toBeGreaterThan(0);
+    // "show only" — the recipient-specific message must NOT also appear.
+    expect(screen.queryByText(RECIPIENT_RATE_LIMIT_TITLE)).not.toBeInTheDocument();
+    await waitFor(() => expect(submitButton()).toBeDisabled());
+
+    // A click on the disabled button must be inert: Phantom (depositFn) is
+    // never invoked, and no obligation/request is created.
+    await user.click(submitButton());
+    expect(depositFn).not.toHaveBeenCalled();
+    expect(createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("different wallet, same (already-paid) recipient: still blocked, by the pre-existing recipient rule", async () => {
+    // The wallet itself has no history — only the recipient leg blocks.
+    // Confirms the dual limit never REPLACED the recipient rule.
+    getSolToGlcRecipientEligibility.mockResolvedValue(recipientBlocked(OTHER_ADDRESS));
+
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillSolToGlcForm(user, OTHER_ADDRESS);
+
+    expect(
+      (await screen.findAllByText(RECIPIENT_RATE_LIMIT_TITLE)).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(SOURCE_WALLET_RATE_LIMIT_TITLE)).not.toBeInTheDocument();
+    await waitFor(() => expect(submitButton()).toBeDisabled());
+
+    await user.click(submitButton());
+    expect(depositFn).not.toHaveBeenCalled();
+  });
+
+  it("re-checks at submit time: a wallet that becomes rate-limited between the form check and the click never reaches the wallet", async () => {
+    // Form-time verdict: eligible — the button enables. Every later
+    // verdict (the fresh pre-submit re-check, and the refetch it
+    // triggers): blocked by the source-wallet rule — another deposit from
+    // this same wallet (a different tab, a race) landed in between.
+    getSolToGlcRecipientEligibility
+      .mockResolvedValueOnce(eligible(FRESH_ADDRESS))
+      .mockResolvedValue(sourceWalletBlocked(FRESH_ADDRESS));
+
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillSolToGlcForm(user, FRESH_ADDRESS);
     await waitFor(() => expect(submitButton()).toBeEnabled());
+
     await user.click(submitButton());
 
-    await waitFor(() => expect(depositFn).toHaveBeenCalledTimes(1));
+    expect(await screen.findAllByText(SOURCE_WALLET_RATE_LIMIT_TITLE)).not.toHaveLength(
+      0,
+    );
+    // Decisively: the wallet was never invoked and no Solana obligation
+    // was created — the race was caught BEFORE Phantom opened.
+    expect(depositFn).not.toHaveBeenCalled();
+    expect(createTransfer).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+    // The pre-submit check really was a second, fresh read.
+    expect(getSolToGlcRecipientEligibility.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("unblocks on its own once the 24-hour window expires (next poll returns eligible)", async () => {
+    getSolToGlcRecipientEligibility
+      .mockResolvedValueOnce(sourceWalletBlocked(FRESH_ADDRESS))
+      .mockResolvedValue(eligible(FRESH_ADDRESS));
+
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillSolToGlcForm(user, FRESH_ADDRESS);
+
+    expect(
+      (await screen.findAllByText(SOURCE_WALLET_RATE_LIMIT_TITLE)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() => expect(submitButton()).toBeDisabled());
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await waitFor(() => expect(submitButton()).toBeEnabled());
+    expect(screen.queryByText(SOURCE_WALLET_RATE_LIMIT_TITLE)).not.toBeInTheDocument();
+  });
+
+  it("omits the wallet query parameter before a wallet is connected, checking the recipient leg only", async () => {
+    walletConnection.status = "disconnected";
+    walletConnection.address = null;
+    getSolToGlcRecipientEligibility.mockResolvedValue(eligible(FRESH_ADDRESS));
+
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillSolToGlcForm(user, FRESH_ADDRESS);
+
+    await waitFor(() =>
+      expect(getSolToGlcRecipientEligibility).toHaveBeenCalledWith(
+        FRESH_ADDRESS,
+        null,
+        expect.anything(),
+      ),
+    );
   });
 });

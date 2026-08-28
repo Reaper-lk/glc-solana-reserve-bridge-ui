@@ -138,16 +138,18 @@ export class MockBridgeClient implements BridgeApiClient {
     return this.delay(quoteOutputSchema.parse(output));
   }
 
-  async getSolToGlcRecipientEligibility(address: string) {
+  async getSolToGlcRecipientEligibility(address: string, wallet: string | null) {
     // The mock never records SolToGlc payouts (that direction is created
-    // on-chain, not through this API), so every recipient reads as
+    // on-chain, not through this API), so every recipient/wallet reads as
     // eligible — the blocked shape is exercised by unit tests, not by a
     // mock-mode scenario.
     return this.delay(
       recipientEligibilitySchema.parse({
         direction: "SolToGlc",
         address: address.trim(),
+        wallet: wallet ?? null,
         eligible: true,
+        blocked_reason: null,
         retry_after: null,
         retry_after_seconds: null,
         window_seconds: 86_400,
