@@ -26,6 +26,7 @@ import {
   RECIPIENT_RATE_LIMIT_TITLE,
   rollingVolumeRemaining,
   SOLANA_GLC,
+  SOURCE_WALLET_RATE_LIMIT_TITLE,
   validateAmount,
   validateGoldcoinAddress,
 } from "@/lib/bridge";
@@ -47,7 +48,11 @@ import {
   useSolToGlcRecipientEligibility,
 } from "@/lib/query/hooks";
 import { isValidAddress, useDepositToReserve, useWalletConnection } from "@/lib/solana";
-import { bridgeApi, recipientRateLimitedError } from "@/lib/api";
+import {
+  bridgeApi,
+  recipientRateLimitedError,
+  sourceWalletRateLimitedError,
+} from "@/lib/api";
 import type { Direction } from "@/lib/api/schemas/common";
 import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 import { DirectionSelector } from "./DirectionSelector";
@@ -152,14 +157,18 @@ export function BridgeCard() {
     };
   }, [direction, recipient]);
 
-  // The FORM-level recipient rate-limit check: fires once a syntactically
-  // valid Goldcoin address is entered for SolToGlc, so the user learns
-  // "this address already got a payout in the last 24 hours" before ever
-  // reaching for their wallet. `submit()` re-fetches the same answer
-  // fresh immediately before invoking the wallet — this hook's cached
-  // verdict is never what authorizes opening Phantom.
+  // The FORM-level dual rate-limit check: fires once a syntactically valid
+  // Goldcoin address is entered for SolToGlc, so the user learns "this
+  // address already got a payout" or "this wallet already used the
+  // bridge" in the last 24 hours before ever reaching for their wallet.
+  // The connected wallet's pubkey joins the check automatically as soon
+  // as it is available — before that, only the recipient leg is checked,
+  // same as before this dual limit existed. `submit()` re-fetches the
+  // same answer fresh immediately before invoking the wallet — this
+  // hook's cached verdict is never what authorizes opening Phantom.
   const recipientEligibility = useSolToGlcRecipientEligibility(
     recipient.trim(),
+    direction === "SolToGlc" ? wallet.address : null,
     direction === "SolToGlc" && recipientValidation.valid,
   );
 
@@ -295,6 +304,20 @@ export function BridgeCard() {
         };
       }
       if (recipientEligibility.data && !recipientEligibility.data.eligible) {
+        // Wallet-first: if the connected wallet itself is rate-limited,
+        // that is the ONLY message shown, even if the recipient is also
+        // rate-limited — matching the backend's own precedence
+        // (`RecipientEligibility::blocked_reason`). Both limits are
+        // independently enforced at admission regardless of which one is
+        // surfaced here.
+        if (recipientEligibility.data.blocked_reason === "source_wallet_rate_limited") {
+          return {
+            can: false,
+            reason: SOURCE_WALLET_RATE_LIMIT_TITLE,
+            reasonShownInline: false,
+            blocker: "source-wallet-rate-limited" as const,
+          };
+        }
         return {
           can: false,
           reason: RECIPIENT_RATE_LIMIT_TITLE,
@@ -368,22 +391,25 @@ export function BridgeCard() {
         });
       } else {
         if (!status.data) throw new Error("Bridge status is not loaded");
-        // FINAL pre-submit rate-limit re-check, fetched fresh through the
-        // client (never the form hook's cache): the address may have
-        // received a payout between being typed and this click — another
-        // tab, another user, a deposit that just finalized. A blocked
-        // verdict here stops everything BEFORE the wallet is invoked: no
-        // Phantom prompt, no Solana obligation, no funds moved. A read
-        // that FAILS is a different case and does not stop the submit —
-        // the backend re-checks the same rule authoritatively at
-        // admission, and a deposit admitted while actually rate-limited
-        // is parked and auto-resumed once the window clears
+        // FINAL pre-submit dual rate-limit re-check, fetched fresh through
+        // the client (never the form hook's cache): the address may have
+        // received a payout, or this wallet may have made a deposit,
+        // between being typed/connected and this click — another tab,
+        // another user, a deposit that just finalized. This is exactly
+        // what closes the race a slower form-level poll could otherwise
+        // miss. A blocked verdict here stops everything BEFORE the wallet
+        // is invoked: no Phantom prompt, no Solana obligation, no funds
+        // moved. A read that FAILS is a different case and does not stop
+        // the submit — the backend re-checks both rules authoritatively at
+        // admission, and a deposit admitted while actually rate-limited is
+        // parked and auto-resumed once the window clears
         // (glc-solana-reserve-bridge docs/09-runbook.md), so failing open
         // here degrades to a slower transfer, never a lost one.
         let finalEligibility: RecipientEligibilityDto | null = null;
         try {
           finalEligibility = await bridgeApi.getSolToGlcRecipientEligibility(
             recipient.trim(),
+            wallet.address,
           );
         } catch {
           finalEligibility = null;
@@ -393,7 +419,9 @@ export function BridgeCard() {
           // surfaces as the persistent blocker callout + disabled button,
           // not only as this one submit error.
           void recipientEligibility.refetch();
-          throw recipientRateLimitedError();
+          throw finalEligibility.blocked_reason === "source_wallet_rate_limited"
+            ? sourceWalletRateLimitedError()
+            : recipientRateLimitedError();
         }
         const sourceAtomic = BigInt(
           canonicalToSourceRawExact(String(canonicalGrossAmount), sourceToken.decimals),
@@ -691,7 +719,8 @@ type Blocker =
   | "insufficient-liquidity"
   | "quota-exhausted"
   | "quota-paused"
-  | "recipient-rate-limited";
+  | "recipient-rate-limited"
+  | "source-wallet-rate-limited";
 
 /**
  * Bridge-wide, backend-driven blockers get their own callout rather than
@@ -746,13 +775,23 @@ function BlockerAlert({
       title: RECIPIENT_RATE_LIMIT_TITLE,
       funds: "",
     },
+    // The source-wallet twin of the above — specific to the CONNECTED
+    // WALLET, not the address typed. Same one-sentence product decision
+    // (`@/lib/bridge/source-wallet-rate-limit`): no funds/next, no
+    // status-page link, no retry-after time shown.
+    "source-wallet-rate-limited": {
+      title: SOURCE_WALLET_RATE_LIMIT_TITLE,
+      funds: "",
+    },
   };
+  const isRateLimitedBlocker =
+    blocker === "recipient-rate-limited" || blocker === "source-wallet-rate-limited";
   const next =
     blocker === "quota-paused"
       ? QUOTA_PAUSED_NEXT
       : blocker === "quota-exhausted"
         ? "See the current status page for live capacity."
-        : blocker === "recipient-rate-limited"
+        : isRateLimitedBlocker
           ? ""
           : "Check your connection and try again, or see the current status.";
 
@@ -763,7 +802,7 @@ function BlockerAlert({
       funds={copy[blocker].funds}
       next={next}
       actions={
-        blocker === "recipient-rate-limited" ? undefined : (
+        isRateLimitedBlocker ? undefined : (
           <ButtonLink href={routes.status} variant="secondary" size="sm">
             View status
           </ButtonLink>

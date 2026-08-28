@@ -28,6 +28,7 @@ export type { AddressProblem, AddressRules, AddressValidation } from "./glc-addr
 export { goldcoinAddressRules } from "./address-rules";
 
 export { RECIPIENT_RATE_LIMIT_TITLE } from "./recipient-rate-limit";
+export { SOURCE_WALLET_RATE_LIMIT_TITLE } from "./source-wallet-rate-limit";
 
 export {
   isTerminalState,

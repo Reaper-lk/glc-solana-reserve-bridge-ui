@@ -1,5 +1,6 @@
 import { type ApiErrorBody } from "./schemas/common";
 import { RECIPIENT_RATE_LIMIT_TITLE } from "@/lib/bridge/recipient-rate-limit";
+import { SOURCE_WALLET_RATE_LIMIT_TITLE } from "@/lib/bridge/source-wallet-rate-limit";
 
 /**
  * The error contract, mapped once into the shape the UI is required to
@@ -28,7 +29,8 @@ export type ApiErrorKind =
   | "bad-request"
   | "validation"
   | "solana-transaction"
-  | "recipient-rate-limited";
+  | "recipient-rate-limited"
+  | "source-wallet-rate-limited";
 
 export interface ErrorPresentation {
   readonly what: string;
@@ -177,6 +179,27 @@ export function recipientRateLimitedError(): ApiError {
     retryable: false,
     presentation: {
       what: RECIPIENT_RATE_LIMIT_TITLE,
+      funds: "",
+      next: "",
+    },
+  });
+}
+
+/**
+ * The source-wallet twin of `recipientRateLimitedError`: the FINAL
+ * pre-submit re-check came back blocked because the CONNECTED SOLANA
+ * WALLET — not the Goldcoin destination — already made a qualifying
+ * SolToGlc deposit inside the backend's rolling 24-hour window. Thrown
+ * before the wallet is ever invoked. Same one-sentence product decision:
+ * `funds`/`next` are deliberately empty, with no retry-after time shown.
+ */
+export function sourceWalletRateLimitedError(): ApiError {
+  return new ApiError({
+    kind: "source-wallet-rate-limited",
+    message: SOURCE_WALLET_RATE_LIMIT_TITLE,
+    retryable: false,
+    presentation: {
+      what: SOURCE_WALLET_RATE_LIMIT_TITLE,
       funds: "",
       next: "",
     },
