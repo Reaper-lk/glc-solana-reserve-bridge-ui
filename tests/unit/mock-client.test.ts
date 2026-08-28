@@ -48,14 +48,29 @@ describe("MockBridgeClient — quote / fee presentation", () => {
 describe("MockBridgeClient — SolToGlc recipient eligibility", () => {
   it("reports every recipient eligible (the mock records no SolToGlc payouts) through the real schema", async () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
-    const out = await client.getSolToGlcRecipientEligibility("  GLCAddr111  ");
+    const out = await client.getSolToGlcRecipientEligibility("  GLCAddr111  ", null);
     expect(out).toMatchObject({
       direction: "SolToGlc",
       address: "GLCAddr111", // trimmed, like the real endpoint
+      wallet: null,
       eligible: true,
+      blocked_reason: null,
       retry_after: null,
       retry_after_seconds: null,
       window_seconds: 86_400,
+    });
+  });
+
+  it("echoes a connected wallet back and still reports eligible (the mock records no SolToGlc deposits)", async () => {
+    const client = new MockBridgeClient({ latencyMs: 0 });
+    const out = await client.getSolToGlcRecipientEligibility(
+      "GLCAddr111",
+      "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+    );
+    expect(out).toMatchObject({
+      wallet: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      eligible: true,
+      blocked_reason: null,
     });
   });
 });

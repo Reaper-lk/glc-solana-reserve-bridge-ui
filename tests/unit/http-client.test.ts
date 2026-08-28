@@ -223,19 +223,47 @@ describe("HttpBridgeClient", () => {
     respondOk({
       direction: "SolToGlc",
       address: "GLCRecipient1111111111111111111111",
+      wallet: null,
       eligible: false,
+      blocked_reason: "recipient_rate_limited",
       retry_after: 1_787_000_000,
       retry_after_seconds: 40_000,
       window_seconds: 86_400,
     });
     await expect(
-      client.getSolToGlcRecipientEligibility("GLCRecipient1111111111111111111111"),
+      client.getSolToGlcRecipientEligibility("GLCRecipient1111111111111111111111", null),
     ).resolves.toMatchObject({ eligible: false, retry_after: 1_787_000_000 });
     // GET with the address as a query parameter — the exact path the
     // backend routes (`/recipients/sol-to-glc/eligibility?address=`).
+    // `wallet` is omitted from the query string when `null`.
     const [eligibilityUrl] = vi.mocked(fetch).mock.calls.at(-1) ?? [];
     expect(String(eligibilityUrl)).toBe(
       `${BASE}/recipients/sol-to-glc/eligibility?address=GLCRecipient1111111111111111111111`,
+    );
+
+    respondOk({
+      direction: "SolToGlc",
+      address: "GLCRecipient1111111111111111111111",
+      wallet: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      eligible: false,
+      blocked_reason: "source_wallet_rate_limited",
+      retry_after: 1_787_000_000,
+      retry_after_seconds: 40_000,
+      window_seconds: 86_400,
+    });
+    await expect(
+      client.getSolToGlcRecipientEligibility(
+        "GLCRecipient1111111111111111111111",
+        "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      ),
+    ).resolves.toMatchObject({
+      eligible: false,
+      blocked_reason: "source_wallet_rate_limited",
+    });
+    // When a wallet IS given, it is appended as its own query parameter.
+    const [walletEligibilityUrl] = vi.mocked(fetch).mock.calls.at(-1) ?? [];
+    expect(String(walletEligibilityUrl)).toBe(
+      `${BASE}/recipients/sol-to-glc/eligibility?address=GLCRecipient1111111111111111111111&wallet=9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM`,
     );
   });
 

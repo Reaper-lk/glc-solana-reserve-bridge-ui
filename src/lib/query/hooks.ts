@@ -107,21 +107,26 @@ export function useQuote(
 }
 
 /**
- * The SolToGlc recipient rate-limit check for the Goldcoin address in the
- * form (`GET /recipients/sol-to-glc/eligibility`). Enabled only once the
+ * The SolToGlc dual rate-limit check for the Goldcoin address AND (once
+ * connected) the Solana source wallet in the form
+ * (`GET /recipients/sol-to-glc/eligibility`). Enabled only once the
  * address has passed local validation — never fired per keystroke on
- * half-typed input. This is the FORM-level check; `BridgeCard.submit`
- * additionally re-fetches through `bridgeApi` directly immediately before
- * invoking the wallet, so a stale cached "eligible" here can never be what
- * authorizes opening Phantom.
+ * half-typed input; `wallet` is `null` until a wallet is connected, in
+ * which case only the recipient leg is checked (the source-wallet leg
+ * joins automatically once connected). This is the FORM-level check;
+ * `BridgeCard.submit` additionally re-fetches through `bridgeApi` directly
+ * immediately before invoking the wallet, so a stale cached "eligible"
+ * here can never be what authorizes opening Phantom.
  */
 export function useSolToGlcRecipientEligibility(
   address: string,
+  wallet: string | null,
   enabled: boolean,
 ): UseQueryResult<RecipientEligibilityDto> {
   return useQuery({
-    queryKey: queryKeys.recipientEligibility(address),
-    queryFn: ({ signal }) => bridgeApi.getSolToGlcRecipientEligibility(address, signal),
+    queryKey: queryKeys.recipientEligibility(address, wallet),
+    queryFn: ({ signal }) =>
+      bridgeApi.getSolToGlcRecipientEligibility(address, wallet, signal),
     enabled: enabled && address.length > 0,
     refetchInterval: pollIntervals.recipientEligibility,
     staleTime: 15_000,
