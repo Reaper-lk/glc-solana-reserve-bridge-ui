@@ -61,25 +61,25 @@ describe("canonicalToSourceRawFloor / Ceil", () => {
  * `minimumGrossCanonicalForMinTransferAmount` replaces a previous fixed
  * "100 GLC" UI constant that went silently stale when the real bridge fee
  * moved from 1% to 6% (100 GLC gross nets to only 94 GLC at 6%, under the
- * real 100 GLC on-chain minimum — docs/22-production-readiness-review.md's
- * approved pilot value, `--min-transfer-amount 100000000`). It derives the
- * exact smallest gross amount instead, straight from `GET /limits`' own
+ * then-current on-chain minimum). It derives the exact smallest gross
+ * amount instead, straight from `GET /limits`' own
  * `min_transfer_amount`/`bridge_fee_bps`, replicating the backend's exact
  * floored-fee formula (`amount_conversion::compute_fee`).
  *
- * At the real production values (100 GLC minimum, 6% fee), the exact
- * boundary is 106.38297872 GLC — verified independently by hand: fee(g) =
- * floor(g * 600 / 10000); at g = 10,638,297,872 canonical atomic units,
- * fee = 638,297,872 and net = 10,000,000,000 (exactly 100 GLC); at g -
- * 1 = 10,638,297,871, net drops to 9,999,999,999 (under 100 GLC).
+ * At the real production values (99 GLC net-side minimum, 3% fee —
+ * docs/22-production-readiness-review.md's 2026-08-29 update note), the
+ * exact boundary is 102.06185566 GLC — verified independently by hand:
+ * fee(g) = floor(g * 300 / 10000); at g = 10,206,185,566 canonical atomic
+ * units, fee = 306,185,566 and net = 9,900,000,000 (exactly 99 GLC); at
+ * g - 1 = 10,206,185,565, net drops to 9,899,999,999 (under 99 GLC).
  */
 describe("minimumGrossCanonicalForMinTransferAmount", () => {
-  const MIN_TRANSFER_AMOUNT_MINT_ATOMIC = "100000000"; // 100 GLC, 6-decimal mint units
-  const FEE_BPS = 600; // 6%, the real production rate
+  const MIN_TRANSFER_AMOUNT_MINT_ATOMIC = "99000000"; // 99 GLC, 6-decimal mint units
+  const FEE_BPS = 300; // 3%, the real production rate
   const MINT_DECIMALS = 6;
-  const EXACT_MINIMUM_CANONICAL = "10638297872"; // 106.38297872 GLC, canonical (8 dec)
+  const EXACT_MINIMUM_CANONICAL = "10206185566"; // 102.06185566 GLC, canonical (8 dec)
 
-  it("computes the real production boundary exactly (100 GLC min, 6% fee)", () => {
+  it("computes the real production boundary exactly (99 GLC min, 3% fee)", () => {
     expect(
       minimumGrossCanonicalForMinTransferAmount(
         MIN_TRANSFER_AMOUNT_MINT_ATOMIC,
@@ -91,9 +91,9 @@ describe("minimumGrossCanonicalForMinTransferAmount", () => {
 
   it("the exact minimum nets to exactly the on-chain floor, never more", () => {
     const gross = BigInt(EXACT_MINIMUM_CANONICAL);
-    const fee = (gross * 600n) / 10_000n;
+    const fee = (gross * 300n) / 10_000n;
     const net = gross - fee;
-    // 100 GLC canonical == 100 GLC at 6 decimals * 100 (the canonical/mint
+    // 99 GLC canonical == 99 GLC at 6 decimals * 100 (the canonical/mint
     // decimal-scale factor), i.e. exactly the configured minimum — the
     // tightest possible boundary, not an overshoot.
     expect(net).toBe(BigInt(MIN_TRANSFER_AMOUNT_MINT_ATOMIC) * 100n);
@@ -101,33 +101,33 @@ describe("minimumGrossCanonicalForMinTransferAmount", () => {
 
   it("one atomic unit below the computed minimum nets to just under the floor", () => {
     const gross = BigInt(EXACT_MINIMUM_CANONICAL) - 1n;
-    const fee = (gross * 600n) / 10_000n;
+    const fee = (gross * 300n) / 10_000n;
     const net = gross - fee;
     expect(net).toBeLessThan(BigInt(MIN_TRANSFER_AMOUNT_MINT_ATOMIC) * 100n);
   });
 
   it("rescales the canonical minimum up (ceil) to Solana's 6-decimal source precision without under-shooting", () => {
     const minimumForSolToGlc = atomicRescaleCeil(EXACT_MINIMUM_CANONICAL, 8, 6);
-    expect(minimumForSolToGlc).toBe("106382979");
-    // Ceiling, not truncation: the naive floor (106382978) would be
+    expect(minimumForSolToGlc).toBe("102061856");
+    // Ceiling, not truncation: the naive floor (102061855) would be
     // slightly BELOW the true canonical minimum once converted back,
     // which would under-shoot the real on-chain floor for SolToGlc.
-    const flooredWouldUndershoot = 106382978n * 100n < BigInt(EXACT_MINIMUM_CANONICAL);
+    const flooredWouldUndershoot = 102061855n * 100n < BigInt(EXACT_MINIMUM_CANONICAL);
     expect(flooredWouldUndershoot).toBe(true);
   });
 
   it("is a no-op at 8 mint decimals (canonical is already 8 decimals)", () => {
     // A degenerate but structurally valid input: confirms the function
     // does not assume a specific mint decimal count.
-    const result = minimumGrossCanonicalForMinTransferAmount("100", 600, 8);
+    const result = minimumGrossCanonicalForMinTransferAmount("100", 300, 8);
     const gross = BigInt(result);
-    const fee = (gross * 600n) / 10_000n;
+    const fee = (gross * 300n) / 10_000n;
     expect(gross - fee).toBeGreaterThanOrEqual(100n);
-    expect(gross - 1n - ((gross - 1n) * 600n) / 10_000n).toBeLessThan(100n);
+    expect(gross - 1n - ((gross - 1n) * 300n) / 10_000n).toBeLessThan(100n);
   });
 
   it("returns zero for a zero minimum", () => {
-    expect(minimumGrossCanonicalForMinTransferAmount("0", 600, 6)).toBe("0");
+    expect(minimumGrossCanonicalForMinTransferAmount("0", 300, 6)).toBe("0");
   });
 
   it("rejects a fee rate of 100% or more (division by zero in the derivation)", () => {
@@ -138,12 +138,12 @@ describe("minimumGrossCanonicalForMinTransferAmount", () => {
 
   it("self-corrects if the fee rate changes — never a hardcoded assumption", () => {
     // At 1% (the earlier pilot rate), the boundary is much lower than at
-    // 6% — proving the derivation genuinely depends on `feeBps`, not a
+    // 3% — proving the derivation genuinely depends on `feeBps`, not a
     // baked-in constant.
     const at1Percent = BigInt(
       minimumGrossCanonicalForMinTransferAmount(MIN_TRANSFER_AMOUNT_MINT_ATOMIC, 100, 6),
     );
-    const at6Percent = BigInt(EXACT_MINIMUM_CANONICAL);
-    expect(at1Percent).toBeLessThan(at6Percent);
+    const at3Percent = BigInt(EXACT_MINIMUM_CANONICAL);
+    expect(at1Percent).toBeLessThan(at3Percent);
   });
 });

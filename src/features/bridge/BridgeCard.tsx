@@ -100,7 +100,7 @@ export function BridgeCard() {
     // understates the true floor by exactly the bridge fee (this was the
     // "Min 99 GLC" bug). Computed, not hardcoded, so it never goes stale
     // again the way a fixed constant did when the real fee moved from 1%
-    // to 6% — see `minimumGrossCanonicalForMinTransferAmount`.
+    // to 6% (later 3%) — see `minimumGrossCanonicalForMinTransferAmount`.
     const minimumCanonical = minimumGrossCanonicalForMinTransferAmount(
       String(limits.data.min_transfer_amount),
       limits.data.bridge_fee_bps,

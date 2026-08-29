@@ -52,7 +52,7 @@ function formatDisplay(atomic: number, decimals: number): string {
  *
  * Every fixture is parsed through the same schema a live response would be —
  * a fixture that would not survive the real boundary fails the test suite.
- * `createTransfer` re-derives its fee/net figures with the same 6% math the
+ * `createTransfer` re-derives its fee/net figures with the same 3% math the
  * real backend uses, purely so the mock stays internally consistent; the
  * frontend proper never performs this calculation itself.
  */

@@ -16,7 +16,8 @@ const TERMS: readonly { term: string; definition: string }[] = [
   },
   {
     term: "Bridge fee",
-    definition: "A flat 6% of the gross amount, charged on every transfer.",
+    definition:
+      "A flat 3% of the gross amount, charged on every transfer. Network fees are separate.",
   },
   { term: "Gross amount", definition: "What you bridge, before the fee." },
   { term: "Net amount", definition: "What the destination receives, after the fee." },

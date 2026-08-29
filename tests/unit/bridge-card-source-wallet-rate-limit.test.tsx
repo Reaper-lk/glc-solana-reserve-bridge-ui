@@ -134,7 +134,7 @@ function quote() {
     direction: "SolToGlc" as const,
     gross_amount: 500_00000000,
     gross_display_amount: "500.00000000",
-    fee_bps: 600,
+    fee_bps: 300,
     fee_amount: 30_00000000,
     fee_display_amount: "30.00000000",
     net_amount: 470_00000000,
