@@ -64,9 +64,10 @@ export const SOLANA_GLC: TokenDescriptor = {
 
 // The minimum GROSS amount a user may enter/bridge, in either direction,
 // is no longer a fixed constant here — a hardcoded "100 GLC" quietly went
-// stale when the real bridge fee moved from 1% to 6%, since it was tuned
-// to that specific rate (100 GLC gross nets to exactly 99 GLC at 1%; at
-// 6% it nets to only 94, UNDER the on-chain floor). It is now computed at
+// stale when the real bridge fee moved from 1% to 6% (later 3%), since
+// it was tuned to that specific rate (100 GLC gross nets to exactly
+// 99 GLC at 1%; at 6% it nets to only 94, UNDER the on-chain floor). It
+// is now computed at
 // use time from `GET /limits`' own `min_transfer_amount`/`bridge_fee_bps`
 // — see `minimumGrossCanonicalForMinTransferAmount` in `./canonical` and
 // its call site in `BridgeCard.tsx` — so it can never drift out of sync

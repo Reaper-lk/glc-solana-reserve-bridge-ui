@@ -78,11 +78,11 @@ function baseQuote() {
     direction: "GlcToSol" as const,
     gross_amount: 1_000_00000000,
     gross_display_amount: "1000.00000000",
-    fee_bps: 600,
-    fee_amount: 60_00000000,
-    fee_display_amount: "60.00000000",
-    net_amount: 940_00000000,
-    net_display_amount: "940.00000000",
+    fee_bps: 300,
+    fee_amount: 30_00000000,
+    fee_display_amount: "30.00000000",
+    net_amount: 970_00000000,
+    net_display_amount: "970.00000000",
     source_decimals: 8,
     destination_decimals: 6,
     source_asset: "GLC (Goldcoin)",
@@ -174,7 +174,7 @@ describe("BridgeCard — amount entry and validation", () => {
 });
 
 describe("BridgeCard — POST /quote integration and fee presentation", () => {
-  it("requests a quote for the canonical gross amount and shows the exact 6% breakdown", async () => {
+  it("requests a quote for the canonical gross amount and shows the exact 3% breakdown", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeCard />);
 
@@ -193,11 +193,11 @@ describe("BridgeCard — POST /quote integration and fee presentation", () => {
     await waitFor(() =>
       expect(screen.getAllByText("You bridge").length).toBeGreaterThan(0),
     );
-    expect(screen.getByText("Bridge fee (6%)")).toBeInTheDocument();
+    expect(screen.getByText("Bridge fee (3%)")).toBeInTheDocument();
     expect(screen.getByText("You receive")).toBeInTheDocument();
     expect(screen.getByText(/1000\.00000000/)).toBeInTheDocument();
-    expect(screen.getByText(/−60\.00000000/)).toBeInTheDocument();
-    expect(screen.getByText(/940\.00000000/)).toBeInTheDocument();
+    expect(screen.getByText(/−30\.00000000/)).toBeInTheDocument();
+    expect(screen.getByText(/970\.00000000/)).toBeInTheDocument();
   });
 
   it("never displays a fee/net figure it computed itself — only what the quote returned", async () => {
