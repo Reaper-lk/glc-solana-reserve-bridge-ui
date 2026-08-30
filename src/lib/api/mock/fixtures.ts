@@ -21,10 +21,11 @@ import type { TransferViewDto, RequestState } from "../schemas/transfer";
 const NOW_UNIX = () => Math.floor(Date.now() / 1000);
 
 // The real production rate (`amount_conversion::BRIDGE_FEE_BPS`,
-// glc-solana-reserve-bridge) is 600 bps (6%), not the earlier 1% pilot
-// rate — kept in lockstep here so `NEXT_PUBLIC_BRIDGE_API_MODE=mock`
-// exercises the same math real users see.
-export const BRIDGE_FEE_BPS = 600;
+// glc-solana-reserve-bridge) is 300 bps (3%) as of the 2026-08-29 limits
+// update (earlier: 6%, and 1% in the pilot) — kept in lockstep here so
+// `NEXT_PUBLIC_BRIDGE_API_MODE=mock` exercises the same math real users
+// see.
+export const BRIDGE_FEE_BPS = 300;
 
 /**
  * Quota fields are in the on-chain mint's atomic units (6 decimals), the
@@ -106,19 +107,20 @@ export function quotaPausedStatusFixture(): BridgeStatusDto {
 }
 
 export function limitsFixture(): TransferLimitsDto {
-  // Real production values, in the unit `/limits` actually carries: the
-  // on-chain `BridgeConfig` values raw, which the on-chain checks compare
-  // against MINT-atomic (6-decimal) amounts
-  // (limits.rs::enforce_transfer_amount) — the approved pilot value is
-  // exactly 100 GLC (docs/22-production-readiness-review.md,
-  // `--min-transfer-amount 100000000`), a NET-side check
-  // (`release_from_reserve`). The UI's own GROSS-side entry floor is
-  // computed from this figure together with `bridge_fee_bps`
+  // Real production values (2026-08-29 limits update,
+  // docs/22-production-readiness-review.md), in the unit `/limits`
+  // actually carries: the on-chain `BridgeConfig` values raw, which the
+  // on-chain checks compare against MINT-atomic (6-decimal) amounts
+  // (limits.rs::enforce_transfer_amount) — `min_transfer_amount` is the
+  // live 99 GLC NET-side floor (`release_from_reserve` checks the net
+  // amount), `per_transfer_limit` is the 20,000 GLC gross maximum. The
+  // UI's own GROSS-side entry floor (102.061856 GLC at the 3% fee) is
+  // computed from these figures together with `bridge_fee_bps`
   // (`minimumGrossCanonicalForMinTransferAmount`), never hardcoded, so
-  // there is no longer a fixed "rounder" constant to keep in sync here.
+  // there is no fixed "rounder" constant to keep in sync here.
   return {
-    min_transfer_amount: 100_000000,
-    per_transfer_limit: 10_000_000000,
+    min_transfer_amount: 99_000000,
+    per_transfer_limit: 20_000_000000,
     bridge_fee_bps: BRIDGE_FEE_BPS,
   };
 }
