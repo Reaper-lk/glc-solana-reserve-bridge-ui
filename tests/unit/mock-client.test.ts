@@ -3,37 +3,49 @@ import { MockBridgeClient } from "@/lib/api/mock/client";
 import { isApiError } from "@/lib/api/errors";
 
 describe("MockBridgeClient — quote / fee presentation", () => {
-  it("computes exactly a 6% (600 bps) fee for GlcToSol", async () => {
+  it("computes exactly a 3% (300 bps) fee for GlcToSol", async () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
     const quote = await client.getQuote({
       direction: "GlcToSol",
       gross_amount: 1_000_00000000,
     });
-    expect(quote.fee_bps).toBe(600);
-    expect(quote.fee_amount).toBe(60_00000000);
-    expect(quote.net_amount).toBe(940_00000000);
+    expect(quote.fee_bps).toBe(300);
+    expect(quote.fee_amount).toBe(30_00000000);
+    expect(quote.net_amount).toBe(970_00000000);
     expect(quote.gross_amount).toBe(quote.fee_amount + quote.net_amount);
   });
 
-  it("computes the same 6% fee for SolToGlc", async () => {
+  it("computes the same 3% fee for SolToGlc", async () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
     const quote = await client.getQuote({
       direction: "SolToGlc",
       gross_amount: 500_00000000,
     });
-    expect(quote.fee_amount).toBe(30_00000000);
-    expect(quote.net_amount).toBe(470_00000000);
+    expect(quote.fee_amount).toBe(15_00000000);
+    expect(quote.net_amount).toBe(485_00000000);
   });
 
-  it("calculates the 6% fee correctly for a normal 2,000 GLC transfer", async () => {
+  it("calculates the 3% fee correctly for a normal 2,000 GLC transfer", async () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
     const quote = await client.getQuote({
       direction: "GlcToSol",
       gross_amount: 2_000_00000000,
     });
-    expect(quote.fee_bps).toBe(600);
-    expect(quote.fee_amount).toBe(120_00000000);
-    expect(quote.net_amount).toBe(1_880_00000000);
+    expect(quote.fee_bps).toBe(300);
+    expect(quote.fee_amount).toBe(60_00000000);
+    expect(quote.net_amount).toBe(1_940_00000000);
+    expect(quote.gross_amount).toBe(quote.fee_amount + quote.net_amount);
+  });
+
+  it("calculates the 3% fee at the 20,000 GLC per-transfer maximum: 19,400 GLC net", async () => {
+    const client = new MockBridgeClient({ latencyMs: 0 });
+    const quote = await client.getQuote({
+      direction: "GlcToSol",
+      gross_amount: 20_000_00000000,
+    });
+    expect(quote.fee_bps).toBe(300);
+    expect(quote.fee_amount).toBe(600_00000000);
+    expect(quote.net_amount).toBe(19_400_00000000);
     expect(quote.gross_amount).toBe(quote.fee_amount + quote.net_amount);
   });
 
@@ -128,7 +140,7 @@ describe("MockBridgeClient — transfer lifecycle and lookup", () => {
     });
     const transfer = await client.getTransfer(created.request_id);
     expect(transfer.gross_amount_atomic).toBe(200_00000000);
-    expect(transfer.fee_amount_atomic).toBe(12_00000000);
+    expect(transfer.fee_amount_atomic).toBe(6_00000000);
     expect(transfer.state).toBe("AwaitingDeposit");
   });
 

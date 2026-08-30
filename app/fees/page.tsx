@@ -9,14 +9,14 @@ export default function FeesPage() {
   return (
     <ContentPage
       title="Fees & limits"
-      intro="The bridge charges a flat 6% service fee. Minimums, maximums, and reserve capacity are set by the bridge backend and can change without notice — the figures shown on the bridge form at the time you request a quote are always authoritative."
+      intro="The bridge charges a flat 3% service fee. Minimums, maximums, and reserve capacity are set by the bridge backend and can change without notice — the figures shown on the bridge form at the time you request a quote are always authoritative."
       sections={SECTIONS}
     >
       <ContentSection id="bridge-fee" title="Bridge fee">
         <p>
-          Every transfer, in either direction, is charged a 6% fee on the gross amount.
-          For example, bridging 1,000 GLC charges a 60 GLC fee and releases 940 GLC to the
-          destination.
+          Bridge fee: 3%. Every transfer, in either direction, is charged a 3% fee on the
+          gross amount. For example, bridging 1,000 GLC charges a 30 GLC fee and releases
+          970 GLC to the destination. Network fees are separate.
         </p>
         <p>
           The fee is computed once, server-side, from the gross amount you request — the
@@ -26,8 +26,9 @@ export default function FeesPage() {
       </ContentSection>
       <ContentSection id="transfer-limits" title="Transfer limits">
         <p>
-          Every transfer has a minimum and maximum size, published by the bridge backend
-          and shown on the bridge form. Attempting an amount outside these bounds is
+          Max per transfer: 20,000 GLC. Every transfer has a minimum and maximum size,
+          published by the bridge backend and shown on the bridge form — the live figures
+          there are always authoritative. Attempting an amount outside these bounds is
           rejected before any funds move.
         </p>
       </ContentSection>

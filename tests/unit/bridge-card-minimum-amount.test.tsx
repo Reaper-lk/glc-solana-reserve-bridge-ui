@@ -21,17 +21,18 @@ import type * as EnvModule from "@/lib/config/env";
  * 100 GLC on-chain minimum).
  *
  * The correct GROSS entry-side minimum is now DERIVED at use time from
- * `/limits`' own `min_transfer_amount` (100 GLC, the approved pilot value —
- * docs/22-production-readiness-review.md) and `bridge_fee_bps` (600, i.e.
- * 6%) via `minimumGrossCanonicalForMinTransferAmount`
+ * `/limits`' own `min_transfer_amount` (99 GLC, the live production
+ * NET-side floor — docs/22-production-readiness-review.md's 2026-08-29
+ * update note) and `bridge_fee_bps` (300, i.e. 3%) via
+ * `minimumGrossCanonicalForMinTransferAmount`
  * (`src/lib/bridge/canonical.ts`) — the exact smallest gross that still
- * nets to at least 100 GLC after a 6% fee, which is 106.38297872 GLC
- * (canonical, Goldcoin-source precision) / 106.382979 GLC (ceiled to
+ * nets to at least 99 GLC after a 3% fee, which is 102.06185566 GLC
+ * (canonical, Goldcoin-source precision) / 102.061856 GLC (ceiled to
  * Solana's 6-decimal source precision). There is no longer a fixed
  * constant to keep in sync with the real fee rate.
  *
- * `limitsFixture()` reports the real production `min_transfer_amount` (100
- * GLC) and `bridge_fee_bps` (600) so these tests exercise the actual
+ * `limitsFixture()` reports the real production `min_transfer_amount` (99
+ * GLC) and `bridge_fee_bps` (300) so these tests exercise the actual
  * derivation, not a hand-picked coincidence.
  *
  * Kept as its own file (not added to bridge-card.test.tsx) for the same
@@ -40,13 +41,13 @@ import type * as EnvModule from "@/lib/config/env";
  * shared file's other ~30 tests do not need.
  */
 
-const GLC_TO_SOL_MINIMUM_DISPLAY = "106.38297872 GLC";
-const GLC_TO_SOL_MINIMUM_INPUT = "106.38297872";
-const GLC_TO_SOL_JUST_BELOW_MINIMUM_INPUT = "106.38297871";
+const GLC_TO_SOL_MINIMUM_DISPLAY = "102.06185566 GLC";
+const GLC_TO_SOL_MINIMUM_INPUT = "102.06185566";
+const GLC_TO_SOL_JUST_BELOW_MINIMUM_INPUT = "102.06185565";
 
-const SOL_TO_GLC_MINIMUM_DISPLAY = "106.382979 GLC";
-const SOL_TO_GLC_MINIMUM_INPUT = "106.382979";
-const SOL_TO_GLC_JUST_BELOW_MINIMUM_INPUT = "106.382978";
+const SOL_TO_GLC_MINIMUM_DISPLAY = "102.061856 GLC";
+const SOL_TO_GLC_MINIMUM_INPUT = "102.061856";
+const SOL_TO_GLC_JUST_BELOW_MINIMUM_INPUT = "102.061855";
 
 const getStatus = vi.fn();
 const getLimits = vi.fn();
@@ -124,7 +125,7 @@ function glcToSolQuote() {
     direction: "GlcToSol" as const,
     gross_amount: 500_00000000,
     gross_display_amount: "500.00000000",
-    fee_bps: 600,
+    fee_bps: 300,
     fee_amount: 30_00000000,
     fee_display_amount: "30.00000000",
     net_amount: 470_000000,
@@ -141,7 +142,7 @@ function solToGlcQuote() {
     direction: "SolToGlc" as const,
     gross_amount: 500_000000,
     gross_display_amount: "500.000000",
-    fee_bps: 600,
+    fee_bps: 300,
     fee_amount: 30_00000000,
     fee_display_amount: "30.00000000",
     net_amount: 470_00000000,
@@ -211,13 +212,13 @@ describe("BridgeCard — minimum bridge amount (Goldcoin -> Solana)", () => {
     getQuote.mockResolvedValue(glcToSolQuote());
   });
 
-  it("displays the fee-derived 106.38297872 GLC minimum, never the backend's raw 100 GLC net-side figure", async () => {
+  it("displays the fee-derived 102.06185566 GLC minimum, never the backend's raw 99 GLC net-side figure", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, "500");
     expect(
       await screen.findByText(new RegExp(`Min ${GLC_TO_SOL_MINIMUM_DISPLAY}`)),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Min 100 GLC\b/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Min 99 GLC\b/)).not.toBeInTheDocument();
   });
 
   it("rejects one atomic unit below the exact minimum", async () => {
@@ -238,7 +239,7 @@ describe("BridgeCard — minimum bridge amount (Goldcoin -> Solana)", () => {
     ).toBeDisabled();
   });
 
-  it("accepts exactly the minimum, 106.38297872 GLC", async () => {
+  it("accepts exactly the minimum, 102.06185566 GLC", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, GLC_TO_SOL_MINIMUM_INPUT);
     const submit = await screen.findByRole("button", { name: /Create deposit request/i });
@@ -260,13 +261,13 @@ describe("BridgeCard — minimum bridge amount (Solana -> Goldcoin)", () => {
     getQuote.mockResolvedValue(solToGlcQuote());
   });
 
-  it("displays the fee-derived 106.382979 GLC minimum, never the backend's raw 100 GLC net-side figure", async () => {
+  it("displays the fee-derived 102.061856 GLC minimum, never the backend's raw 99 GLC net-side figure", async () => {
     const user = userEvent.setup();
     await typeSolToGlcAmount(user, "500");
     expect(
       await screen.findByText(new RegExp(`Min ${SOL_TO_GLC_MINIMUM_DISPLAY}`)),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Min 100 GLC\b/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Min 99 GLC\b/)).not.toBeInTheDocument();
   });
 
   it("rejects one atomic unit below the exact minimum", async () => {
@@ -283,7 +284,7 @@ describe("BridgeCard — minimum bridge amount (Solana -> Goldcoin)", () => {
     expect(screen.getByRole("button", { name: /Deposit from wallet/i })).toBeDisabled();
   });
 
-  it("accepts exactly the minimum, 106.382979 GLC", async () => {
+  it("accepts exactly the minimum, 102.061856 GLC", async () => {
     const user = userEvent.setup();
     await typeSolToGlcAmount(user, SOL_TO_GLC_MINIMUM_INPUT);
     const submit = await screen.findByRole("button", { name: /Deposit from wallet/i });

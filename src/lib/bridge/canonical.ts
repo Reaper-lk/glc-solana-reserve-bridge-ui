@@ -107,7 +107,7 @@ const BPS_DENOMINATOR = 10_000n;
  * `GET /limits` itself, never a hardcoded assumption about either, so
  * this stays correct automatically if the fee rate or the on-chain floor
  * ever changes — replacing a previous fixed "100 GLC" constant that
- * quietly went stale when the real fee moved from 1% to 6% (it no longer
+ * quietly went stale when the real fee moved from 1% to 6% (later 3%) (it no longer
  * guaranteed clearing the real on-chain floor).
  *
  * `net(gross) = gross - floor(gross * feeBps / 10000)` is non-decreasing

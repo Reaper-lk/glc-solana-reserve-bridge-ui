@@ -27,14 +27,14 @@ test("status page renders real per-direction availability and reserve capacity, 
   await expect(page.getByText("Destination reserve capacity").first()).toBeVisible();
 });
 
-test("bridge form requests a real quote and shows the real 1% breakdown", async ({
+test("bridge form requests a real quote and shows the real 3% breakdown", async ({
   page,
 }) => {
   await page.goto("/bridge");
-  await page.getByLabel(/Amount in GLC/i).fill("10");
-  await expect(page.getByText("Bridge fee (1%)")).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/−0\.10000000/)).toBeVisible();
-  await expect(page.getByText(/9\.90000000/)).toBeVisible();
+  await page.getByLabel(/Amount in GLC/i).fill("1000");
+  await expect(page.getByText("Bridge fee (3%)")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/−30\.00000000/)).toBeVisible();
+  await expect(page.getByText(/970\.00000000/)).toBeVisible();
 });
 
 test("reserves page shows real per-direction capacity from the real backend", async ({
@@ -61,7 +61,7 @@ test("creates a real GlcToSol transfer request and shows real backend-issued dep
   await page
     .getByLabel("Solana recipient address")
     .fill("9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
-  await expect(page.getByText("Bridge fee (1%)")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Bridge fee (3%)")).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole("button", { name: /Create deposit request/i }).click();
 
