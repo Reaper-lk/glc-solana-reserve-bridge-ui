@@ -6,16 +6,19 @@ import * as fixtures from "@/lib/api/mock/fixtures";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
 import {
   directionGateState,
+  routeAvailable,
   routeDirection,
-  routeEnabled,
+  settlementLegFor,
   routeOrder,
   routes,
-  ROUTE_DISABLED_TITLE,
+  closedRouteTitle,
+  ROUTE_CLOSED_TITLE,
+  ROUTE_COMING_SOON_TITLE,
   rollingVolumeRemaining,
   destinationPaused,
   quotaExhausted,
 } from "@/lib/bridge";
-import { chainsViewSchema } from "@/lib/api/schemas/chains";
+import { chainsViewSchema, routeViewSchema } from "@/lib/api/schemas/chains";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 import type { Route } from "@/lib/api/schemas/common";
 import type * as SolanaLib from "@/lib/solana";
@@ -67,6 +70,8 @@ const depositCapability = vi.fn(() => ({
   reason: "wallet-disconnected" as const,
   message: "Connect a Solana wallet to deposit.",
 }));
+/** Module-level so a test can assert the Solana wallet leg never fires. */
+const depositFn = vi.fn();
 
 vi.mock("@/lib/solana", async () => {
   const actual = await vi.importActual<typeof SolanaLib>("@/lib/solana");
@@ -86,7 +91,7 @@ vi.mock("@/lib/solana", async () => {
     }),
     useDepositToReserve: () => ({
       capability: depositCapability,
-      deposit: vi.fn(),
+      deposit: depositFn,
     }),
   };
 });
@@ -127,10 +132,35 @@ describe("route model", () => {
     expect(routes.GlcToSol.from.token.decimals).toBe(8);
   });
 
-  it("treats a missing server entry as disabled, never as enabled", () => {
-    expect(routeEnabled(undefined)).toBe(false);
-    expect(routeEnabled({ ...openView("GlcToSol"), enabled: false })).toBe(false);
-    expect(routeEnabled(openView("GlcToSol"))).toBe(true);
+  it("REG-1: distinguishes an explicit server verdict from an unanswerable one", () => {
+    // An EXPLICIT verdict is always obeyed, in both directions.
+    expect(routeAvailable(openView("GlcToSol"), "GlcToSol")).toBe(true);
+    expect(routeAvailable({ ...openView("GlcToSol"), enabled: false }, "GlcToSol")).toBe(
+      false,
+    );
+    expect(routeAvailable({ ...closedView("GlcToRhn"), enabled: true }, "GlcToRhn")).toBe(
+      true,
+    );
+    expect(routeAvailable(closedView("GlcToRhn"), "GlcToRhn")).toBe(false);
+
+    // NO entry means the server did not say — fall back to the route's own
+    // structural default, mirroring the backend's Ledger::route_enabled.
+    // Live routes stay usable so a /chains outage cannot take the working
+    // bridge down; unbuilt routes stay closed.
+    expect(routeAvailable(undefined, "GlcToSol")).toBe(true);
+    expect(routeAvailable(undefined, "SolToGlc")).toBe(true);
+    expect(routeAvailable(undefined, "GlcToRhn")).toBe(false);
+    expect(routeAvailable(undefined, "RhnToGlc")).toBe(false);
+  });
+
+  it("REG-3: derives closed-route copy from the route, never hardcoded Robinhood", () => {
+    // A LIVE route the server has closed must not be explained with
+    // Robinhood wording.
+    expect(closedRouteTitle("GlcToSol")).toBe(ROUTE_CLOSED_TITLE);
+    expect(closedRouteTitle("SolToGlc")).toBe(ROUTE_CLOSED_TITLE);
+    expect(closedRouteTitle("GlcToRhn")).toBe(ROUTE_COMING_SOON_TITLE);
+    expect(closedRouteTitle("RhnToGlc")).toBe(ROUTE_COMING_SOON_TITLE);
+    expect(ROUTE_CLOSED_TITLE).not.toMatch(/robinhood/i);
   });
 
   it("reports no fabricated reserve status for a Robinhood route", () => {
@@ -154,6 +184,8 @@ describe("route model", () => {
     expect(directionGateState(healthy, "GlcToRhn", closedView("GlcToRhn"))).toBe(
       "route-disabled",
     );
+    // …and with no entry at all, via the structural default.
+    expect(directionGateState(healthy, "GlcToRhn", undefined)).toBe("route-disabled");
     // Even if a malformed server response claimed it was enabled, there is
     // no reserve behind it, so it still cannot read as active.
     expect(
@@ -169,9 +201,106 @@ describe("route model", () => {
     expect(directionGateState(healthy, "GlcToSol", openView("GlcToSol"))).toBe("active");
     expect(directionGateState(healthy, "SolToGlc", openView("SolToGlc"))).toBe("active");
   });
+
+  it("REG-1: a live route with no server entry still reports its real reserve state", () => {
+    // The StatusView regression: with /chains unavailable the live
+    // directions must report what the RESERVE says, not a fabricated
+    // "paused".
+    expect(directionGateState(status(), "GlcToSol", undefined)).toBe("active");
+    expect(
+      directionGateState(
+        status({ solana_paused: true, glc_to_sol_available: false }),
+        "GlcToSol",
+        undefined,
+      ),
+    ).toBe("operator-paused");
+  });
 });
 
 // -------------------------------------------------------------- fixtures --
+
+describe("REG-2: /chains schema is forward-compatible", () => {
+  // The component tests above mock `getChains` at the client boundary, so
+  // they never exercise the schema. These parse real payloads through it.
+
+  function payload(extra: { chains?: unknown[]; routes?: unknown[] } = {}) {
+    const base = fixtures.chainsFixture();
+    return {
+      chains: [...base.chains, ...(extra.chains ?? [])],
+      routes: [...base.routes, ...(extra.routes ?? [])],
+      as_of: base.as_of,
+    };
+  }
+
+  it("keeps every known route when the response carries an UNKNOWN route id", () => {
+    const parsed = chainsViewSchema.parse(
+      payload({
+        routes: [
+          {
+            id: "GlcToXyz",
+            source_chain: "goldcoin",
+            destination_chain: "xyz",
+            enabled: true,
+            disabled_reason: null,
+            implemented: true,
+          },
+        ],
+      }),
+    );
+    // The whole response is NOT rejected…
+    expect(parsed.routes.map((r) => r.id).sort()).toEqual([
+      "GlcToRhn",
+      "GlcToSol",
+      "RhnToGlc",
+      "SolToGlc",
+    ]);
+    // …and the unknown entry is dropped rather than admitted.
+    expect(parsed.routes.some((r) => (r.id as string) === "GlcToXyz")).toBe(false);
+  });
+
+  it("keeps every known chain when the response carries an UNKNOWN chain id", () => {
+    const parsed = chainsViewSchema.parse(
+      payload({ chains: [{ id: "xyz", display_name: "Some Future Chain" }] }),
+    );
+    expect(parsed.chains.map((c) => c.id).sort()).toEqual([
+      "goldcoin",
+      "robinhood",
+      "solana",
+    ]);
+  });
+
+  it("drops a MALFORMED entry for a known route without failing the response", () => {
+    const base = fixtures.chainsFixture();
+    const parsed = chainsViewSchema.parse({
+      ...base,
+      routes: base.routes.map((r) =>
+        r.id === "GlcToSol" ? { ...r, enabled: "yes" } : r,
+      ),
+    });
+    // GlcToSol is dropped -> no entry -> `routeAvailable` falls back to its
+    // structural default, which keeps the live route up.
+    expect(parsed.routes.some((r) => r.id === "GlcToSol")).toBe(false);
+    expect(routeAvailable(undefined, "GlcToSol")).toBe(true);
+    // The other known routes survive untouched.
+    expect(parsed.routes.some((r) => r.id === "SolToGlc")).toBe(true);
+  });
+
+  it("would previously have thrown: a strict enum rejects the whole payload", () => {
+    // Pins WHY the tolerant parse exists: the per-entry schema still
+    // refuses an unknown id, so strictness at the array level would have
+    // failed the entire response.
+    expect(
+      routeViewSchema.safeParse({
+        id: "GlcToXyz",
+        source_chain: "goldcoin",
+        destination_chain: "xyz",
+        enabled: true,
+        disabled_reason: null,
+        implemented: true,
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("the chains fixture", () => {
   it("parses against the real schema and reports Robinhood closed", () => {
@@ -236,7 +365,8 @@ describe("BridgeCard — Robinhood routes", () => {
     expect(screen.getByLabelText(/Amount in GLC/i)).toBeInTheDocument();
     // The badge is present on the disabled options; the closed-route PANEL
     // is not, because the selection never changed.
-    expect(screen.queryByText(ROUTE_DISABLED_TITLE)).toBeNull();
+    expect(screen.queryByText(ROUTE_CLOSED_TITLE)).toBeNull();
+    expect(screen.queryByText(ROUTE_COMING_SOON_TITLE)).toBeNull();
     expect(screen.getByRole("radio", { name: routes.GlcToSol.label })).toHaveAttribute(
       "aria-checked",
       "true",
@@ -256,7 +386,7 @@ describe("BridgeCard — Robinhood routes", () => {
 
     renderWithQueryClient(<BridgeCard />);
 
-    await screen.findByText(ROUTE_DISABLED_TITLE);
+    await screen.findByText(ROUTE_CLOSED_TITLE);
 
     // No form controls at all.
     expect(screen.queryByLabelText(/Amount in GLC/i)).toBeNull();
@@ -281,7 +411,7 @@ describe("BridgeCard — Robinhood routes", () => {
     });
 
     renderWithQueryClient(<BridgeCard />);
-    await screen.findByText(ROUTE_DISABLED_TITLE);
+    await screen.findByText(ROUTE_CLOSED_TITLE);
 
     // The quote endpoint is the one that would fabricate fee/net figures.
     expect(getQuote).not.toHaveBeenCalled();
@@ -311,15 +441,191 @@ describe("BridgeCard — Robinhood routes", () => {
     await waitFor(() => expect(glcToRhn).toBeEnabled());
   });
 
-  it("falls back to closed when the server reports no route entry at all", async () => {
-    // An older backend without /chains, or a truncated response. The UI
-    // must not treat silence as permission.
+  // ---------------------------------------------------------- REG-1 --
+  //
+  // These replace an earlier test that asserted the opposite and was wrong:
+  // it mocked `routes: []`, ran on the default LIVE GlcToSol route, and
+  // asserted the amount field disappeared — codifying "a /chains outage
+  // takes the working bridge down" as intended behaviour. An outage must
+  // leave the live routes exactly as they were.
+
+  it("REG-1: an EMPTY routes array leaves the live route fully usable", async () => {
     getChains.mockResolvedValue({ ...fixtures.chainsFixture(), routes: [] });
 
     renderWithQueryClient(<BridgeCard />);
-    await screen.findByText(ROUTE_DISABLED_TITLE);
-    expect(screen.queryByLabelText(/Amount in GLC/i)).toBeNull();
+
+    // The live GlcToSol form is still there — no closed-route panel.
+    expect(await screen.findByLabelText(/Amount in GLC/i)).toBeInTheDocument();
+    expect(screen.queryByText(ROUTE_COMING_SOON_TITLE)).toBeNull();
+    expect(screen.queryByText(ROUTE_CLOSED_TITLE)).toBeNull();
+    // And it is genuinely submittable-looking: a real submit control exists.
+    expect(
+      screen.getByRole("button", { name: /create deposit request/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("REG-1: a /chains ERROR leaves the live route usable and never blames Robinhood", async () => {
+    // A 404 from a backend deployed after the UI, a 5xx, or a timeout.
+    getChains.mockRejectedValue(new Error("network down"));
+
+    renderWithQueryClient(<BridgeCard />);
+
+    expect(await screen.findByLabelText(/Amount in GLC/i)).toBeInTheDocument();
+    expect(screen.queryByText(ROUTE_COMING_SOON_TITLE)).toBeNull();
+    // The live route must never be explained with Robinhood copy.
+    expect(screen.queryByText(/robinhood network — coming soon/i)).toBeNull();
+  });
+
+  it("REG-1: a /chains error still leaves Robinhood closed and unselectable", async () => {
+    getChains.mockRejectedValue(new Error("network down"));
+
+    renderWithQueryClient(<BridgeCard />);
+
+    const glcToRhn = await screen.findByRole("radio", { name: routes.GlcToRhn.label });
+    await waitFor(() => expect(glcToRhn).toBeDisabled());
     expect(getQuote).not.toHaveBeenCalled();
+  });
+
+  it("REG-1: an EXPLICIT enabled:false still closes a live route (fail closed)", async () => {
+    // The property that actually matters is preserved: an affirmative
+    // server "closed" is obeyed even for a live route.
+    getChains.mockResolvedValue({
+      ...fixtures.chainsFixture(),
+      routes: fixtures
+        .chainsFixture()
+        .routes.map((r) => (r.id === "GlcToSol" ? { ...r, enabled: false } : r)),
+    });
+
+    renderWithQueryClient(<BridgeCard />);
+
+    await screen.findByText(ROUTE_CLOSED_TITLE);
+    expect(screen.queryByLabelText(/Amount in GLC/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /create deposit request/i })).toBeNull();
+    expect(getQuote).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------- REG-2 --
+
+  it("REG-2: an unknown FUTURE route id is dropped without disabling known routes", async () => {
+    getChains.mockResolvedValue({
+      ...fixtures.chainsFixture(),
+      routes: [
+        ...fixtures.chainsFixture().routes,
+        {
+          id: "GlcToXyz",
+          source_chain: "goldcoin",
+          destination_chain: "xyz",
+          enabled: true,
+          disabled_reason: null,
+          implemented: true,
+        },
+      ],
+    });
+
+    renderWithQueryClient(<BridgeCard />);
+
+    // The whole response is NOT rejected: the live route still works…
+    expect(await screen.findByLabelText(/Amount in GLC/i)).toBeInTheDocument();
+    // …and the unknown route simply does not appear.
+    expect(screen.queryByRole("radio", { name: /xyz/i })).toBeNull();
+  });
+
+  it("REG-2: an unknown chain id does not reject the response", async () => {
+    getChains.mockResolvedValue({
+      ...fixtures.chainsFixture(),
+      chains: [
+        ...fixtures.chainsFixture().chains,
+        { id: "xyz", display_name: "Some Future Chain" },
+      ],
+    });
+
+    renderWithQueryClient(<BridgeCard />);
+    expect(await screen.findByLabelText(/Amount in GLC/i)).toBeInTheDocument();
+  });
+
+  it("REG-2: a malformed entry for a KNOWN route is dropped, falling back to its default", async () => {
+    // Dropped -> no entry -> structural default. The live route stays up
+    // rather than the whole payload failing.
+    getChains.mockResolvedValue({
+      ...fixtures.chainsFixture(),
+      routes: fixtures
+        .chainsFixture()
+        .routes.map((r) => (r.id === "GlcToSol" ? { ...r, enabled: "yes" } : r)),
+    });
+
+    renderWithQueryClient(<BridgeCard />);
+    expect(await screen.findByLabelText(/Amount in GLC/i)).toBeInTheDocument();
+  });
+
+  // ----------------------------------------------------------- UI-1 --
+
+  it("UI-1: a Robinhood route never dispatches to the Solana wallet deposit leg", async () => {
+    // The dangerous case: the server reports GlcToRhn ENABLED, so the full
+    // form renders. The SolToGlc branch it used to fall through to signs a
+    // real `deposit_to_reserve` and has NO backend request behind it, so
+    // nothing server-side could refuse a mis-dispatch.
+    const user = userEvent.setup();
+    getChains.mockResolvedValue({
+      ...fixtures.chainsFixture(),
+      routes: fixtures
+        .chainsFixture()
+        .routes.map((r) =>
+          r.id === "GlcToRhn"
+            ? { ...r, enabled: true, implemented: true, disabled_reason: null }
+            : r,
+        ),
+    });
+
+    renderWithQueryClient(<BridgeCard />);
+
+    const glcToRhn = await screen.findByRole("radio", { name: routes.GlcToRhn.label });
+    await waitFor(() => expect(glcToRhn).toBeEnabled());
+    await user.click(glcToRhn);
+
+    // Fill the form as far as it will go. GlcToRhn's SOURCE is Goldcoin
+    // (decimals 8), so the amount path is NOT blocked by the null-decimals
+    // guard — this route really does reach the dispatch.
+    const amount = await screen.findByLabelText(/Amount in GLC/i);
+    await user.type(amount, "500");
+    const recipientField = screen.getByLabelText(/address/i);
+    await user.type(recipientField, "mfWxJ45yp2SFn7UciZyNpvDKrzbhyfKrY8");
+
+    const submitButton = screen.getByRole("button", {
+      name: /create deposit request|deposit from wallet/i,
+    });
+    await user.click(submitButton).catch(() => {});
+
+    // The two things that must never happen for a route with no settlement
+    // direction, regardless of which guard stopped it.
+    expect(depositFn).not.toHaveBeenCalled();
+    expect(createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("UI-1: settlementLegFor never routes an unbuilt route to the wallet leg", () => {
+    // THE regression guard. `submit()` dispatches on this function, so the
+    // invariant is testable directly rather than only through a component
+    // whose incidental guards (a pending quote, absent amount bounds)
+    // happen to stop the click today.
+    //
+    // "wallet-deposit" is the dangerous value: that leg signs a real
+    // Solana `deposit_to_reserve` and has NO backend request behind it, so
+    // nothing server-side could refuse a mis-dispatch.
+    expect(settlementLegFor("GlcToSol")).toBe("backend-create");
+    expect(settlementLegFor("SolToGlc")).toBe("wallet-deposit");
+    expect(settlementLegFor("GlcToRhn")).toBeNull();
+    expect(settlementLegFor("RhnToGlc")).toBeNull();
+
+    // Stated as an invariant over every route, so a route added later is
+    // covered without anyone remembering to extend this test: a route may
+    // only reach the wallet leg if it genuinely settles as SolToGlc.
+    for (const route of routeOrder) {
+      if (settlementLegFor(route) === "wallet-deposit") {
+        expect(routeDirection(route)).toBe("SolToGlc");
+      }
+      if (routeDirection(route) === null) {
+        expect(settlementLegFor(route)).toBeNull();
+      }
+    }
   });
 });
 

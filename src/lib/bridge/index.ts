@@ -63,11 +63,16 @@ export {
   QUOTA_PAUSED_TITLE,
   QUOTA_PAUSED_BODY,
   QUOTA_PAUSED_NEXT,
-  routeEnabled,
+  routeAvailable,
   findRouteView,
   routeDirection,
+  settlementLegFor,
+  closedRouteTitle,
+  closedRouteBody,
   ROUTE_DISABLED_BADGE,
-  ROUTE_DISABLED_TITLE,
-  ROUTE_DISABLED_BODY,
+  ROUTE_COMING_SOON_TITLE,
+  ROUTE_COMING_SOON_BODY,
+  ROUTE_CLOSED_TITLE,
+  ROUTE_CLOSED_BODY,
 } from "./direction-state";
-export type { DirectionGateState } from "./direction-state";
+export type { DirectionGateState, SettlementLeg } from "./direction-state";

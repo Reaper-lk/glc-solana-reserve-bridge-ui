@@ -1,6 +1,6 @@
 import { ArrowLeftRight } from "lucide-react";
 import { routeOrder, routes } from "@/lib/bridge";
-import { ROUTE_DISABLED_BADGE, routeEnabled } from "@/lib/bridge/direction-state";
+import { ROUTE_DISABLED_BADGE, routeAvailable } from "@/lib/bridge/direction-state";
 import type { RouteViewDto } from "@/lib/api/schemas/chains";
 import type { Route } from "@/lib/api/schemas/common";
 import { cn } from "@/lib/utils/cn";
@@ -43,22 +43,14 @@ export function DirectionSelector({
       {routeOrder.map((id) => {
         const descriptor = routes[id];
         const view = routeViews?.find((v) => v.id === id);
-        // Selectability, which is NOT the same question as submittability.
+        // One rule, shared with the submit gate: an explicit server
+        // `enabled: false` closes the route; a missing entry falls back to
+        // the route's structural default. The selector and the gate must
+        // agree, or a user could select a route they cannot submit.
         //
-        // Once the server has answered, its verdict is the only input.
-        // Before it answers, fall back to local STRUCTURAL knowledge: a
-        // route with no settlement direction has no machinery in this
-        // build and stays disabled regardless. That fallback can only ever
-        // keep a route closed, never open one the server closed — and it
-        // avoids the selector going completely inert on first paint, which
-        // it would if an unanswered request read as "closed" for
-        // everything.
-        //
-        // Submission is separately fail-closed in `BridgeCard`'s gate
-        // (which requires an affirmative `enabled`) and in the backend
-        // itself, which returns 409 for a disabled route.
-        const enabled =
-          routeViews !== undefined ? routeEnabled(view) : descriptor.direction !== null;
+        // Submission is enforced independently in `BridgeCard`'s gate and
+        // again by the backend, which returns 409 for a disabled route.
+        const enabled = routeAvailable(view, id);
         const selected = id === value;
         return (
           <button

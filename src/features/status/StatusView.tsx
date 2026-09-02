@@ -20,11 +20,15 @@ export function StatusView() {
   const status = useBridgeStatus();
   const health = useHealth();
   const reserve = useReserve();
-  // Route availability is the server's verdict, same as in the bridge form —
-  // this screen must never report a route as available on its own authority.
+  // Route availability comes from the server, same as in the bridge form.
+  // Deliberately NOT part of the loading guard below and deliberately
+  // without an error branch: `routeAvailable` falls back to each route's
+  // structural default when there is no entry, so a slow, failed or absent
+  // /chains leaves the two live directions reporting their real reserve
+  // state instead of a fabricated "Paused".
   const chains = useChains();
 
-  if (status.isPending || health.isPending || reserve.isPending || chains.isPending) {
+  if (status.isPending || health.isPending || reserve.isPending) {
     return (
       <div className="grid gap-4 sm:grid-cols-2">
         <Skeleton className="h-36 w-full" />
@@ -49,8 +53,9 @@ export function StatusView() {
     "capacity-constrained": "insufficient-liquidity",
     "quota-exhausted": "quota-exhausted",
     "quota-paused": "quota-paused",
-    // A route the server has not opened is not "paused" and has no reserve
-    // to be constrained — it is simply unavailable.
+    // Only reachable when the server has EXPLICITLY closed a route: a
+    // missing /chains entry resolves to the route's structural default, so
+    // this no longer fires merely because the endpoint was unreachable.
     "route-disabled": "paused",
   };
   const availability = (direction: Direction) =>

@@ -101,13 +101,42 @@ export function directionAvailable(status: BridgeStatusDto, route: Route) {
 /**
  * Whether this route can be selected and submitted at all.
  *
- * `routeView` is the server's entry for this route from `GET /chains`. A
- * MISSING entry is treated as disabled, matching the backend's own
- * fail-closed posture: if the server did not affirmatively say a route is
- * open, it is not open.
+ * # "The server said closed" is not the same as "we could not ask"
+ *
+ * This distinction is the whole point of this function, and getting it
+ * wrong in either direction is a real outage:
+ *
+ * | `routeView` | meaning | result |
+ * |---|---|---|
+ * | present, `enabled: true` | the server opened it | **open** |
+ * | present, `enabled: false` | the server closed it | **closed** |
+ * | absent | the server did not say — unreachable, errored, unparseable, or an entry this build does not understand | **the route's own structural default** |
+ *
+ * The structural default is `routes[route].direction !== null`: a route
+ * with settlement machinery in this build defaults to open, one without
+ * defaults to closed.
+ *
+ * This mirrors the backend's `Ledger::route_enabled(route_id,
+ * default_enabled)` exactly — absent table, absent row, or an explicit flag,
+ * resolving to `Route::default_enabled()` when there is no explicit answer.
+ * The two layers now agree by construction rather than by coincidence.
+ *
+ * # Why "absent means closed" was wrong
+ *
+ * Treating a missing entry as closed made `GET /chains` a hard dependency
+ * of the LIVE GLC↔SOL bridge: a 404 from a backend deployed after the UI, a
+ * 5xx, a timeout, or a response containing one unrecognised route would all
+ * have disabled the working bridge — failing safe, but taking real,
+ * functioning money paths down with it and blaming Robinhood in the copy.
+ * An explicit `enabled: false` still fails closed, which is the property
+ * that actually matters.
  */
-export function routeEnabled(routeView: RouteViewDto | undefined): boolean {
-  return routeView?.enabled === true;
+export function routeAvailable(
+  routeView: RouteViewDto | undefined,
+  route: Route,
+): boolean {
+  if (routeView) return routeView.enabled === true;
+  return routes[route].direction !== null;
 }
 
 export function directionGateState(
@@ -115,10 +144,10 @@ export function directionGateState(
   route: Route,
   routeView: RouteViewDto | undefined,
 ): DirectionGateState {
-  // The route gate outranks every reserve condition: a route the server
-  // will not accept cannot be "quota exhausted" or "paused", because it has
-  // no quota and no reserve.
-  if (!routeEnabled(routeView)) return "route-disabled";
+  // The route gate outranks every reserve condition: a route that is not
+  // available cannot be "quota exhausted" or "paused", because it has no
+  // quota and no reserve.
+  if (!routeAvailable(routeView, route)) return "route-disabled";
 
   const paused = destinationPaused(status, route);
   const quota = quotaExhausted(status, route);
@@ -152,6 +181,42 @@ export function routeDirection(route: Route): Direction | null {
 }
 
 /**
+ * Which settlement mechanism a route submits through.
+ *
+ * - `"backend-create"` — `POST /transfers`, which the backend can refuse.
+ * - `"wallet-deposit"` — the user's Solana wallet signs `deposit_to_reserve`
+ *   directly. **This leg never touches the HTTP API**, so no backend
+ *   response can refuse a mis-dispatch to it.
+ *
+ * `null` means the route has no settlement machinery and must not be
+ * submitted at all.
+ *
+ * # Why this is a function and not an inline branch
+ *
+ * The dispatch used to be `if (direction === "GlcToSol") … else …` written
+ * inline in `BridgeCard.submit()`. When `direction` widened from two values
+ * to four, every unbuilt route fell into the `else` — the wallet-deposit
+ * leg. Because that leg has no server-side backstop, a fall-through would
+ * have moved funds on a chain the user did not select.
+ *
+ * Pulling it out here makes the invariant unit-testable in isolation,
+ * rather than only observable through a component whose incidental guards
+ * (a pending quote, absent amount bounds) happen to stop the click today.
+ * The `never` binding turns a future `Direction` variant into a compile
+ * error here instead of a silent fall-through to Solana.
+ */
+export type SettlementLeg = "backend-create" | "wallet-deposit";
+
+export function settlementLegFor(route: Route): SettlementLeg | null {
+  const direction = routes[route].direction;
+  if (direction === null) return null;
+  if (direction === "GlcToSol") return "backend-create";
+  if (direction === "SolToGlc") return "wallet-deposit";
+  const unreachable: never = direction;
+  return unreachable;
+}
+
+/**
  * Approved end-user copy. The second message matches the backend's
  * `DIRECTION_UNAVAILABLE_MESSAGE` (api.rs) line for line. Neither message
  * may claim an automatic reset or reopening — there is none.
@@ -167,14 +232,34 @@ export const QUOTA_PAUSED_NEXT =
   "Please check the official Telegram for reopening updates.";
 
 /**
- * Copy for a route the server reports closed.
+ * Copy for a route that is not available.
  *
  * Deliberately promises no date, no rollout window, and not that it will
  * ever open — the backend makes no such promise, and neither should the
- * screen. The badge is short enough for the selector; the title and body
- * are used in the panel that replaces the form.
+ * screen.
+ *
+ * Derived from the route rather than hardcoded, because the same panel now
+ * has to explain two genuinely different situations. A route with no
+ * settlement machinery in this build is "coming soon"; a LIVE route that
+ * the server has explicitly closed is not — telling a GLC↔SOL user about
+ * Robinhood Network would be simply false.
  */
 export const ROUTE_DISABLED_BADGE = "Coming soon";
-export const ROUTE_DISABLED_TITLE = "Robinhood Network — coming soon";
-export const ROUTE_DISABLED_BODY =
+
+/** Unbuilt-route copy. Kept exported: it is the badge's long form. */
+export const ROUTE_COMING_SOON_TITLE = "Robinhood Network — coming soon";
+export const ROUTE_COMING_SOON_BODY =
   "This route is not available for transfers yet. Goldcoin L1 ↔ Solana is unaffected and continues to operate normally.";
+
+/** Copy for a route that EXISTS in this build but the server has closed. */
+export const ROUTE_CLOSED_TITLE = "This route is currently unavailable.";
+export const ROUTE_CLOSED_BODY =
+  "New transfers on this route are not being accepted right now. Please check the official Telegram for updates.";
+
+export function closedRouteTitle(route: Route): string {
+  return routes[route].direction === null ? ROUTE_COMING_SOON_TITLE : ROUTE_CLOSED_TITLE;
+}
+
+export function closedRouteBody(route: Route): string {
+  return routes[route].direction === null ? ROUTE_COMING_SOON_BODY : ROUTE_CLOSED_BODY;
+}

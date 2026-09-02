@@ -56,11 +56,12 @@ import {
 } from "@/lib/api";
 import type { Route } from "@/lib/api/schemas/common";
 import {
+  closedRouteBody,
+  closedRouteTitle,
   findRouteView,
+  routeAvailable,
   routeDirection,
-  routeEnabled,
-  ROUTE_DISABLED_BODY,
-  ROUTE_DISABLED_TITLE,
+  settlementLegFor,
 } from "@/lib/bridge/direction-state";
 import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 import { DirectionSelector } from "./DirectionSelector";
@@ -98,20 +99,13 @@ export function BridgeCard() {
 
   const chains = useChains();
   const routeView = findRouteView(chains.data?.routes, direction);
-  // The server's verdict, and the only thing consulted. While `/chains` is
-  // still loading there is no affirmative "enabled", so the route reads as
-  // disabled until the server says otherwise — the same fail-closed
-  // posture the backend gate itself takes.
-  const routeIsOpen = routeEnabled(routeView);
-  // Two different questions, and conflating them made the form vanish
-  // during first paint. `routeIsOpen` is fail-closed and governs whether a
-  // transfer may be SUBMITTED — while `/chains` is still loading it is
-  // false, which is the correct, conservative answer. `routeKnownClosed`
-  // additionally requires that the server has actually answered, and is
-  // what governs whether the form is REPLACED by the closed-route panel.
-  // Rendering "coming soon" merely because a request is in flight would
-  // state something the server has not said.
-  const routeKnownClosed = chains.data !== undefined && !routeIsOpen;
+  // `routeAvailable` distinguishes "the server closed this route" from "we
+  // could not ask": an explicit `enabled: false` closes the route, while a
+  // missing entry — /chains unreachable, errored, or carrying a route this
+  // build does not understand — falls back to the route's own structural
+  // default. So a /chains outage no longer disables the live GLC<->SOL
+  // routes, while Robinhood stays closed in every case.
+  const routeIsOpen = routeAvailable(routeView, direction);
   const settledDirection = routeDirection(direction);
 
   const status = useBridgeStatus();
@@ -239,14 +233,14 @@ export function BridgeCard() {
         blocker: null,
       };
     }
-    // Checked before every reserve condition: a route the server has not
-    // affirmatively opened can never be submitted, so no later branch may
-    // reach a `can: true`. Fail-closed — `routeIsOpen` is false unless the
-    // server said otherwise.
+    // Checked before every reserve condition, so no later branch can reach
+    // `can: true` for an unavailable route. An explicit server `enabled:
+    // false` closes it; an unanswerable /chains falls back to the route's
+    // structural default (see `routeAvailable`).
     if (!routeIsOpen) {
       return {
         can: false,
-        reason: ROUTE_DISABLED_TITLE,
+        reason: closedRouteTitle(direction),
         reasonShownInline: false,
         blocker: null,
       };
@@ -433,7 +427,28 @@ export function BridgeCard() {
     setSubmitError(null);
     setSubmitting(true);
     try {
-      if (direction === "GlcToSol") {
+      // EXHAUSTIVE dispatch on the SETTLED DIRECTION, never on the route.
+      //
+      // This used to be `if (direction === "GlcToSol") … else …` on a value
+      // that is now four-valued, so a Robinhood route fell through to the
+      // `else` — the SolToGlc branch, which signs and broadcasts a real
+      // `deposit_to_reserve` with the user's Solana wallet. That leg never
+      // touches the HTTP API, so unlike every other path there is no
+      // backend 409 behind it: a fall-through would move funds on a chain
+      // the user did not select, with nothing able to refuse it.
+      //
+      // `settlementLegFor` is the single, unit-tested source of truth for
+      // this decision, and holds the `never` exhaustiveness check (see its
+      // docs). `null` means the route has no settlement machinery and must
+      // never reach either branch — the same firewall the backend enforces
+      // with `Route::as_direction() -> Option<Direction>`.
+      const leg = settlementLegFor(direction);
+      if (leg === null) {
+        throw new Error(
+          "This route has no settlement direction and cannot be submitted.",
+        );
+      }
+      if (leg === "backend-create") {
         const output = await createTransfer.mutateAsync({
           amount_atomic: canonicalGrossAmount,
           recipient: recipient.trim(),
@@ -449,6 +464,10 @@ export function BridgeCard() {
           amountAtomic: amountValidation.raw,
         });
       } else {
+        // `leg` is narrowed to "wallet-deposit". Exhaustiveness for the
+        // ROUTE space is enforced inside `settlementLegFor`, where a new
+        // `Direction` variant is a compile error — so this branch cannot
+        // become a silent catch-all the way the old `else` did.
         if (!status.data) throw new Error("Bridge status is not loaded");
         // FINAL pre-submit dual rate-limit re-check, fetched fresh through
         // the client (never the form hook's cache): the address may have
@@ -624,17 +643,18 @@ export function BridgeCard() {
     setSubmitError(null);
   };
 
-  // A route the server reports closed renders the selector and a plain
-  // statement, and NOTHING else: no amount field, no recipient field, no
-  // quote panel, no capacity figure, no submit control — the submit button
-  // is absent from the tree rather than present-and-disabled, so there is
-  // no element to re-enable from devtools. The quote and eligibility
-  // queries are already inert for this route (see `useQuote` above), so no
-  // request is issued for it either.
+  // An unavailable route renders the selector and a plain statement, and
+  // NOTHING else: no amount field, no recipient field, no quote panel, no
+  // capacity figure, no submit control — the submit button is absent from
+  // the tree rather than present-and-disabled, so there is no element to
+  // re-enable from devtools. The quote and eligibility queries are already
+  // inert for this route (see `useQuote` above), so no request is issued
+  // for it either.
   //
-  // Nothing here is fabricated: no balance, no fee, no rate, no status. The
-  // only claim made is the one the server made.
-  if (routeKnownClosed) {
+  // Nothing here is fabricated: no balance, no fee, no rate, no status.
+  // The title is derived from the route, so a live route the server has
+  // closed is never explained with Robinhood wording.
+  if (!routeIsOpen) {
     return (
       <Card variant="raised" padding="lg">
         <div className="mb-5">
@@ -648,10 +668,10 @@ export function BridgeCard() {
           <DirectionSelector
             value={direction}
             onChange={onRouteChange}
-            routeViews={chains.data.routes}
+            routeViews={chains.data?.routes}
           />
-          <Alert level="info" title={ROUTE_DISABLED_TITLE}>
-            <p>{routeView?.disabled_reason ?? ROUTE_DISABLED_BODY}</p>
+          <Alert level="info" title={closedRouteTitle(direction)}>
+            <p>{routeView?.disabled_reason ?? closedRouteBody(direction)}</p>
           </Alert>
         </div>
       </Card>
