@@ -7,6 +7,7 @@ import type {
 /** Query keys and polling policy, declared together so they cannot drift. */
 
 export const queryKeys = {
+  chains: () => ["bridge", "chains"] as const,
   status: () => ["bridge", "status"] as const,
   limits: () => ["bridge", "limits"] as const,
   reserve: () => ["bridge", "reserve"] as const,
@@ -35,6 +36,7 @@ export const queryKeys = {
  */
 export const pollIntervals = {
   /** The global trust strip. Wrong status here is worse than stale status. */
+  chains: 60_000,
   status: 30_000,
   /** Fee schedule and caps change rarely. */
   limits: 300_000,

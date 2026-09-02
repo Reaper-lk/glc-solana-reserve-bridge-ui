@@ -16,6 +16,11 @@ import { cn } from "@/lib/utils/cn";
 const chainStyles: Record<Chain, { readonly mark: string; readonly label: string }> = {
   goldcoin: { mark: "text-chain-goldcoin", label: "Goldcoin" },
   solana: { mark: "text-chain-solana", label: "Solana" },
+  // Robinhood has no brand accent token of its own yet; it reuses the
+  // neutral ink scale deliberately rather than borrowing another chain's
+  // colour, which would read as that chain. Chain colour is identity, never
+  // state (see above), so a neutral identity is the honest placeholder.
+  robinhood: { mark: "text-ink-500", label: "Robinhood Network" },
 };
 
 export function ChainBadge({ chain, className }: { chain: Chain; className?: string }) {

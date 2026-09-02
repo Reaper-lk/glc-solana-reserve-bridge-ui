@@ -2,7 +2,7 @@
 
 import { Activity, HeartPulse } from "lucide-react";
 import { Card, ErrorState, Skeleton, StatusBadge, TokenAmount } from "@/components/ui";
-import { useBridgeStatus, useHealth, useReserve } from "@/lib/query/hooks";
+import { useBridgeStatus, useChains, useHealth, useReserve } from "@/lib/query/hooks";
 import { directionAvailabilityStatus, systemStatus } from "@/lib/status";
 import type { DirectionAvailability } from "@/lib/status";
 import { directionGateState, directions, GOLDCOIN_GLC, SOLANA_GLC } from "@/lib/bridge";
@@ -14,6 +14,13 @@ export function StatusView() {
   const status = useBridgeStatus();
   const health = useHealth();
   const reserve = useReserve();
+  // Route availability comes from the server, same as in the bridge form.
+  // Deliberately NOT part of the loading guard below and deliberately
+  // without an error branch: `routeAvailable` falls back to each route's
+  // structural default when there is no entry, so a slow, failed or absent
+  // /chains leaves the two live directions reporting their real reserve
+  // state instead of a fabricated "Paused".
+  const chains = useChains();
 
   if (status.isPending || health.isPending || reserve.isPending) {
     return (
@@ -40,9 +47,15 @@ export function StatusView() {
     "capacity-constrained": "insufficient-liquidity",
     "quota-exhausted": "quota-exhausted",
     "quota-paused": "quota-paused",
+    // Only reachable when the server has EXPLICITLY closed a route: a
+    // missing /chains entry resolves to the route's structural default, so
+    // this no longer fires merely because the endpoint was unreachable.
+    "route-disabled": "paused",
   };
   const availability = (direction: Direction) =>
-    directionAvailabilityStatus[GATE_TO_BADGE[directionGateState(data, direction)]];
+    directionAvailabilityStatus[
+      GATE_TO_BADGE[directionGateState(data, direction, chains.data)]
+    ];
 
   return (
     <div className="flex flex-col gap-6">

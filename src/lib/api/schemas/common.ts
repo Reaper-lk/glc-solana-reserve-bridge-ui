@@ -34,13 +34,39 @@ export const httpUrlSchema = z.url().refine((value) => /^https?:\/\//i.test(valu
   error: "must be an http or https URL",
 });
 
-/** The two chains this bridge spans. */
-export const chainSchema = z.enum(["goldcoin", "solana"]);
+/** The chains this bridge knows about, exactly as the backend names them. */
+export const chainSchema = z.enum(["goldcoin", "solana", "robinhood"]);
 export type Chain = z.infer<typeof chainSchema>;
 
-/** Transfer direction, exactly as the backend's `Direction` enum names it. */
+/**
+ * A SETTLED transfer direction — the backend's `ledger::Direction`, which
+ * is what `bridge_requests` rows, `/transfers` and `/explorer/events`
+ * actually carry.
+ *
+ * Deliberately still two-valued, mirroring the backend: a Robinhood route
+ * has no settlement machinery and can therefore never appear as a
+ * transfer's direction. Widening this would let the UI parse a transfer
+ * that cannot exist.
+ */
 export const directionSchema = z.enum(["GlcToSol", "SolToGlc"]);
 export type Direction = z.infer<typeof directionSchema>;
+
+/**
+ * A ROUTE — the backend's `routes::Route`, a strict superset of
+ * `Direction` covering source→destination pairs the deployment knows the
+ * name of, including ones it cannot execute.
+ *
+ * The two types are separate for the same reason they are separate in the
+ * backend: every route can be named and displayed, but only a route with a
+ * corresponding `Direction` can produce a transfer.
+ */
+export const routeSchema = z.enum(["GlcToSol", "SolToGlc", "GlcToRhn", "RhnToGlc"]);
+export type Route = z.infer<typeof routeSchema>;
+
+/** Every route is a valid direction name iff it is settleable. */
+export function routeAsDirection(route: Route): Direction | null {
+  return route === "GlcToSol" || route === "SolToGlc" ? route : null;
+}
 
 /**
  * `/reserves/history` uses a different spelling for the same two reserves —

@@ -281,3 +281,66 @@ export function reserveHistoryFixture(): ReserveHistoryEntryDto[] {
     };
   });
 }
+
+/**
+ * `GET /chains` in the mock: exactly the Phase-1 backend posture — both
+ * legacy routes open, both Robinhood routes closed and flagged as not
+ * implemented.
+ *
+ * The mock deliberately offers no scenario that opens a Robinhood route.
+ * A fixture that did would let the UI's disabled-route handling rot
+ * untested while appearing to work, and would be the one place in this
+ * codebase claiming a capability the backend does not have.
+ */
+export function chainsFixture() {
+  return {
+    chains: [
+      { id: "goldcoin", display_name: "Goldcoin L1" },
+      { id: "solana", display_name: "Solana" },
+      { id: "robinhood", display_name: "Robinhood Network" },
+    ],
+    routes: [
+      {
+        id: "GlcToSol",
+        source_chain: "goldcoin",
+        destination_chain: "solana",
+        enabled: true,
+        disabled_reason: null,
+        implemented: true,
+      },
+      {
+        id: "SolToGlc",
+        source_chain: "solana",
+        destination_chain: "goldcoin",
+        enabled: true,
+        disabled_reason: null,
+        implemented: true,
+      },
+      {
+        id: "GlcToRhn",
+        source_chain: "goldcoin",
+        destination_chain: "robinhood",
+        enabled: false,
+        disabled_reason: ROUTE_UNAVAILABLE_REASON,
+        implemented: false,
+      },
+      {
+        id: "RhnToGlc",
+        source_chain: "robinhood",
+        destination_chain: "goldcoin",
+        enabled: false,
+        disabled_reason: ROUTE_UNAVAILABLE_REASON,
+        implemented: false,
+      },
+    ],
+    as_of: 1_756_000_000,
+  };
+}
+
+/**
+ * Mirrors `routes::RouteGateError::UNAVAILABLE_MESSAGE` in the backend.
+ * Kept here rather than in display code because it is a fixture of what
+ * the SERVER says, not copy this app authors.
+ */
+export const ROUTE_UNAVAILABLE_REASON =
+  "This route is not available yet.\nRobinhood Network support is in development and cannot be used for transfers.";

@@ -27,6 +27,7 @@ import { explorerEventListSchema } from "./schemas/explorer";
 import { reserveHistoryListSchema } from "./schemas/reserves";
 import { quoteOutputSchema } from "./schemas/quote";
 import { recipientEligibilitySchema } from "./schemas/eligibility";
+import { chainsViewSchema } from "./schemas/chains";
 import {
   createTransferOutputSchema,
   createTransferRequestSchema,
@@ -62,6 +63,10 @@ export class HttpBridgeClient implements BridgeApiClient {
   constructor(baseUrl: string, options: { timeoutMs?: number } = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  getChains(signal?: AbortSignal) {
+    return this.request("/chains", chainsViewSchema, {}, signal);
   }
 
   getStatus(signal?: AbortSignal) {

@@ -46,6 +46,7 @@ import {
   useQuote,
   useReserve,
   useSolToGlcRecipientEligibility,
+  useChains,
 } from "@/lib/query/hooks";
 import { isValidAddress, useDepositToReserve, useWalletConnection } from "@/lib/solana";
 import {
@@ -53,7 +54,15 @@ import {
   recipientRateLimitedError,
   sourceWalletRateLimitedError,
 } from "@/lib/api";
-import type { Direction } from "@/lib/api/schemas/common";
+import type { Route } from "@/lib/api/schemas/common";
+import {
+  closedRouteBody,
+  closedRouteTitle,
+  findRouteView,
+  routeAvailable,
+  routeDirection,
+  settlementLegFor,
+} from "@/lib/bridge/direction-state";
 import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 import { DirectionSelector } from "./DirectionSelector";
 import { QuoteBreakdown } from "./QuoteBreakdown";
@@ -74,7 +83,11 @@ export function BridgeCard() {
   const router = useRouter();
   const wallet = useWalletConnection();
 
-  const [direction, setDirection] = useState<Direction>("GlcToSol");
+  // Named `direction` for continuity with the rest of this component, but
+  // typed as `Route`: the selector can hold a route that has no settlement
+  // direction at all. `settledDirection` below is the narrowed value, and
+  // it is `null` exactly when this route cannot produce a transfer.
+  const [direction, setDirection] = useState<Route>("GlcToSol");
   const [amountInput, setAmountInput] = useState("");
   const [recipient, setRecipient] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "form" });
@@ -84,6 +97,17 @@ export function BridgeCard() {
   const descriptor = directions[direction];
   const sourceToken = descriptor.from.token;
 
+  const chains = useChains();
+  const routeView = findRouteView(chains.data?.routes, direction);
+  // `routeAvailable` distinguishes "the server closed this route" from "we
+  // could not ask": an explicit `enabled: false` closes the route, while a
+  // missing entry — /chains unreachable, errored, or carrying a route this
+  // build does not understand — falls back to the route's own structural
+  // default. So a /chains outage no longer disables the live GLC<->SOL
+  // routes, while Robinhood stays closed in every case.
+  const routeIsOpen = routeAvailable(chains.data, direction);
+  const settledDirection = routeDirection(direction);
+
   const status = useBridgeStatus();
   const limits = useLimits();
   const reserve = useReserve();
@@ -92,6 +116,11 @@ export function BridgeCard() {
 
   const amountBounds = useMemo(() => {
     if (!limits.data) return null;
+    // A token whose decimals are not yet known (Robinhood) gets no bounds
+    // rather than a guessed scale — every figure derived below would
+    // otherwise be silently wrong by orders of magnitude.
+    if (sourceToken.decimals === null) return null;
+    const sourceDecimals = sourceToken.decimals;
     // The minimum is a GROSS-side product floor, DERIVED from `/limits`'
     // own `min_transfer_amount` and `bridge_fee_bps` — never `/limits`'
     // `min_transfer_amount` used directly, since that figure is a
@@ -112,7 +141,7 @@ export function BridgeCard() {
     const minimum = atomicRescaleCeil(
       minimumCanonical,
       GOLDCOIN_DECIMALS,
-      sourceToken.decimals,
+      sourceDecimals,
     );
     // `/limits` passes the on-chain `BridgeConfig` value through raw, and
     // the on-chain check compares it against MINT-atomic amounts (6
@@ -122,10 +151,10 @@ export function BridgeCard() {
     const maximum = atomicRescaleFloor(
       String(limits.data.per_transfer_limit),
       SOLANA_GLC.decimals,
-      sourceToken.decimals,
+      sourceDecimals,
     );
     return {
-      decimals: sourceToken.decimals,
+      decimals: sourceDecimals,
       symbol: sourceToken.symbol,
       minimum,
       maximum,
@@ -136,14 +165,22 @@ export function BridgeCard() {
     ? validateAmount(amountInput, amountBounds)
     : null;
   const canonicalGrossAmount =
-    amountValidation?.raw !== null && amountValidation?.raw !== undefined
+    amountValidation?.raw !== null &&
+    amountValidation?.raw !== undefined &&
+    sourceToken.decimals !== null
       ? Number(sourceRawToCanonical(amountValidation.raw, sourceToken.decimals))
       : 0;
 
-  const quote = useQuote(direction, canonicalGrossAmount);
+  // `settledDirection` is null for a route with no settlement machinery, and
+  // `useQuote` disables itself on null — so a disabled route never fetches a
+  // quote and never renders one.
+  const quote = useQuote(settledDirection, canonicalGrossAmount);
 
   const recipientValidation = useMemo(() => {
-    if (direction === "GlcToSol") {
+    // Keyed off the SETTLED direction: a route with none has no recipient
+    // format to validate against, so it is never "valid".
+    if (settledDirection === null) return { valid: false, message: null };
+    if (settledDirection === "GlcToSol") {
       if (recipient.trim().length === 0) return { valid: false, message: null };
       if (!isValidAddress(recipient.trim())) {
         return { valid: false, message: "That is not a valid Solana address." };
@@ -155,7 +192,7 @@ export function BridgeCard() {
       valid: result.valid,
       message: isReportableAddressProblem(result.problem) ? result.message : null,
     };
-  }, [direction, recipient]);
+  }, [settledDirection, recipient]);
 
   // The FORM-level dual rate-limit check: fires once a syntactically valid
   // Goldcoin address is entered for SolToGlc, so the user learns "this
@@ -172,25 +209,46 @@ export function BridgeCard() {
     direction === "SolToGlc" && recipientValidation.valid,
   );
 
-  const destinationReserveCapacity = reserve.data
-    ? descriptor.destinationReserve === "solana"
-      ? reserve.data.solana_available_capacity
-      : reserve.data.goldcoin_available_capacity
-    : null;
+  // `destinationReserve` is `null` for a route with no reserve. The old
+  // ternary sent that case to the Goldcoin branch, so a Robinhood route
+  // silently adopted Goldcoin's capacity as its own and passed (or failed) a
+  // liquidity check on another chain's behalf.
+  const destinationReserveCapacity =
+    reserve.data && descriptor.destinationReserve !== null
+      ? descriptor.destinationReserve === "solana"
+        ? reserve.data.solana_available_capacity
+        : reserve.data.goldcoin_available_capacity
+      : null;
 
   // Why a direction is unavailable comes from the /status booleans, not
   // from any backend message string: the backend deliberately returns one
   // cause-agnostic message for every unavailable cause on submit.
-  const dirState = status.data ? directionGateState(status.data, direction) : null;
-  const remainingMintRaw = status.data
-    ? String(rollingVolumeRemaining(status.data, direction))
+  const dirState = status.data
+    ? directionGateState(status.data, direction, chains.data)
     : null;
+  const remainingRemaining = status.data
+    ? rollingVolumeRemaining(status.data, direction)
+    : null;
+  const remainingMintRaw =
+    remainingRemaining !== null ? String(remainingRemaining) : null;
 
   const gate = useMemo(() => {
-    if (status.isPending || limits.isPending || reserve.isPending) {
+    if (chains.isPending || status.isPending || limits.isPending || reserve.isPending) {
       return {
         can: false,
         reason: "Loading bridge status…",
+        reasonShownInline: false,
+        blocker: null,
+      };
+    }
+    // Checked before every reserve condition, so no later branch can reach
+    // `can: true` for an unavailable route. An explicit server `enabled:
+    // false` closes it; an unanswerable /chains falls back to the route's
+    // structural default (see `routeAvailable`).
+    if (!routeIsOpen) {
+      return {
+        can: false,
+        reason: closedRouteTitle(direction),
         reasonShownInline: false,
         blocker: null,
       };
@@ -248,7 +306,8 @@ export function BridgeCard() {
         blocker: null,
       };
     }
-    if (remainingMintRaw !== null) {
+    if (remainingMintRaw !== null && sourceToken.decimals !== null) {
+      const sourceDecimals = sourceToken.decimals;
       // Mirror of the backend's proactive quota check on POST /transfers:
       // compare the requested amount against this direction's remaining
       // 24h window, in the canonical unit so no precision is lost. The
@@ -258,12 +317,12 @@ export function BridgeCard() {
         sourceRawToCanonical(remainingMintRaw, SOLANA_GLC.decimals),
       );
       const grossCanonical = BigInt(
-        sourceRawToCanonical(amountValidation.raw, sourceToken.decimals),
+        sourceRawToCanonical(amountValidation.raw, sourceDecimals),
       );
       if (grossCanonical > remainingCanonical) {
         const remainingDisplay = display(
-          atomicRescaleFloor(remainingMintRaw, SOLANA_GLC.decimals, sourceToken.decimals),
-          sourceToken.decimals,
+          atomicRescaleFloor(remainingMintRaw, SOLANA_GLC.decimals, sourceDecimals),
+          sourceDecimals,
           sourceToken.symbol,
         );
         return {
@@ -349,6 +408,8 @@ export function BridgeCard() {
     }
     return { can: true, reason: null, reasonShownInline: false, blocker: null };
   }, [
+    chains.isPending,
+    routeIsOpen,
     status.isPending,
     status.isError,
     limits.isPending,
@@ -374,7 +435,33 @@ export function BridgeCard() {
     setSubmitError(null);
     setSubmitting(true);
     try {
-      if (direction === "GlcToSol") {
+      // EXHAUSTIVE dispatch on the SETTLED DIRECTION, never on the route.
+      //
+      // This used to be `if (direction === "GlcToSol") … else …` on a value
+      // that is now four-valued, so a Robinhood route fell through to the
+      // `else` — the SolToGlc branch, which signs and broadcasts a real
+      // `deposit_to_reserve` with the user's Solana wallet. That leg never
+      // touches the HTTP API, so unlike every other path there is no
+      // backend 409 behind it: a fall-through would move funds on a chain
+      // the user did not select, with nothing able to refuse it.
+      //
+      // `settlementLegFor` is the single, unit-tested source of truth for
+      // this decision, and holds the `never` exhaustiveness check (see its
+      // docs). `null` means the route has no settlement machinery and must
+      // never reach either branch — the same firewall the backend enforces
+      // with `Route::as_direction() -> Option<Direction>`.
+      const leg = settlementLegFor(direction);
+      if (leg === null) {
+        throw new Error(
+          "This route has no settlement direction and cannot be submitted.",
+        );
+      }
+      // Exhaustive on SettlementLeg, not just on Direction. `settlementLegFor`
+      // already makes a new `Direction` variant a compile error; this makes a
+      // new *leg* one too. Without it, adding e.g. "robinhood-deposit" would
+      // silently fall into the Solana wallet branch — the same shape of bug
+      // this block exists to prevent, one level up.
+      if (leg === "backend-create") {
         const output = await createTransfer.mutateAsync({
           amount_atomic: canonicalGrossAmount,
           recipient: recipient.trim(),
@@ -389,7 +476,7 @@ export function BridgeCard() {
           // for the wire request field.
           amountAtomic: amountValidation.raw,
         });
-      } else {
+      } else if (leg === "wallet-deposit") {
         if (!status.data) throw new Error("Bridge status is not loaded");
         // FINAL pre-submit dual rate-limit re-check, fetched fresh through
         // the client (never the form hook's cache): the address may have
@@ -423,6 +510,12 @@ export function BridgeCard() {
             ? sourceWalletRateLimitedError()
             : recipientRateLimitedError();
         }
+        if (sourceToken.decimals === null) {
+          // Unreachable for the two live routes; a hard stop rather than a
+          // fallback, because a guessed scale here would build a
+          // wrong-by-orders-of-magnitude on-chain transfer.
+          throw new Error("This route's token decimals are not known.");
+        }
         const sourceAtomic = BigInt(
           canonicalToSourceRawExact(String(canonicalGrossAmount), sourceToken.decimals),
         );
@@ -446,6 +539,9 @@ export function BridgeCard() {
         });
         setPhase({ kind: "sol-to-glc-waiting", signature: result.signature });
         void pollForTransfer(wallet.address, baselineRequestId);
+      } else {
+        const unreachable: never = leg;
+        throw new Error(`Unsupported settlement leg: ${String(unreachable)}`);
       }
     } catch (error) {
       setSubmitError(error);
@@ -552,6 +648,67 @@ export function BridgeCard() {
 
   const destinationToken = descriptor.to.token;
 
+  // Recipient-field copy, derived from the SETTLED direction rather than a
+  // two-way ternary on a four-valued route. The old
+  // `direction === "GlcToSol" ? … : …` described every unbuilt route as a
+  // Goldcoin destination, and labelled its submit button "Deposit from
+  // wallet" — the precise wrong mental model for a route that settles
+  // nowhere.
+  const recipientCopy =
+    settledDirection === "GlcToSol"
+      ? { label: "Solana recipient address", placeholder: "Solana address" }
+      : settledDirection === "SolToGlc"
+        ? { label: "Goldcoin destination address", placeholder: "Goldcoin address" }
+        : { label: "Destination address", placeholder: "Destination address" };
+  const submitLabel =
+    settledDirection === "GlcToSol"
+      ? "Create deposit request"
+      : settledDirection === "SolToGlc"
+        ? "Deposit from wallet"
+        : "Unavailable";
+
+  const onRouteChange = (next: Route) => {
+    setDirection(next);
+    setAmountInput("");
+    setRecipient("");
+    setSubmitError(null);
+  };
+
+  // An unavailable route renders the selector and a plain statement, and
+  // NOTHING else: no amount field, no recipient field, no quote panel, no
+  // capacity figure, no submit control — the submit button is absent from
+  // the tree rather than present-and-disabled, so there is no element to
+  // re-enable from devtools. The quote and eligibility queries are already
+  // inert for this route (see `useQuote` above), so no request is issued
+  // for it either.
+  //
+  // Nothing here is fabricated: no balance, no fee, no rate, no status.
+  // The title is derived from the route, so a live route the server has
+  // closed is never explained with Robinhood wording.
+  if (!routeIsOpen) {
+    return (
+      <Card variant="raised" padding="lg">
+        <div className="mb-5">
+          <h1 className="text-heading-2">Bridge GLC</h1>
+          <p className="text-body-sm text-ink-500 mt-1">
+            Reserve-backed, 1:1. Nothing is minted, burned, or wrapped.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-5">
+          <DirectionSelector
+            value={direction}
+            onChange={onRouteChange}
+            chains={chains.data}
+          />
+          <Alert level="info" title={closedRouteTitle(direction)}>
+            <p>{routeView?.disabled_reason ?? closedRouteBody(direction)}</p>
+          </Alert>
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card variant="raised" padding="lg">
       <div className="mb-5">
@@ -565,23 +722,22 @@ export function BridgeCard() {
         <div>
           <DirectionSelector
             value={direction}
-            onChange={(next) => {
-              setDirection(next);
-              setAmountInput("");
-              setRecipient("");
-            }}
+            onChange={onRouteChange}
+            chains={chains.data}
           />
-          {destinationReserveCapacity !== null && destinationReserveCapacity > 0 && (
-            <p className="text-body-sm text-ink-500 mt-2">
-              Available capacity:{" "}
-              <TokenAmount
-                raw={String(destinationReserveCapacity)}
-                decimals={destinationToken.decimals}
-                symbol={destinationToken.symbol}
-                className="text-ink-700"
-              />
-            </p>
-          )}
+          {destinationReserveCapacity !== null &&
+            destinationReserveCapacity > 0 &&
+            destinationToken.decimals !== null && (
+              <p className="text-body-sm text-ink-500 mt-2">
+                Available capacity:{" "}
+                <TokenAmount
+                  raw={String(destinationReserveCapacity)}
+                  decimals={destinationToken.decimals}
+                  symbol={destinationToken.symbol}
+                  className="text-ink-700"
+                />
+              </p>
+            )}
         </div>
 
         {gate.blocker && (
@@ -642,37 +798,31 @@ export function BridgeCard() {
             htmlFor="bridge-recipient"
             className="text-body-sm text-ink-600 mb-1 block"
           >
-            {direction === "GlcToSol"
-              ? "Solana recipient address"
-              : "Goldcoin destination address"}
+            {recipientCopy.label}
           </label>
           <div className="border-ink-200 focus-within:border-ink-400 flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors">
             <Wallet aria-hidden="true" className="text-ink-400 size-4 shrink-0" />
             <input
               id="bridge-recipient"
-              aria-label={
-                direction === "GlcToSol"
-                  ? "Solana recipient address"
-                  : "Goldcoin destination address"
-              }
+              aria-label={recipientCopy.label}
               value={recipient}
               onChange={(event) => setRecipient(event.target.value)}
-              placeholder={
-                direction === "GlcToSol" ? "Solana address" : "Goldcoin address"
-              }
+              placeholder={recipientCopy.placeholder}
               className="text-mono-sm min-w-0 flex-1 outline-none"
             />
           </div>
-          {direction === "GlcToSol" && wallet.address && recipient.trim() === "" && (
-            <button
-              type="button"
-              onClick={() => setRecipient(wallet.address ?? "")}
-              className="bg-ink-50 text-ink-700 hover:bg-ink-100 text-body-sm mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition-colors"
-            >
-              Use connected wallet ({wallet.address.slice(0, 4)}…
-              {wallet.address.slice(-4)})
-            </button>
-          )}
+          {settledDirection === "GlcToSol" &&
+            wallet.address &&
+            recipient.trim() === "" && (
+              <button
+                type="button"
+                onClick={() => setRecipient(wallet.address ?? "")}
+                className="bg-ink-50 text-ink-700 hover:bg-ink-100 text-body-sm mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition-colors"
+              >
+                Use connected wallet ({wallet.address.slice(0, 4)}…
+                {wallet.address.slice(-4)})
+              </button>
+            )}
           {recipient.trim() !== "" &&
             !recipientValidation.valid &&
             recipientValidation.message && (
@@ -706,7 +856,7 @@ export function BridgeCard() {
               }
             : {})}
         >
-          {direction === "GlcToSol" ? "Create deposit request" : "Deposit from wallet"}
+          {submitLabel}
         </Button>
       </div>
     </Card>
