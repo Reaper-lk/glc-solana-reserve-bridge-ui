@@ -46,6 +46,7 @@ import {
   useQuote,
   useReserve,
   useSolToGlcRecipientEligibility,
+  useChains,
 } from "@/lib/query/hooks";
 import { isValidAddress, useDepositToReserve, useWalletConnection } from "@/lib/solana";
 import {
@@ -53,7 +54,14 @@ import {
   recipientRateLimitedError,
   sourceWalletRateLimitedError,
 } from "@/lib/api";
-import type { Direction } from "@/lib/api/schemas/common";
+import type { Route } from "@/lib/api/schemas/common";
+import {
+  findRouteView,
+  routeDirection,
+  routeEnabled,
+  ROUTE_DISABLED_BODY,
+  ROUTE_DISABLED_TITLE,
+} from "@/lib/bridge/direction-state";
 import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 import { DirectionSelector } from "./DirectionSelector";
 import { QuoteBreakdown } from "./QuoteBreakdown";
@@ -74,7 +82,11 @@ export function BridgeCard() {
   const router = useRouter();
   const wallet = useWalletConnection();
 
-  const [direction, setDirection] = useState<Direction>("GlcToSol");
+  // Named `direction` for continuity with the rest of this component, but
+  // typed as `Route`: the selector can hold a route that has no settlement
+  // direction at all. `settledDirection` below is the narrowed value, and
+  // it is `null` exactly when this route cannot produce a transfer.
+  const [direction, setDirection] = useState<Route>("GlcToSol");
   const [amountInput, setAmountInput] = useState("");
   const [recipient, setRecipient] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "form" });
@@ -84,6 +96,24 @@ export function BridgeCard() {
   const descriptor = directions[direction];
   const sourceToken = descriptor.from.token;
 
+  const chains = useChains();
+  const routeView = findRouteView(chains.data?.routes, direction);
+  // The server's verdict, and the only thing consulted. While `/chains` is
+  // still loading there is no affirmative "enabled", so the route reads as
+  // disabled until the server says otherwise — the same fail-closed
+  // posture the backend gate itself takes.
+  const routeIsOpen = routeEnabled(routeView);
+  // Two different questions, and conflating them made the form vanish
+  // during first paint. `routeIsOpen` is fail-closed and governs whether a
+  // transfer may be SUBMITTED — while `/chains` is still loading it is
+  // false, which is the correct, conservative answer. `routeKnownClosed`
+  // additionally requires that the server has actually answered, and is
+  // what governs whether the form is REPLACED by the closed-route panel.
+  // Rendering "coming soon" merely because a request is in flight would
+  // state something the server has not said.
+  const routeKnownClosed = chains.data !== undefined && !routeIsOpen;
+  const settledDirection = routeDirection(direction);
+
   const status = useBridgeStatus();
   const limits = useLimits();
   const reserve = useReserve();
@@ -92,6 +122,11 @@ export function BridgeCard() {
 
   const amountBounds = useMemo(() => {
     if (!limits.data) return null;
+    // A token whose decimals are not yet known (Robinhood) gets no bounds
+    // rather than a guessed scale — every figure derived below would
+    // otherwise be silently wrong by orders of magnitude.
+    if (sourceToken.decimals === null) return null;
+    const sourceDecimals = sourceToken.decimals;
     // The minimum is a GROSS-side product floor, DERIVED from `/limits`'
     // own `min_transfer_amount` and `bridge_fee_bps` — never `/limits`'
     // `min_transfer_amount` used directly, since that figure is a
@@ -112,7 +147,7 @@ export function BridgeCard() {
     const minimum = atomicRescaleCeil(
       minimumCanonical,
       GOLDCOIN_DECIMALS,
-      sourceToken.decimals,
+      sourceDecimals,
     );
     // `/limits` passes the on-chain `BridgeConfig` value through raw, and
     // the on-chain check compares it against MINT-atomic amounts (6
@@ -122,10 +157,10 @@ export function BridgeCard() {
     const maximum = atomicRescaleFloor(
       String(limits.data.per_transfer_limit),
       SOLANA_GLC.decimals,
-      sourceToken.decimals,
+      sourceDecimals,
     );
     return {
-      decimals: sourceToken.decimals,
+      decimals: sourceDecimals,
       symbol: sourceToken.symbol,
       minimum,
       maximum,
@@ -136,11 +171,16 @@ export function BridgeCard() {
     ? validateAmount(amountInput, amountBounds)
     : null;
   const canonicalGrossAmount =
-    amountValidation?.raw !== null && amountValidation?.raw !== undefined
+    amountValidation?.raw !== null &&
+    amountValidation?.raw !== undefined &&
+    sourceToken.decimals !== null
       ? Number(sourceRawToCanonical(amountValidation.raw, sourceToken.decimals))
       : 0;
 
-  const quote = useQuote(direction, canonicalGrossAmount);
+  // `settledDirection` is null for a route with no settlement machinery, and
+  // `useQuote` disables itself on null — so a disabled route never fetches a
+  // quote and never renders one.
+  const quote = useQuote(settledDirection, canonicalGrossAmount);
 
   const recipientValidation = useMemo(() => {
     if (direction === "GlcToSol") {
@@ -181,16 +221,32 @@ export function BridgeCard() {
   // Why a direction is unavailable comes from the /status booleans, not
   // from any backend message string: the backend deliberately returns one
   // cause-agnostic message for every unavailable cause on submit.
-  const dirState = status.data ? directionGateState(status.data, direction) : null;
-  const remainingMintRaw = status.data
-    ? String(rollingVolumeRemaining(status.data, direction))
+  const dirState = status.data
+    ? directionGateState(status.data, direction, routeView)
     : null;
+  const remainingRemaining = status.data
+    ? rollingVolumeRemaining(status.data, direction)
+    : null;
+  const remainingMintRaw =
+    remainingRemaining !== null ? String(remainingRemaining) : null;
 
   const gate = useMemo(() => {
-    if (status.isPending || limits.isPending || reserve.isPending) {
+    if (chains.isPending || status.isPending || limits.isPending || reserve.isPending) {
       return {
         can: false,
         reason: "Loading bridge status…",
+        reasonShownInline: false,
+        blocker: null,
+      };
+    }
+    // Checked before every reserve condition: a route the server has not
+    // affirmatively opened can never be submitted, so no later branch may
+    // reach a `can: true`. Fail-closed — `routeIsOpen` is false unless the
+    // server said otherwise.
+    if (!routeIsOpen) {
+      return {
+        can: false,
+        reason: ROUTE_DISABLED_TITLE,
         reasonShownInline: false,
         blocker: null,
       };
@@ -248,7 +304,8 @@ export function BridgeCard() {
         blocker: null,
       };
     }
-    if (remainingMintRaw !== null) {
+    if (remainingMintRaw !== null && sourceToken.decimals !== null) {
+      const sourceDecimals = sourceToken.decimals;
       // Mirror of the backend's proactive quota check on POST /transfers:
       // compare the requested amount against this direction's remaining
       // 24h window, in the canonical unit so no precision is lost. The
@@ -258,12 +315,12 @@ export function BridgeCard() {
         sourceRawToCanonical(remainingMintRaw, SOLANA_GLC.decimals),
       );
       const grossCanonical = BigInt(
-        sourceRawToCanonical(amountValidation.raw, sourceToken.decimals),
+        sourceRawToCanonical(amountValidation.raw, sourceDecimals),
       );
       if (grossCanonical > remainingCanonical) {
         const remainingDisplay = display(
-          atomicRescaleFloor(remainingMintRaw, SOLANA_GLC.decimals, sourceToken.decimals),
-          sourceToken.decimals,
+          atomicRescaleFloor(remainingMintRaw, SOLANA_GLC.decimals, sourceDecimals),
+          sourceDecimals,
           sourceToken.symbol,
         );
         return {
@@ -349,6 +406,8 @@ export function BridgeCard() {
     }
     return { can: true, reason: null, reasonShownInline: false, blocker: null };
   }, [
+    chains.isPending,
+    routeIsOpen,
     status.isPending,
     status.isError,
     limits.isPending,
@@ -422,6 +481,12 @@ export function BridgeCard() {
           throw finalEligibility.blocked_reason === "source_wallet_rate_limited"
             ? sourceWalletRateLimitedError()
             : recipientRateLimitedError();
+        }
+        if (sourceToken.decimals === null) {
+          // Unreachable for the two live routes; a hard stop rather than a
+          // fallback, because a guessed scale here would build a
+          // wrong-by-orders-of-magnitude on-chain transfer.
+          throw new Error("This route's token decimals are not known.");
         }
         const sourceAtomic = BigInt(
           canonicalToSourceRawExact(String(canonicalGrossAmount), sourceToken.decimals),
@@ -552,6 +617,47 @@ export function BridgeCard() {
 
   const destinationToken = descriptor.to.token;
 
+  const onRouteChange = (next: Route) => {
+    setDirection(next);
+    setAmountInput("");
+    setRecipient("");
+    setSubmitError(null);
+  };
+
+  // A route the server reports closed renders the selector and a plain
+  // statement, and NOTHING else: no amount field, no recipient field, no
+  // quote panel, no capacity figure, no submit control — the submit button
+  // is absent from the tree rather than present-and-disabled, so there is
+  // no element to re-enable from devtools. The quote and eligibility
+  // queries are already inert for this route (see `useQuote` above), so no
+  // request is issued for it either.
+  //
+  // Nothing here is fabricated: no balance, no fee, no rate, no status. The
+  // only claim made is the one the server made.
+  if (routeKnownClosed) {
+    return (
+      <Card variant="raised" padding="lg">
+        <div className="mb-5">
+          <h1 className="text-heading-2">Bridge GLC</h1>
+          <p className="text-body-sm text-ink-500 mt-1">
+            Reserve-backed, 1:1. Nothing is minted, burned, or wrapped.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-5">
+          <DirectionSelector
+            value={direction}
+            onChange={onRouteChange}
+            routeViews={chains.data.routes}
+          />
+          <Alert level="info" title={ROUTE_DISABLED_TITLE}>
+            <p>{routeView?.disabled_reason ?? ROUTE_DISABLED_BODY}</p>
+          </Alert>
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card variant="raised" padding="lg">
       <div className="mb-5">
@@ -565,23 +671,22 @@ export function BridgeCard() {
         <div>
           <DirectionSelector
             value={direction}
-            onChange={(next) => {
-              setDirection(next);
-              setAmountInput("");
-              setRecipient("");
-            }}
+            onChange={onRouteChange}
+            routeViews={chains.data?.routes}
           />
-          {destinationReserveCapacity !== null && destinationReserveCapacity > 0 && (
-            <p className="text-body-sm text-ink-500 mt-2">
-              Available capacity:{" "}
-              <TokenAmount
-                raw={String(destinationReserveCapacity)}
-                decimals={destinationToken.decimals}
-                symbol={destinationToken.symbol}
-                className="text-ink-700"
-              />
-            </p>
-          )}
+          {destinationReserveCapacity !== null &&
+            destinationReserveCapacity > 0 &&
+            destinationToken.decimals !== null && (
+              <p className="text-body-sm text-ink-500 mt-2">
+                Available capacity:{" "}
+                <TokenAmount
+                  raw={String(destinationReserveCapacity)}
+                  decimals={destinationToken.decimals}
+                  symbol={destinationToken.symbol}
+                  className="text-ink-700"
+                />
+              </p>
+            )}
         </div>
 
         {gate.blocker && (

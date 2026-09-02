@@ -17,6 +17,7 @@ import type {
   TransferViewDto,
 } from "./schemas/transfer";
 import type { Direction } from "./schemas/common";
+import type { ChainsViewDto } from "./schemas/chains";
 
 /**
  * The API boundary.
@@ -56,6 +57,12 @@ export interface ListTransfersParams {
 }
 
 export interface BridgeApiClient {
+  /**
+   * The chain/route registry — which routes exist and which are open.
+   * Authoritative: the backend enforces the same verdict on submission,
+   * so the UI never decides route availability for itself.
+   */
+  getChains(signal?: AbortSignal): Promise<ChainsViewDto>;
   getStatus(signal?: AbortSignal): Promise<BridgeStatusDto>;
   getLimits(signal?: AbortSignal): Promise<TransferLimitsDto>;
   getReserve(signal?: AbortSignal): Promise<ReserveAvailabilityDto>;

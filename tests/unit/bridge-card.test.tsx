@@ -22,6 +22,10 @@ const getSolToGlcRecipientEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
   bridgeApi: {
+    // Route registry: the Phase-1 backend posture. Added when BridgeCard
+    // became route-aware; these suites all exercise the live GlcToSol /
+    // SolToGlc routes, so both are reported open exactly as before.
+    getChains: async () => (await import("@/lib/api/mock/fixtures")).chainsFixture(),
     getStatus: (...args: unknown[]) => getStatus(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
     getReserve: (...args: unknown[]) => getReserve(...args),

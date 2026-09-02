@@ -2,10 +2,16 @@
 
 import { Activity, HeartPulse } from "lucide-react";
 import { Card, ErrorState, Skeleton, StatusBadge, TokenAmount } from "@/components/ui";
-import { useBridgeStatus, useHealth, useReserve } from "@/lib/query/hooks";
+import { useBridgeStatus, useChains, useHealth, useReserve } from "@/lib/query/hooks";
 import { directionAvailabilityStatus, systemStatus } from "@/lib/status";
 import type { DirectionAvailability } from "@/lib/status";
-import { directionGateState, directions, GOLDCOIN_GLC, SOLANA_GLC } from "@/lib/bridge";
+import {
+  directionGateState,
+  directions,
+  findRouteView,
+  GOLDCOIN_GLC,
+  SOLANA_GLC,
+} from "@/lib/bridge";
 import type { DirectionGateState } from "@/lib/bridge";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 import type { Direction } from "@/lib/api/schemas/common";
@@ -14,8 +20,11 @@ export function StatusView() {
   const status = useBridgeStatus();
   const health = useHealth();
   const reserve = useReserve();
+  // Route availability is the server's verdict, same as in the bridge form —
+  // this screen must never report a route as available on its own authority.
+  const chains = useChains();
 
-  if (status.isPending || health.isPending || reserve.isPending) {
+  if (status.isPending || health.isPending || reserve.isPending || chains.isPending) {
     return (
       <div className="grid gap-4 sm:grid-cols-2">
         <Skeleton className="h-36 w-full" />
@@ -40,9 +49,16 @@ export function StatusView() {
     "capacity-constrained": "insufficient-liquidity",
     "quota-exhausted": "quota-exhausted",
     "quota-paused": "quota-paused",
+    // A route the server has not opened is not "paused" and has no reserve
+    // to be constrained — it is simply unavailable.
+    "route-disabled": "paused",
   };
   const availability = (direction: Direction) =>
-    directionAvailabilityStatus[GATE_TO_BADGE[directionGateState(data, direction)]];
+    directionAvailabilityStatus[
+      GATE_TO_BADGE[
+        directionGateState(data, direction, findRouteView(chains.data?.routes, direction))
+      ]
+    ];
 
   return (
     <div className="flex flex-col gap-6">

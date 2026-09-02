@@ -12,6 +12,7 @@ import {
   transferLimitsSchema,
 } from "../schemas/status";
 import { bridgeStatsSchema } from "../schemas/stats";
+import { chainsViewSchema } from "../schemas/chains";
 import { explorerEventListSchema } from "../schemas/explorer";
 import { reserveHistoryListSchema } from "../schemas/reserves";
 import { quoteOutputSchema, type QuoteOutputDto } from "../schemas/quote";
@@ -71,6 +72,10 @@ export class MockBridgeClient implements BridgeApiClient {
   private async delay<T>(value: T): Promise<T> {
     await new Promise((resolve) => setTimeout(resolve, this.latencyMs));
     return value;
+  }
+
+  async getChains() {
+    return this.delay(chainsViewSchema.parse(fixtures.chainsFixture()));
   }
 
   async getStatus() {

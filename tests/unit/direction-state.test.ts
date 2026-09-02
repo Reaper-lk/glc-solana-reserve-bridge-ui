@@ -9,6 +9,8 @@ import {
   rollingVolumeRemaining,
 } from "@/lib/bridge";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
+import type { RouteViewDto } from "@/lib/api/schemas/chains";
+import type { Route } from "@/lib/api/schemas/common";
 
 /**
  * Per-direction state derivation for the quota/pause/refill workflow.
@@ -34,10 +36,32 @@ function status(overrides: Partial<BridgeStatusDto> = {}): BridgeStatusDto {
   };
 }
 
+/**
+ * `directionGateState` gained a third argument: the route's entry from
+ * `GET /chains`. Every case below concerns the two LIVE routes, so each
+ * passes an enabled entry — preserving exactly what these assertions
+ * asserted before the route registry existed. Robinhood's closed-route
+ * behaviour is covered separately in `robinhood-routes.test.ts`.
+ */
+function openRoute(id: Route): RouteViewDto {
+  return {
+    id,
+    source_chain: id === "GlcToSol" ? "goldcoin" : "solana",
+    destination_chain: id === "GlcToSol" ? "solana" : "goldcoin",
+    enabled: true,
+    disabled_reason: null,
+    implemented: true,
+  };
+}
+
 describe("directionGateState", () => {
   it("reports both directions active on a healthy status", () => {
-    expect(directionGateState(status(), "GlcToSol")).toBe("active");
-    expect(directionGateState(status(), "SolToGlc")).toBe("active");
+    expect(directionGateState(status(), "GlcToSol", openRoute("GlcToSol"))).toBe(
+      "active",
+    );
+    expect(directionGateState(status(), "SolToGlc", openRoute("SolToGlc"))).toBe(
+      "active",
+    );
   });
 
   it("reports quota-exhausted for GlcToSol alone, leaving SolToGlc active", () => {
@@ -46,8 +70,10 @@ describe("directionGateState", () => {
       glc_to_sol_quota_exhausted: true,
       glc_to_sol_rolling_volume_remaining: 40_000000,
     });
-    expect(directionGateState(s, "GlcToSol")).toBe("quota-exhausted");
-    expect(directionGateState(s, "SolToGlc")).toBe("active");
+    expect(directionGateState(s, "GlcToSol", openRoute("GlcToSol"))).toBe(
+      "quota-exhausted",
+    );
+    expect(directionGateState(s, "SolToGlc", openRoute("SolToGlc"))).toBe("active");
   });
 
   it("reports quota-exhausted for SolToGlc alone, leaving GlcToSol active", () => {
@@ -56,8 +82,10 @@ describe("directionGateState", () => {
       sol_to_glc_quota_exhausted: true,
       sol_to_glc_rolling_volume_remaining: 0,
     });
-    expect(directionGateState(s, "SolToGlc")).toBe("quota-exhausted");
-    expect(directionGateState(s, "GlcToSol")).toBe("active");
+    expect(directionGateState(s, "SolToGlc", openRoute("SolToGlc"))).toBe(
+      "quota-exhausted",
+    );
+    expect(directionGateState(s, "GlcToSol", openRoute("GlcToSol"))).toBe("active");
   });
 
   it("reports quota-paused when exhaustion and the operator pause coincide (the refill wait)", () => {
@@ -67,27 +95,37 @@ describe("directionGateState", () => {
       glc_to_sol_rolling_volume_remaining: 0,
       solana_paused: true,
     });
-    expect(directionGateState(s, "GlcToSol")).toBe("quota-paused");
-    expect(directionGateState(s, "SolToGlc")).toBe("active");
+    expect(directionGateState(s, "GlcToSol", openRoute("GlcToSol"))).toBe("quota-paused");
+    expect(directionGateState(s, "SolToGlc", openRoute("SolToGlc"))).toBe("active");
   });
 
   it("maps each direction's pause to its DESTINATION reserve flag", () => {
     // GlcToSol delivers to the Solana reserve; SolToGlc to the Goldcoin one.
     const solanaPaused = status({ solana_paused: true, glc_to_sol_available: false });
-    expect(directionGateState(solanaPaused, "GlcToSol")).toBe("operator-paused");
-    expect(directionGateState(solanaPaused, "SolToGlc")).toBe("active");
+    expect(directionGateState(solanaPaused, "GlcToSol", openRoute("GlcToSol"))).toBe(
+      "operator-paused",
+    );
+    expect(directionGateState(solanaPaused, "SolToGlc", openRoute("SolToGlc"))).toBe(
+      "active",
+    );
 
     const goldcoinPaused = status({
       goldcoin_paused: true,
       sol_to_glc_available: false,
     });
-    expect(directionGateState(goldcoinPaused, "SolToGlc")).toBe("operator-paused");
-    expect(directionGateState(goldcoinPaused, "GlcToSol")).toBe("active");
+    expect(directionGateState(goldcoinPaused, "SolToGlc", openRoute("SolToGlc"))).toBe(
+      "operator-paused",
+    );
+    expect(directionGateState(goldcoinPaused, "GlcToSol", openRoute("GlcToSol"))).toBe(
+      "active",
+    );
   });
 
   it("reports capacity-constrained when unavailable with quota headroom and no pause", () => {
     const s = status({ glc_to_sol_available: false });
-    expect(directionGateState(s, "GlcToSol")).toBe("capacity-constrained");
+    expect(directionGateState(s, "GlcToSol", openRoute("GlcToSol"))).toBe(
+      "capacity-constrained",
+    );
   });
 
   it("reads each direction's own rolling remaining", () => {

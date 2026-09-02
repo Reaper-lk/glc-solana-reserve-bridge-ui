@@ -27,12 +27,27 @@ import type {
 } from "@/lib/api/schemas/transfer";
 import { isTerminalState } from "@/lib/bridge/state";
 import { queryKeys, pollIntervals } from "./keys";
+import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 
 /**
  * One typed hook per bridge endpoint. Application code uses these, never
  * `bridgeApi` directly, so every server-state read goes through react-query
  * caching/retry/staleness policy uniformly.
  */
+
+/**
+ * The chain/route registry (`GET /chains`) — the authoritative answer to
+ * which routes may be used. Polled like the rest of the operational state
+ * so a route the operator opens becomes usable without a page reload, and
+ * so a route that closes stops being submittable promptly.
+ */
+export function useChains(): UseQueryResult<ChainsViewDto> {
+  return useQuery({
+    queryKey: queryKeys.chains(),
+    queryFn: ({ signal }) => bridgeApi.getChains(signal),
+    refetchInterval: pollIntervals.chains,
+  });
+}
 
 export function useBridgeStatus(
   initialData?: BridgeStatusDto,
@@ -93,14 +108,18 @@ export function useStats(initialData?: BridgeStatsDto): UseQueryResult<BridgeSta
  * entered.
  */
 export function useQuote(
-  direction: Direction,
+  direction: Direction | null,
   grossAmount: number,
 ): UseQueryResult<QuoteOutputDto> {
   return useQuery({
-    queryKey: queryKeys.quote(direction, grossAmount),
+    // `direction` is null for a route with no settlement machinery (a
+    // Robinhood route). The query is disabled in that case, so the UI can
+    // never display a quote for a route the backend would refuse — and
+    // never fabricates one locally to fill the gap.
+    queryKey: queryKeys.quote(direction ?? "none", grossAmount),
     queryFn: ({ signal }) =>
-      bridgeApi.getQuote({ direction, gross_amount: grossAmount }, signal),
-    enabled: grossAmount > 0,
+      bridgeApi.getQuote({ direction: direction!, gross_amount: grossAmount }, signal),
+    enabled: direction !== null && grossAmount > 0,
     staleTime: 5_000,
     retry: false,
   });

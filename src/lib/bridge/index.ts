@@ -7,11 +7,23 @@
  * fee, and net amounts; see `src/lib/query/hooks.ts`'s `useQuote`.
  */
 
-export { directions, oppositeDirection, GOLDCOIN_GLC, SOLANA_GLC } from "./direction";
+export {
+  directions,
+  routes,
+  routeOrder,
+  oppositeDirection,
+  oppositeRoute,
+  GOLDCOIN_GLC,
+  SOLANA_GLC,
+  ROBINHOOD_GLC,
+} from "./direction";
 export type {
   ChainDescriptor,
   DirectionDescriptor,
   DirectionSide,
+  KnownDecimalsToken,
+  RouteDescriptor,
+  RouteSide,
   TokenDescriptor,
 } from "./direction";
 
@@ -51,5 +63,11 @@ export {
   QUOTA_PAUSED_TITLE,
   QUOTA_PAUSED_BODY,
   QUOTA_PAUSED_NEXT,
+  routeEnabled,
+  findRouteView,
+  routeDirection,
+  ROUTE_DISABLED_BADGE,
+  ROUTE_DISABLED_TITLE,
+  ROUTE_DISABLED_BODY,
 } from "./direction-state";
 export type { DirectionGateState } from "./direction-state";
