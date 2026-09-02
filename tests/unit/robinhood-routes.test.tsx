@@ -19,6 +19,7 @@ import {
   quotaExhausted,
 } from "@/lib/bridge";
 import { chainsViewSchema, routeViewSchema } from "@/lib/api/schemas/chains";
+import type { ChainsViewDto, RouteViewDto } from "@/lib/api/schemas/chains";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 import type { Route } from "@/lib/api/schemas/common";
 import type * as SolanaLib from "@/lib/solana";
@@ -132,16 +133,54 @@ describe("route model", () => {
     expect(routes.GlcToSol.from.token.decimals).toBe(8);
   });
 
+  it("REG-2b: a KNOWN route sent unparseably is treated as CLOSED, not as absent", () => {
+    // The residual gap in the first fix: a dropped malformed entry was
+    // indistinguishable from an absent one, so a garbled
+    // {"id":"GlcToSol","enabled":false} fell back to the live route's
+    // default of OPEN — silently reversing an operator's close.
+    const unreadable = chainsWith([], ["GlcToSol"]);
+    expect(routeAvailable(unreadable, "GlcToSol")).toBe(false);
+    // …while a route the server said nothing about still gets its default.
+    expect(routeAvailable(unreadable, "SolToGlc")).toBe(true);
+    expect(routeAvailable(unreadable, "GlcToRhn")).toBe(false);
+  });
+
+  it("REG-2b: the schema records unreadable KNOWN ids and drops unknown ones", () => {
+    const base = fixtures.chainsFixture();
+    const parsed = chainsViewSchema.parse({
+      ...base,
+      routes: [
+        ...base.routes.map((r) => (r.id === "GlcToSol" ? { ...r, enabled: "yes" } : r)),
+        { id: "GlcToXyz", enabled: "also-bad" },
+      ],
+    });
+    // Known-but-unreadable -> recorded, so it resolves to closed.
+    expect(parsed.unreadableRouteIds).toContain("GlcToSol");
+    expect(parsed.routes.some((r) => r.id === "GlcToSol")).toBe(false);
+    expect(routeAvailable(parsed, "GlcToSol")).toBe(false);
+    // Unknown id -> dropped entirely, and never recorded as a known route.
+    expect(parsed.unreadableRouteIds).not.toContain("GlcToXyz" as never);
+    // Everything else is untouched.
+    expect(routeAvailable(parsed, "SolToGlc")).toBe(true);
+    expect(routeAvailable(parsed, "GlcToRhn")).toBe(false);
+  });
+
   it("REG-1: distinguishes an explicit server verdict from an unanswerable one", () => {
     // An EXPLICIT verdict is always obeyed, in both directions.
-    expect(routeAvailable(openView("GlcToSol"), "GlcToSol")).toBe(true);
-    expect(routeAvailable({ ...openView("GlcToSol"), enabled: false }, "GlcToSol")).toBe(
-      false,
-    );
-    expect(routeAvailable({ ...closedView("GlcToRhn"), enabled: true }, "GlcToRhn")).toBe(
-      true,
-    );
-    expect(routeAvailable(closedView("GlcToRhn"), "GlcToRhn")).toBe(false);
+    expect(routeAvailable(chainsWith([openView("GlcToSol")]), "GlcToSol")).toBe(true);
+    expect(
+      routeAvailable(
+        chainsWith([{ ...openView("GlcToSol"), enabled: false }]),
+        "GlcToSol",
+      ),
+    ).toBe(false);
+    expect(
+      routeAvailable(
+        chainsWith([{ ...closedView("GlcToRhn"), enabled: true }]),
+        "GlcToRhn",
+      ),
+    ).toBe(true);
+    expect(routeAvailable(chainsWith([closedView("GlcToRhn")]), "GlcToRhn")).toBe(false);
 
     // NO entry means the server did not say — fall back to the route's own
     // structural default, mirroring the backend's Ledger::route_enabled.
@@ -181,25 +220,30 @@ describe("route model", () => {
 
   it("resolves a Robinhood route to route-disabled regardless of reserve state", () => {
     const healthy = status();
-    expect(directionGateState(healthy, "GlcToRhn", closedView("GlcToRhn"))).toBe(
-      "route-disabled",
-    );
+    expect(
+      directionGateState(healthy, "GlcToRhn", chainsWith([closedView("GlcToRhn")])),
+    ).toBe("route-disabled");
     // …and with no entry at all, via the structural default.
     expect(directionGateState(healthy, "GlcToRhn", undefined)).toBe("route-disabled");
     // Even if a malformed server response claimed it was enabled, there is
     // no reserve behind it, so it still cannot read as active.
     expect(
-      directionGateState(healthy, "GlcToRhn", {
-        ...closedView("GlcToRhn"),
-        enabled: true,
-      }),
+      directionGateState(
+        healthy,
+        "GlcToRhn",
+        chainsWith([{ ...closedView("GlcToRhn"), enabled: true }]),
+      ),
     ).toBe("route-disabled");
   });
 
   it("leaves the live routes' derivation exactly as it was", () => {
     const healthy = status();
-    expect(directionGateState(healthy, "GlcToSol", openView("GlcToSol"))).toBe("active");
-    expect(directionGateState(healthy, "SolToGlc", openView("SolToGlc"))).toBe("active");
+    expect(
+      directionGateState(healthy, "GlcToSol", chainsWith([openView("GlcToSol")])),
+    ).toBe("active");
+    expect(
+      directionGateState(healthy, "SolToGlc", chainsWith([openView("SolToGlc")])),
+    ).toBe("active");
   });
 
   it("REG-1: a live route with no server entry still reports its real reserve state", () => {
@@ -280,9 +324,12 @@ describe("REG-2: /chains schema is forward-compatible", () => {
     // GlcToSol is dropped -> no entry -> `routeAvailable` falls back to its
     // structural default, which keeps the live route up.
     expect(parsed.routes.some((r) => r.id === "GlcToSol")).toBe(false);
-    expect(routeAvailable(undefined, "GlcToSol")).toBe(true);
+    // Resolved from the PARSED response, not a bare `undefined` — the
+    // malformed entry is recorded as unreadable, so it reads as closed.
+    expect(routeAvailable(parsed, "GlcToSol")).toBe(false);
     // The other known routes survive untouched.
     expect(parsed.routes.some((r) => r.id === "SolToGlc")).toBe(true);
+    expect(routeAvailable(parsed, "SolToGlc")).toBe(true);
   });
 
   it("would previously have thrown: a strict enum rejects the whole payload", () => {
@@ -590,15 +637,46 @@ describe("BridgeCard — Robinhood routes", () => {
     const recipientField = screen.getByLabelText(/address/i);
     await user.type(recipientField, "mfWxJ45yp2SFn7UciZyNpvDKrzbhyfKrY8");
 
-    const submitButton = screen.getByRole("button", {
-      name: /create deposit request|deposit from wallet/i,
-    });
+    // N-3: the submit control must not claim this is a wallet deposit. The
+    // old two-way ternary labelled every unbuilt route "Deposit from
+    // wallet" — the exact wrong mental model for a route that settles
+    // nowhere, and the label a user would have trusted before signing.
+    expect(screen.queryByRole("button", { name: /deposit from wallet/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /create deposit request/i })).toBeNull();
+    const submitButton = screen.getByRole("button", { name: /unavailable/i });
+    expect(submitButton).toBeDisabled();
     await user.click(submitButton).catch(() => {});
 
     // The two things that must never happen for a route with no settlement
     // direction, regardless of which guard stopped it.
     expect(depositFn).not.toHaveBeenCalled();
     expect(createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("N-3: an unbuilt route is never described as a Goldcoin/Solana transfer", async () => {
+    // The residual two-way ternaries: label, aria-label and placeholder all
+    // used to fall through to "Goldcoin destination address" for a route
+    // whose destination is neither chain.
+    const user = userEvent.setup();
+    getChains.mockResolvedValue({
+      ...fixtures.chainsFixture(),
+      routes: fixtures
+        .chainsFixture()
+        .routes.map((r) =>
+          r.id === "GlcToRhn"
+            ? { ...r, enabled: true, implemented: true, disabled_reason: null }
+            : r,
+        ),
+    });
+
+    renderWithQueryClient(<BridgeCard />);
+    const glcToRhn = await screen.findByRole("radio", { name: routes.GlcToRhn.label });
+    await waitFor(() => expect(glcToRhn).toBeEnabled());
+    await user.click(glcToRhn);
+
+    expect(screen.queryByLabelText(/goldcoin destination address/i)).toBeNull();
+    expect(screen.queryByLabelText(/solana recipient address/i)).toBeNull();
+    expect(screen.getByLabelText(/^destination address$/i)).toBeInTheDocument();
   });
 
   it("UI-1: settlementLegFor never routes an unbuilt route to the wallet leg", () => {
@@ -647,7 +725,7 @@ function status(overrides: Partial<BridgeStatusDto> = {}): BridgeStatusDto {
   };
 }
 
-function openView(id: Route) {
+function openView(id: Route): RouteViewDto {
   return {
     id,
     source_chain: routes[id].from.chain.id,
@@ -658,11 +736,19 @@ function openView(id: Route) {
   };
 }
 
-function closedView(id: Route) {
+function closedView(id: Route): RouteViewDto {
   return {
     ...openView(id),
     enabled: false,
     implemented: false,
     disabled_reason: "closed",
   };
+}
+
+/** Wraps route views in a parsed `/chains` response shape. */
+function chainsWith(
+  views: RouteViewDto[],
+  unreadableRouteIds: Route[] = [],
+): ChainsViewDto {
+  return { chains: [], routes: views, unreadableRouteIds, as_of: 0 };
 }

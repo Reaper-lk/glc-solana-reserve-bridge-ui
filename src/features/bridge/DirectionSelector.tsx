@@ -1,7 +1,7 @@
 import { ArrowLeftRight } from "lucide-react";
 import { routeOrder, routes } from "@/lib/bridge";
 import { ROUTE_DISABLED_BADGE, routeAvailable } from "@/lib/bridge/direction-state";
-import type { RouteViewDto } from "@/lib/api/schemas/chains";
+import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import type { Route } from "@/lib/api/schemas/common";
 import { cn } from "@/lib/utils/cn";
 
@@ -13,11 +13,11 @@ import { cn } from "@/lib/utils/cn";
  *
  * # Availability comes from the server, never from this component
  *
- * `routeViews` is `GET /chains`' route list. A route whose entry says
- * `enabled: false` — or which has no entry at all — renders visibly but is
- * not selectable. There is no local list of "routes we support" and no
- * environment variable gating any of this, which is what makes enabling a
- * route later a backend-only change.
+ * `chains` is the parsed `GET /chains` response. Availability is resolved
+ * by `routeAvailable`, the same function the submit gate uses. There is no
+ * local list of "routes we support" and no environment variable gating any
+ * of this, which is what makes enabling a route later a backend-only
+ * change.
  *
  * A disabled route is rendered as a real, non-interactive element rather
  * than hidden: users have been told Robinhood Network is coming, and a
@@ -26,11 +26,11 @@ import { cn } from "@/lib/utils/cn";
 export function DirectionSelector({
   value,
   onChange,
-  routeViews,
+  chains,
 }: {
   value: Route;
   onChange: (route: Route) => void;
-  routeViews: readonly RouteViewDto[] | undefined;
+  chains: ChainsViewDto | undefined;
 }) {
   return (
     <div
@@ -42,15 +42,11 @@ export function DirectionSelector({
     >
       {routeOrder.map((id) => {
         const descriptor = routes[id];
-        const view = routeViews?.find((v) => v.id === id);
-        // One rule, shared with the submit gate: an explicit server
-        // `enabled: false` closes the route; a missing entry falls back to
-        // the route's structural default. The selector and the gate must
-        // agree, or a user could select a route they cannot submit.
-        //
-        // Submission is enforced independently in `BridgeCard`'s gate and
-        // again by the backend, which returns 409 for a disabled route.
-        const enabled = routeAvailable(view, id);
+        // The exact same call the submit gate makes, on the same input, so
+        // the two cannot disagree — a user must never be able to select a
+        // route they cannot submit. Submission is enforced independently in
+        // `BridgeCard`'s gate and again by the backend, which returns 409.
+        const enabled = routeAvailable(chains, id);
         const selected = id === value;
         return (
           <button

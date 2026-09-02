@@ -5,13 +5,7 @@ import { Card, ErrorState, Skeleton, StatusBadge, TokenAmount } from "@/componen
 import { useBridgeStatus, useChains, useHealth, useReserve } from "@/lib/query/hooks";
 import { directionAvailabilityStatus, systemStatus } from "@/lib/status";
 import type { DirectionAvailability } from "@/lib/status";
-import {
-  directionGateState,
-  directions,
-  findRouteView,
-  GOLDCOIN_GLC,
-  SOLANA_GLC,
-} from "@/lib/bridge";
+import { directionGateState, directions, GOLDCOIN_GLC, SOLANA_GLC } from "@/lib/bridge";
 import type { DirectionGateState } from "@/lib/bridge";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 import type { Direction } from "@/lib/api/schemas/common";
@@ -60,9 +54,7 @@ export function StatusView() {
   };
   const availability = (direction: Direction) =>
     directionAvailabilityStatus[
-      GATE_TO_BADGE[
-        directionGateState(data, direction, findRouteView(chains.data?.routes, direction))
-      ]
+      GATE_TO_BADGE[directionGateState(data, direction, chains.data)]
     ];
 
   return (

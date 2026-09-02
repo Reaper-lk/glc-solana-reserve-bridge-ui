@@ -1,5 +1,5 @@
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
-import type { RouteViewDto } from "@/lib/api/schemas/chains";
+import type { ChainsViewDto, RouteViewDto } from "@/lib/api/schemas/chains";
 import type { Direction, Route } from "@/lib/api/schemas/common";
 import { routes } from "./direction";
 
@@ -101,53 +101,63 @@ export function directionAvailable(status: BridgeStatusDto, route: Route) {
 /**
  * Whether this route can be selected and submitted at all.
  *
- * # "The server said closed" is not the same as "we could not ask"
+ * # Three outcomes, not two
  *
- * This distinction is the whole point of this function, and getting it
- * wrong in either direction is a real outage:
+ * "The server closed this route", "the server sent something we could not
+ * read", and "the server said nothing" are genuinely different, and
+ * collapsing any pair of them causes a real failure:
  *
- * | `routeView` | meaning | result |
- * |---|---|---|
- * | present, `enabled: true` | the server opened it | **open** |
- * | present, `enabled: false` | the server closed it | **closed** |
- * | absent | the server did not say — unreachable, errored, unparseable, or an entry this build does not understand | **the route's own structural default** |
+ * | `/chains` says | result |
+ * |---|---|
+ * | this route, `enabled: true` | **open** |
+ * | this route, `enabled: false` | **closed** — explicit verdicts are always obeyed |
+ * | this route, but unparseably (`unreadableRouteIds`) | **closed** — we could not read it, which is far closer to closed than to open |
+ * | nothing about this route, or nothing at all (unreachable / errored) | **the route's structural default** |
  *
- * The structural default is `routes[route].direction !== null`: a route
- * with settlement machinery in this build defaults to open, one without
- * defaults to closed.
+ * The structural default is `routes[route].direction !== null`: a route with
+ * settlement machinery in this build defaults to open, one without defaults
+ * to closed.
  *
  * This mirrors the backend's `Ledger::route_enabled(route_id,
- * default_enabled)` exactly — absent table, absent row, or an explicit flag,
+ * default_enabled)` — absent table, absent row, or an explicit flag,
  * resolving to `Route::default_enabled()` when there is no explicit answer.
- * The two layers now agree by construction rather than by coincidence.
+ * The two layers agree by construction rather than by coincidence.
  *
  * # Why "absent means closed" was wrong
  *
- * Treating a missing entry as closed made `GET /chains` a hard dependency
- * of the LIVE GLC↔SOL bridge: a 404 from a backend deployed after the UI, a
- * 5xx, a timeout, or a response containing one unrecognised route would all
+ * Treating a missing entry as closed made `GET /chains` a hard dependency of
+ * the LIVE GLC↔SOL bridge: a 404 from a backend deployed after the UI, a
+ * 5xx, a timeout, or a response carrying one unrecognised route would all
  * have disabled the working bridge — failing safe, but taking real,
  * functioning money paths down with it and blaming Robinhood in the copy.
- * An explicit `enabled: false` still fails closed, which is the property
- * that actually matters.
+ *
+ * # Why "unreadable means default" was also wrong
+ *
+ * That was the residual gap in the first fix: dropping a malformed entry
+ * made it indistinguishable from an absent one, so a garbled
+ * `{"id":"GlcToSol","enabled":false}` would have fallen back to the live
+ * route's default of open, silently reversing an operator's close.
+ *
+ * Takes the whole `ChainsViewDto` rather than a single view so a caller
+ * cannot consult the route list while forgetting the unreadable list.
  */
-export function routeAvailable(
-  routeView: RouteViewDto | undefined,
-  route: Route,
-): boolean {
-  if (routeView) return routeView.enabled === true;
+export function routeAvailable(chains: ChainsViewDto | undefined, route: Route): boolean {
+  if (!chains) return routes[route].direction !== null;
+  const view = chains.routes.find((v) => v.id === route);
+  if (view) return view.enabled === true;
+  if (chains.unreadableRouteIds.includes(route)) return false;
   return routes[route].direction !== null;
 }
 
 export function directionGateState(
   status: BridgeStatusDto,
   route: Route,
-  routeView: RouteViewDto | undefined,
+  chains: ChainsViewDto | undefined,
 ): DirectionGateState {
   // The route gate outranks every reserve condition: a route that is not
   // available cannot be "quota exhausted" or "paused", because it has no
   // quota and no reserve.
-  if (!routeAvailable(routeView, route)) return "route-disabled";
+  if (!routeAvailable(chains, route)) return "route-disabled";
 
   const paused = destinationPaused(status, route);
   const quota = quotaExhausted(status, route);

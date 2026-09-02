@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { chainSchema, routeSchema, unixSecondsSchema } from "./common";
+import type { Route } from "./common";
 
 /**
  * `GET /chains` — `ChainsView` in service/src/api.rs.
@@ -44,36 +45,58 @@ export const routeViewSchema = z.object({
 export type RouteViewDto = z.infer<typeof routeViewSchema>;
 
 /**
- * Keeps the entries this build understands and DROPS the ones it does not,
- * instead of rejecting the whole array.
- *
- * # Why per-entry, not whole-response, validation
- *
- * `chainSchema` and `routeSchema` are closed enums, so a strict
- * `z.array(routeViewSchema)` would fail the ENTIRE `/chains` response the
- * moment the backend learns a chain or route this bundle has never heard
- * of. Since adding chains is the explicit plan, that would turn a
- * deliberately forward-compatible backend addition into a client-side
- * outage — and, because route availability is resolved from this response,
- * an outage that reaches the live GLC↔SOL routes.
- *
- * Dropping the unknown entry instead is safe in both directions:
- *
- * - A dropped entry leaves NO route view, and a missing route view resolves
- *   to that route's structural default (`routeAvailability` in
- *   `src/lib/bridge/direction-state.ts`) — so an unknown future route is
- *   treated as unavailable, never as permitted.
- * - Entries this build DOES understand are unaffected, so a new route can
- *   never disable an existing one.
- *
- * The one thing this must not do is silently drop a MALFORMED entry for a
- * KNOWN route and thereby turn an explicit `enabled: false` into a
- * fallback-to-default. That is why the fallback is keyed on the route's own
- * `implemented`/direction rather than on a blanket "assume open".
+ * Identity-only view of a route entry: just enough to tell WHICH route the
+ * server was talking about, even when the rest of the entry is unusable.
  */
-function keepParsable<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
+const routeIdOnlySchema = z.object({ id: routeSchema });
+
+/**
+ * Splits the server's route list into three outcomes, because "the server
+ * closed this route", "the server sent something we cannot read", and "the
+ * server said nothing about this route" must not be collapsed.
+ *
+ * | entry | outcome |
+ * |---|---|
+ * | validates fully | kept as a `RouteViewDto` — the server's explicit verdict |
+ * | fails, but its `id` is a route THIS BUILD KNOWS | recorded in `unreadableRouteIds` — the server spoke and we could not understand it, so the route is treated as CLOSED |
+ * | fails, and its `id` is unknown or unreadable | dropped — a route from a newer backend that this build has no way to render or submit anyway |
+ *
+ * # Why the middle case exists
+ *
+ * Without it, a malformed entry is indistinguishable from an absent one, and
+ * an absent entry falls back to the route's structural default — which for a
+ * LIVE route is "open". That would let a garbled `{"id":"GlcToSol",
+ * "enabled":false}` silently reverse an operator's deliberate close. The
+ * blast radius was small (the backend still returns 409 on the create path),
+ * but "we could not read it" is much closer to closed than to open, and this
+ * removes the ambiguity rather than reasoning about how far it propagates.
+ *
+ * The unknown-id case still drops, and must: those routes have no entry in
+ * the local route table, cannot be selected or rendered, and fall back to a
+ * structural default of closed for anything without settlement machinery.
+ */
+function partitionRoutes(items: readonly unknown[]): {
+  routes: RouteViewDto[];
+  unreadableRouteIds: Route[];
+} {
+  const routes: RouteViewDto[] = [];
+  const unreadableRouteIds: Route[] = [];
+  for (const item of items) {
+    const full = routeViewSchema.safeParse(item);
+    if (full.success) {
+      routes.push(full.data);
+      continue;
+    }
+    const identified = routeIdOnlySchema.safeParse(item);
+    if (identified.success) unreadableRouteIds.push(identified.data.id);
+  }
+  return { routes, unreadableRouteIds };
+}
+
+/** Chains are display-only, so an unparseable one is simply dropped. */
+function parsableChains(items: readonly unknown[]): ChainViewDto[] {
   return items.flatMap((item) => {
-    const parsed = schema.safeParse(item);
+    const parsed = chainViewSchema.safeParse(item);
     return parsed.success ? [parsed.data] : [];
   });
 }
@@ -84,10 +107,20 @@ export const chainsViewSchema = z
     routes: z.array(z.unknown()),
     as_of: unixSecondsSchema,
   })
-  .transform((raw) => ({
-    chains: keepParsable(raw.chains, chainViewSchema),
-    routes: keepParsable(raw.routes, routeViewSchema),
-    as_of: raw.as_of,
-  }));
+  .transform((raw) => {
+    const { routes, unreadableRouteIds } = partitionRoutes(raw.routes);
+    return {
+      chains: parsableChains(raw.chains),
+      routes,
+      /**
+       * Known route ids the server sent but this build could not parse.
+       * `routeAvailable` treats these as closed. Never empty-by-default in
+       * a way a caller can forget: it is part of the parsed shape, so any
+       * consumer of `ChainsViewDto` has it in hand.
+       */
+      unreadableRouteIds,
+      as_of: raw.as_of,
+    };
+  });
 
 export type ChainsViewDto = z.infer<typeof chainsViewSchema>;

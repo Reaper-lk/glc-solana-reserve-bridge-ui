@@ -105,7 +105,7 @@ export function BridgeCard() {
   // build does not understand — falls back to the route's own structural
   // default. So a /chains outage no longer disables the live GLC<->SOL
   // routes, while Robinhood stays closed in every case.
-  const routeIsOpen = routeAvailable(routeView, direction);
+  const routeIsOpen = routeAvailable(chains.data, direction);
   const settledDirection = routeDirection(direction);
 
   const status = useBridgeStatus();
@@ -177,7 +177,10 @@ export function BridgeCard() {
   const quote = useQuote(settledDirection, canonicalGrossAmount);
 
   const recipientValidation = useMemo(() => {
-    if (direction === "GlcToSol") {
+    // Keyed off the SETTLED direction: a route with none has no recipient
+    // format to validate against, so it is never "valid".
+    if (settledDirection === null) return { valid: false, message: null };
+    if (settledDirection === "GlcToSol") {
       if (recipient.trim().length === 0) return { valid: false, message: null };
       if (!isValidAddress(recipient.trim())) {
         return { valid: false, message: "That is not a valid Solana address." };
@@ -189,7 +192,7 @@ export function BridgeCard() {
       valid: result.valid,
       message: isReportableAddressProblem(result.problem) ? result.message : null,
     };
-  }, [direction, recipient]);
+  }, [settledDirection, recipient]);
 
   // The FORM-level dual rate-limit check: fires once a syntactically valid
   // Goldcoin address is entered for SolToGlc, so the user learns "this
@@ -206,17 +209,22 @@ export function BridgeCard() {
     direction === "SolToGlc" && recipientValidation.valid,
   );
 
-  const destinationReserveCapacity = reserve.data
-    ? descriptor.destinationReserve === "solana"
-      ? reserve.data.solana_available_capacity
-      : reserve.data.goldcoin_available_capacity
-    : null;
+  // `destinationReserve` is `null` for a route with no reserve. The old
+  // ternary sent that case to the Goldcoin branch, so a Robinhood route
+  // silently adopted Goldcoin's capacity as its own and passed (or failed) a
+  // liquidity check on another chain's behalf.
+  const destinationReserveCapacity =
+    reserve.data && descriptor.destinationReserve !== null
+      ? descriptor.destinationReserve === "solana"
+        ? reserve.data.solana_available_capacity
+        : reserve.data.goldcoin_available_capacity
+      : null;
 
   // Why a direction is unavailable comes from the /status booleans, not
   // from any backend message string: the backend deliberately returns one
   // cause-agnostic message for every unavailable cause on submit.
   const dirState = status.data
-    ? directionGateState(status.data, direction, routeView)
+    ? directionGateState(status.data, direction, chains.data)
     : null;
   const remainingRemaining = status.data
     ? rollingVolumeRemaining(status.data, direction)
@@ -448,6 +456,11 @@ export function BridgeCard() {
           "This route has no settlement direction and cannot be submitted.",
         );
       }
+      // Exhaustive on SettlementLeg, not just on Direction. `settlementLegFor`
+      // already makes a new `Direction` variant a compile error; this makes a
+      // new *leg* one too. Without it, adding e.g. "robinhood-deposit" would
+      // silently fall into the Solana wallet branch — the same shape of bug
+      // this block exists to prevent, one level up.
       if (leg === "backend-create") {
         const output = await createTransfer.mutateAsync({
           amount_atomic: canonicalGrossAmount,
@@ -463,11 +476,7 @@ export function BridgeCard() {
           // for the wire request field.
           amountAtomic: amountValidation.raw,
         });
-      } else {
-        // `leg` is narrowed to "wallet-deposit". Exhaustiveness for the
-        // ROUTE space is enforced inside `settlementLegFor`, where a new
-        // `Direction` variant is a compile error — so this branch cannot
-        // become a silent catch-all the way the old `else` did.
+      } else if (leg === "wallet-deposit") {
         if (!status.data) throw new Error("Bridge status is not loaded");
         // FINAL pre-submit dual rate-limit re-check, fetched fresh through
         // the client (never the form hook's cache): the address may have
@@ -530,6 +539,9 @@ export function BridgeCard() {
         });
         setPhase({ kind: "sol-to-glc-waiting", signature: result.signature });
         void pollForTransfer(wallet.address, baselineRequestId);
+      } else {
+        const unreachable: never = leg;
+        throw new Error(`Unsupported settlement leg: ${String(unreachable)}`);
       }
     } catch (error) {
       setSubmitError(error);
@@ -636,6 +648,25 @@ export function BridgeCard() {
 
   const destinationToken = descriptor.to.token;
 
+  // Recipient-field copy, derived from the SETTLED direction rather than a
+  // two-way ternary on a four-valued route. The old
+  // `direction === "GlcToSol" ? … : …` described every unbuilt route as a
+  // Goldcoin destination, and labelled its submit button "Deposit from
+  // wallet" — the precise wrong mental model for a route that settles
+  // nowhere.
+  const recipientCopy =
+    settledDirection === "GlcToSol"
+      ? { label: "Solana recipient address", placeholder: "Solana address" }
+      : settledDirection === "SolToGlc"
+        ? { label: "Goldcoin destination address", placeholder: "Goldcoin address" }
+        : { label: "Destination address", placeholder: "Destination address" };
+  const submitLabel =
+    settledDirection === "GlcToSol"
+      ? "Create deposit request"
+      : settledDirection === "SolToGlc"
+        ? "Deposit from wallet"
+        : "Unavailable";
+
   const onRouteChange = (next: Route) => {
     setDirection(next);
     setAmountInput("");
@@ -668,7 +699,7 @@ export function BridgeCard() {
           <DirectionSelector
             value={direction}
             onChange={onRouteChange}
-            routeViews={chains.data?.routes}
+            chains={chains.data}
           />
           <Alert level="info" title={closedRouteTitle(direction)}>
             <p>{routeView?.disabled_reason ?? closedRouteBody(direction)}</p>
@@ -692,7 +723,7 @@ export function BridgeCard() {
           <DirectionSelector
             value={direction}
             onChange={onRouteChange}
-            routeViews={chains.data?.routes}
+            chains={chains.data}
           />
           {destinationReserveCapacity !== null &&
             destinationReserveCapacity > 0 &&
@@ -767,37 +798,31 @@ export function BridgeCard() {
             htmlFor="bridge-recipient"
             className="text-body-sm text-ink-600 mb-1 block"
           >
-            {direction === "GlcToSol"
-              ? "Solana recipient address"
-              : "Goldcoin destination address"}
+            {recipientCopy.label}
           </label>
           <div className="border-ink-200 focus-within:border-ink-400 flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors">
             <Wallet aria-hidden="true" className="text-ink-400 size-4 shrink-0" />
             <input
               id="bridge-recipient"
-              aria-label={
-                direction === "GlcToSol"
-                  ? "Solana recipient address"
-                  : "Goldcoin destination address"
-              }
+              aria-label={recipientCopy.label}
               value={recipient}
               onChange={(event) => setRecipient(event.target.value)}
-              placeholder={
-                direction === "GlcToSol" ? "Solana address" : "Goldcoin address"
-              }
+              placeholder={recipientCopy.placeholder}
               className="text-mono-sm min-w-0 flex-1 outline-none"
             />
           </div>
-          {direction === "GlcToSol" && wallet.address && recipient.trim() === "" && (
-            <button
-              type="button"
-              onClick={() => setRecipient(wallet.address ?? "")}
-              className="bg-ink-50 text-ink-700 hover:bg-ink-100 text-body-sm mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition-colors"
-            >
-              Use connected wallet ({wallet.address.slice(0, 4)}…
-              {wallet.address.slice(-4)})
-            </button>
-          )}
+          {settledDirection === "GlcToSol" &&
+            wallet.address &&
+            recipient.trim() === "" && (
+              <button
+                type="button"
+                onClick={() => setRecipient(wallet.address ?? "")}
+                className="bg-ink-50 text-ink-700 hover:bg-ink-100 text-body-sm mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition-colors"
+              >
+                Use connected wallet ({wallet.address.slice(0, 4)}…
+                {wallet.address.slice(-4)})
+              </button>
+            )}
           {recipient.trim() !== "" &&
             !recipientValidation.valid &&
             recipientValidation.message && (
@@ -831,7 +856,7 @@ export function BridgeCard() {
               }
             : {})}
         >
-          {direction === "GlcToSol" ? "Create deposit request" : "Deposit from wallet"}
+          {submitLabel}
         </Button>
       </div>
     </Card>

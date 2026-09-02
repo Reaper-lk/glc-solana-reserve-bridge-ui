@@ -9,7 +9,7 @@ import {
   rollingVolumeRemaining,
 } from "@/lib/bridge";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
-import type { RouteViewDto } from "@/lib/api/schemas/chains";
+import type { ChainsViewDto, RouteViewDto } from "@/lib/api/schemas/chains";
 import type { Route } from "@/lib/api/schemas/common";
 
 /**
@@ -43,8 +43,8 @@ function status(overrides: Partial<BridgeStatusDto> = {}): BridgeStatusDto {
  * asserted before the route registry existed. Robinhood's closed-route
  * behaviour is covered separately in `robinhood-routes.test.ts`.
  */
-function openRoute(id: Route): RouteViewDto {
-  return {
+function openRoute(id: Route): ChainsViewDto {
+  const view: RouteViewDto = {
     id,
     source_chain: id === "GlcToSol" ? "goldcoin" : "solana",
     destination_chain: id === "GlcToSol" ? "solana" : "goldcoin",
@@ -52,6 +52,7 @@ function openRoute(id: Route): RouteViewDto {
     disabled_reason: null,
     implemented: true,
   };
+  return { chains: [], routes: [view], unreadableRouteIds: [], as_of: 0 };
 }
 
 describe("directionGateState", () => {
