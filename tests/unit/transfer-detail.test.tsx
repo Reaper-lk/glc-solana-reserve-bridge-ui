@@ -51,6 +51,42 @@ describe("TransferDetail — real backend state machine, never a fabricated succ
     expect(screen.getByText(/it is not lost/i)).toBeInTheDocument();
   });
 
+  it("presents a refund as a refund, never as a failure", async () => {
+    for (const [id, state, phrase] of [
+      [30, "RefundPending", /refund for this transfer has been started/i],
+      [31, "RefundBroadcast", /refund for this transfer has been broadcast/i],
+      [32, "Refunded", /this transfer was refunded/i],
+    ] as const) {
+      getTransfer.mockResolvedValue(transferWith({ id, state }));
+      const { unmount } = renderWithQueryClient(<TransferDetail id={id} />);
+
+      expect(await screen.findByText(phrase)).toBeInTheDocument();
+      // A refund is not a failure: none of the danger alert's title (which
+      // names the state in parentheses) or its support-escalation copy, and
+      // no assertive alert role that would announce it as an error.
+      expect(screen.queryByText(/did not settle \(/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/no further automatic action will occur/i),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      unmount();
+      getTransfer.mockReset();
+    }
+  });
+
+  it("does not show the happy-path stepper for a transfer that left it to be refunded", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({ id: 33, state: "Refunded", direction: "GlcToSol" }),
+    );
+    renderWithQueryClient(<TransferDetail id={33} />);
+
+    await screen.findByText(/this transfer was refunded/i);
+    // Steps from the happy path would otherwise render with none of them
+    // marked current, implying the transfer is still on its way to settling.
+    expect(screen.queryByText("Awaiting your deposit")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sending your funds")).not.toBeInTheDocument();
+  });
+
   it("shows a failure alert with the three-part formula for a failed transfer", async () => {
     getTransfer.mockResolvedValue(
       transferWith({
