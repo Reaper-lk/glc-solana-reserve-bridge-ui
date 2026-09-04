@@ -11,7 +11,7 @@ import {
   createTransferOutputSchema,
 } from "@/lib/api/schemas/transfer";
 import { quoteOutputSchema } from "@/lib/api/schemas/quote";
-import { explorerEventSchema } from "@/lib/api/schemas/explorer";
+import { explorerEventListSchema, explorerEventSchema } from "@/lib/api/schemas/explorer";
 import { reserveHistoryEntrySchema } from "@/lib/api/schemas/reserves";
 import * as fixtures from "@/lib/api/mock/fixtures";
 
@@ -71,6 +71,15 @@ describe("schemas reject malformed backend responses", () => {
     expect(transferViewSchema.safeParse(malformed).success).toBe(false);
   });
 
+  it("rejects an unknown RequestState on a transfer even though the explorer tolerates one", () => {
+    // The explorer relaxes this deliberately; the transfer contract does not.
+    const state = "SomeFutureLifecycleState";
+    const malformed = { ...fixtures.transfersFixture()[0], state };
+    expect(transferViewSchema.safeParse(malformed).success).toBe(false);
+    const event = { ...fixtures.explorerEventsFixture()[0], to_state: state };
+    expect(explorerEventSchema.safeParse(event).success).toBe(true);
+  });
+
   it("rejects a float amount where an integer atomic amount is required", () => {
     const malformed = { ...fixtures.transfersFixture()[0], gross_amount_atomic: 12.5 };
     expect(transferViewSchema.safeParse(malformed).success).toBe(false);
@@ -99,5 +108,87 @@ describe("schemas reject malformed backend responses", () => {
   it("rejects completely empty JSON", () => {
     expect(bridgeStatusSchema.safeParse({}).success).toBe(false);
     expect(bridgeStatsSchema.safeParse(null).success).toBe(false);
+  });
+});
+
+/**
+ * The explorer renders every request's history at once, so a lifecycle state
+ * added to the backend after this build shipped must cost one row, not the
+ * whole page. That tolerance is deliberately narrow: it accepts a
+ * `RequestState`-shaped identifier and nothing else, so a genuinely
+ * malformed payload still fails at the boundary exactly as before.
+ */
+describe("explorer events tolerate a future state without weakening validation", () => {
+  const event = () => ({ ...fixtures.explorerEventsFixture()[0]! });
+
+  it("parses the real refund lifecycle transitions, with their backend reasons", () => {
+    const refunds = fixtures
+      .explorerEventsFixture()
+      .filter((e) => e.to_state.startsWith("Refund"));
+    expect(refunds.map((e) => `${e.from_state}->${e.to_state}`).sort()).toEqual([
+      "ManualReview->RefundPending",
+      "RefundBroadcast->Refunded",
+      "RefundPending->RefundBroadcast",
+    ]);
+    expect(refunds.map((e) => e.reason)).toContain("glc_refund_started");
+    expect(refunds.map((e) => e.reason)).toContain("glc_refund_broadcast");
+  });
+
+  it("accepts a structurally-valid state this build has never heard of", () => {
+    for (const state of ["SomeFutureLifecycleState", "RefundReversed", "X"]) {
+      expect(explorerEventSchema.safeParse({ ...event(), to_state: state }).success).toBe(
+        true,
+      );
+      expect(
+        explorerEventSchema.safeParse({ ...event(), from_state: state }).success,
+      ).toBe(true);
+    }
+  });
+
+  it("still rejects a state that is not a state name at all", () => {
+    const malformed = [
+      "",
+      " ",
+      "Refund Pending",
+      "refund-pending",
+      "<script>alert(1)</script>",
+      "https://example.com",
+      "A".repeat(65),
+      42,
+      true,
+      {},
+      [],
+    ];
+    for (const to_state of malformed) {
+      expect(explorerEventSchema.safeParse({ ...event(), to_state }).success).toBe(false);
+    }
+    // from_state is nullable, but null is the ONLY non-string it accepts.
+    expect(explorerEventSchema.safeParse({ ...event(), from_state: null }).success).toBe(
+      true,
+    );
+    expect(explorerEventSchema.safeParse({ ...event(), from_state: 42 }).success).toBe(
+      false,
+    );
+  });
+
+  it("still rejects a malformed event wholesale — a bad direction is not a future state", () => {
+    expect(
+      explorerEventSchema.safeParse({ ...event(), direction: "GlcToRhn" }).success,
+    ).toBe(false);
+    expect(explorerEventSchema.safeParse({ ...event(), id: "1" }).success).toBe(false);
+    const { at: _at, ...missingTimestamp } = event();
+    expect(explorerEventSchema.safeParse(missingTimestamp).success).toBe(false);
+  });
+
+  it("keeps a whole page parseable when one event carries a future state", () => {
+    const items = fixtures.explorerEventsFixture();
+    items[1] = { ...items[1]!, to_state: "SomeFutureLifecycleState" };
+    const parsed = explorerEventListSchema.safeParse({
+      items,
+      next_cursor: null,
+      as_of: 0,
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.items).toHaveLength(items.length);
   });
 });

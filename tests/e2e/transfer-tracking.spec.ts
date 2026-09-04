@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 
 /**
  * Transfer detail / tracking, using the mock backend's built-in fixture ids
- * (1000-1008, one per RequestState in fixtures.ts's SAMPLE_STATES).
+ * (1000-1009, one per RequestState in fixtures.ts's SAMPLE_STATES).
  */
 
 test.describe("transfer tracking", () => {
@@ -29,6 +29,16 @@ test.describe("transfer tracking", () => {
     await page.goto("/bridge/1008");
     const failure = page.getByRole("alert").filter({ hasText: "did not settle" });
     await expect(failure).toBeVisible();
+  });
+
+  test("shows a refunded transfer as refunded, not as a failure", async ({ page }) => {
+    // index 9 -> id 1009, state Refunded.
+    await page.goto("/bridge/1009");
+    await expect(page.getByText(/this transfer was refunded/i)).toBeVisible();
+    await expect(page.getByText(/returned to you/i)).toBeVisible();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "did not settle (" }),
+    ).toHaveCount(0);
   });
 
   test("shows a not-found state for an unknown id rather than a blank page", async ({
