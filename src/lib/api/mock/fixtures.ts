@@ -189,6 +189,31 @@ const SAMPLE_STATES: readonly RequestState[] = [
   "Settled",
   "ManualReview",
   "Expired",
+  // Appended rather than slotted into lifecycle order on purpose: a
+  // fixture's id is `1000 + index`, and the e2e specs address these
+  // transfers by id.
+  "Refunded",
+];
+
+const MANUAL_REVIEW_REASON =
+  "Deposit amount did not match the reserved quote; routed for manual review.";
+
+/**
+ * The refund lifecycle exactly as production emits it, including the
+ * backend's own `reason` strings (`glc_refund_started`,
+ * `glc_refund_broadcast`). The confirming transition carries no reason
+ * because none has been observed on the wire — inventing one here would let
+ * a fabricated string leak into a test as if it were the contract.
+ */
+const REFUND_CHAIN: readonly {
+  readonly from: RequestState;
+  readonly to: RequestState;
+  readonly reason: string | null;
+}[] = [
+  { from: "AwaitingDeposit", to: "ManualReview", reason: MANUAL_REVIEW_REASON },
+  { from: "ManualReview", to: "RefundPending", reason: "glc_refund_started" },
+  { from: "RefundPending", to: "RefundBroadcast", reason: "glc_refund_broadcast" },
+  { from: "RefundBroadcast", to: "Refunded", reason: null },
 ];
 
 export function transfersFixture(): TransferViewDto[] {
@@ -211,10 +236,7 @@ export function transfersFixture(): TransferViewDto[] {
       source_confirmations: state === "AwaitingDeposit" ? 0 : 12,
       required_source_confirmations: direction === "GlcToSol" ? 12 : null,
       destination_txid: terminal ? "b".repeat(64) : null,
-      failure_reason:
-        state === "ManualReview"
-          ? "Deposit amount did not match the reserved quote; routed for manual review."
-          : null,
+      failure_reason: state === "ManualReview" ? MANUAL_REVIEW_REASON : null,
     };
   });
 }
@@ -234,7 +256,23 @@ export function explorerEventsFixture(): ExplorerEventDto[] {
       at: transfer.created_at,
       reason: null,
     });
-    if (transfer.state !== "AwaitingDeposit") {
+    if (transfer.state === "Refunded") {
+      // A refunded request never reaches its terminal state in one hop — it
+      // walks the whole ManualReview -> RefundPending -> RefundBroadcast ->
+      // Refunded chain, so mock mode renders the same multi-row lifecycle
+      // the production explorer does.
+      REFUND_CHAIN.forEach((step, index) => {
+        events.push({
+          id: id++,
+          request_id: transfer.id,
+          direction: transfer.direction,
+          from_state: step.from,
+          to_state: step.to,
+          at: transfer.created_at + 300 * (index + 1),
+          reason: step.reason,
+        });
+      });
+    } else if (transfer.state !== "AwaitingDeposit") {
       events.push({
         id: id++,
         request_id: transfer.id,

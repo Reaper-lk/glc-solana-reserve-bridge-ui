@@ -4,14 +4,17 @@ import {
   CircleCheck,
   CircleDashed,
   CircleDot,
+  CircleHelp,
   CircleSlash,
   CircleX,
   Pause,
+  RotateCcw,
   Settings,
   TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
 import type { RequestState } from "@/lib/api/schemas/transfer";
+import { isKnownRequestState } from "@/lib/bridge/state";
 
 /**
  * The status vocabulary.
@@ -81,8 +84,34 @@ export const requestStateStatus: Record<RequestState, StatusDescriptor> = {
     icon: CircleX,
   },
   ManualReview: { label: "Under manual review", tone: "warn", icon: TriangleAlert },
+  // The refund lifecycle is not a failure: the deposit is on its way back to
+  // the user. It is not a settlement success either, so `Refunded` is
+  // neutral rather than green — green is reserved for `Settled`, the outcome
+  // the user actually asked for.
+  RefundPending: { label: "Refund pending", tone: "info", icon: RotateCcw },
+  RefundBroadcast: { label: "Refund broadcast", tone: "info", icon: RotateCcw },
+  Refunded: { label: "Refunded", tone: "neutral", icon: CircleCheck },
   Failed: { label: "Failed", tone: "danger", icon: CircleX },
 };
+
+/**
+ * A descriptor for any state name off the wire, known or not.
+ *
+ * `GET /explorer/events` deliberately accepts a structurally-valid state
+ * name this build has never heard of, so that one event carrying a future
+ * lifecycle state cannot fail the whole feed
+ * (`eventRequestStateSchema` in `src/lib/api/schemas/explorer`). Such a
+ * state gets a neutral badge carrying its own raw name: the row still says
+ * which request it belongs to, when it happened, and what the backend
+ * called it — honest about being unrecognised rather than dressed up as
+ * something this build understands, and never guessed into a tone that
+ * would imply success or failure.
+ */
+export function requestStateDescriptor(state: string): StatusDescriptor {
+  return isKnownRequestState(state)
+    ? requestStateStatus[state]
+    : { label: state, tone: "neutral", icon: CircleHelp };
+}
 
 /* -------------------------------------------------------------------------- */
 /* Reserve / direction availability                                            */

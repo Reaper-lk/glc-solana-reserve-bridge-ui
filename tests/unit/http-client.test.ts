@@ -234,6 +234,68 @@ describe("HttpBridgeClient", () => {
   });
 });
 
+/**
+ * The production incident this guards against: the backend began emitting
+ * the `Refund*` lifecycle, and a client whose enum predated those states
+ * rejected the whole `/explorer/events` payload — turning a page of
+ * hundreds of readable events into an outage.
+ */
+describe("HttpBridgeClient — /explorer/events survives a state this build predates", () => {
+  const page = (items: unknown[]) => ({ items, next_cursor: null, as_of: 0 });
+
+  it("parses the real production refund transitions", async () => {
+    const base = fixtures.explorerEventsFixture()[0]!;
+    respondOk(
+      page([
+        {
+          ...base,
+          id: 1,
+          from_state: "ManualReview",
+          to_state: "RefundPending",
+          reason: "glc_refund_started",
+        },
+        {
+          ...base,
+          id: 2,
+          from_state: "RefundPending",
+          to_state: "RefundBroadcast",
+          reason: "glc_refund_broadcast",
+        },
+        {
+          ...base,
+          id: 3,
+          from_state: "RefundBroadcast",
+          to_state: "Refunded",
+          reason: null,
+        },
+      ]),
+    );
+    const client = new HttpBridgeClient(BASE);
+    const result = await client.listExplorerEvents({});
+    expect(result.items.map((e) => e.to_state)).toEqual([
+      "RefundPending",
+      "RefundBroadcast",
+      "Refunded",
+    ]);
+  });
+
+  it("keeps every other event when one carries an unknown future state", async () => {
+    const [first, second, third] = fixtures.explorerEventsFixture();
+    respondOk(page([first, { ...second, to_state: "SomeFutureLifecycleState" }, third]));
+    const client = new HttpBridgeClient(BASE);
+    const result = await client.listExplorerEvents({});
+    expect(result.items).toHaveLength(3);
+    expect(result.items[1]!.to_state).toBe("SomeFutureLifecycleState");
+  });
+
+  it("still fails the page for a genuinely malformed event", async () => {
+    const [first, second] = fixtures.explorerEventsFixture();
+    respondOk(page([first, { ...second, to_state: 42 }]));
+    const client = new HttpBridgeClient(BASE);
+    await expect(client.listExplorerEvents({})).rejects.toSatisfy(isApiError);
+  });
+});
+
 describe("HttpBridgeClient — timeout composition", () => {
   it("keeps the default client timeout at 15 seconds", async () => {
     const { DEFAULT_TIMEOUT_MS } = await import("@/lib/api/http");

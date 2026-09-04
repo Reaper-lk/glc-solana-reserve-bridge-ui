@@ -3,11 +3,14 @@ import { requestStateSchema } from "@/lib/api/schemas/transfer";
 import {
   happyPathFor,
   isFailureState,
+  isKnownRequestState,
   isManualReview,
+  isRefundState,
   isSuccessState,
   isTerminalState,
   isUnexercisedState,
   REQUEST_STATE_LABELS,
+  transitionLabel,
 } from "@/lib/bridge/state";
 
 /**
@@ -37,6 +40,7 @@ describe("RequestState classification", () => {
         "Reorged",
         "InsufficientReserveAtSettlement",
         "DestinationSubmissionFailed",
+        "Refunded",
         "Failed",
       ].sort(),
     );
@@ -50,6 +54,36 @@ describe("RequestState classification", () => {
     expect(isFailureState("ManualReview")).toBe(false);
     expect(isManualReview("Failed")).toBe(false);
     expect(isManualReview("ManualReview")).toBe(true);
+  });
+
+  it("models the whole refund lifecycle the backend actually emits", () => {
+    for (const state of ["RefundPending", "RefundBroadcast", "Refunded"] as const) {
+      expect(allStates).toContain(state);
+      expect(isRefundState(state)).toBe(true);
+    }
+    expect(REQUEST_STATE_LABELS.RefundPending).toBe("Refund pending");
+    expect(REQUEST_STATE_LABELS.RefundBroadcast).toBe("Refund broadcast");
+    expect(REQUEST_STATE_LABELS.Refunded).toBe("Refunded");
+  });
+
+  it("never treats a refund as a failure — the deposit came back", () => {
+    expect(isFailureState("RefundPending")).toBe(false);
+    expect(isFailureState("RefundBroadcast")).toBe(false);
+    expect(isFailureState("Refunded")).toBe(false);
+  });
+
+  it("treats Refunded as terminal but not as a settlement success", () => {
+    expect(isTerminalState("Refunded")).toBe(true);
+    expect(isSuccessState("Refunded")).toBe(false);
+    expect(isTerminalState("RefundPending")).toBe(false);
+    expect(isTerminalState("RefundBroadcast")).toBe(false);
+  });
+
+  it("classifies a refund as neither manual review nor an unexercised state", () => {
+    for (const state of ["RefundPending", "RefundBroadcast", "Refunded"] as const) {
+      expect(isManualReview(state)).toBe(false);
+      expect(isUnexercisedState(state)).toBe(false);
+    }
   });
 
   it("flags the settlement-pipeline states the backend does not yet drive", () => {
@@ -76,5 +110,38 @@ describe("happyPathFor", () => {
       expect(sequence[0]).toBe("AwaitingDeposit");
       expect(sequence[sequence.length - 1]).toBe("Settled");
     }
+  });
+});
+
+describe("isKnownRequestState", () => {
+  it("accepts every state on the wire enum", () => {
+    for (const state of requestStateSchema.options) {
+      expect(isKnownRequestState(state)).toBe(true);
+    }
+  });
+
+  it("rejects a state this build does not model, so it can never index a state record", () => {
+    expect(isKnownRequestState("SomeFutureLifecycleState")).toBe(false);
+    expect(isKnownRequestState("")).toBe(false);
+    // Not a state, but a real own-property of Object.prototype — a plain
+    // object lookup would resolve it and hand back a function.
+    expect(isKnownRequestState("toString")).toBe(false);
+    expect(isKnownRequestState("constructor")).toBe(false);
+  });
+});
+
+describe("transitionLabel", () => {
+  it("names each refund transition the way the product describes it", () => {
+    expect(transitionLabel("ManualReview", "RefundPending")).toBe("Refund started");
+    expect(transitionLabel("RefundPending", "RefundBroadcast")).toBe("Refund broadcast");
+    expect(transitionLabel("RefundBroadcast", "Refunded")).toBe("Refund confirmed");
+  });
+
+  it("invents nothing for a transition it has no wording for", () => {
+    expect(transitionLabel(null, "AwaitingDeposit")).toBeNull();
+    expect(transitionLabel("AwaitingDeposit", "Confirming")).toBeNull();
+    // Same states, wrong direction — a reversed pair is not the same event.
+    expect(transitionLabel("RefundPending", "ManualReview")).toBeNull();
+    expect(transitionLabel("ManualReview", "SomeFutureLifecycleState")).toBeNull();
   });
 });
