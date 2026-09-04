@@ -16,6 +16,20 @@ import {
  * `docs/MIGRATION_ASSESSMENT.md`) — the UI must not assume every transfer
  * reaches `Settled`, only that it could, and must render whatever state the
  * backend actually reports.
+ *
+ * The three `Refund*` values are the refund lifecycle production actually
+ * emits: a request that cannot settle is routed to `ManualReview` and the
+ * operator returns the deposit, which walks
+ * `ManualReview -> RefundPending -> RefundBroadcast -> Refunded`
+ * (`reason` = `glc_refund_started`, then `glc_refund_broadcast`). A refund
+ * is a completed, non-failure outcome — the user's funds came back — so it
+ * is deliberately neither a failure state nor a settlement success.
+ *
+ * This list is what a TRANSFER may be in, and it stays strict: an unknown
+ * value on `GET /transfers/:id` is a contract break for that one transfer
+ * and must be surfaced, not guessed at. The explorer, which renders every
+ * request's history at once, relaxes this per row — see
+ * `eventRequestStateSchema` in `./explorer`.
  */
 export const requestStateSchema = z.enum([
   "LiquidityReserved",
@@ -33,6 +47,9 @@ export const requestStateSchema = z.enum([
   "InsufficientReserveAtSettlement",
   "DestinationSubmissionFailed",
   "ManualReview",
+  "RefundPending",
+  "RefundBroadcast",
+  "Refunded",
   "Failed",
 ]);
 

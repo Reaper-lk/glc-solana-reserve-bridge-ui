@@ -18,9 +18,19 @@ repository for the actual migration; this file is the rationale snapshot from th
 - `RequestState` (real wire enum, `ledger/types.rs`): `LiquidityReserved`, `AwaitingDeposit`,
   `DepositObserved`, `Confirming`, `SourceFinalized`, `SettlementAuthorized`, `DestinationSubmitted`,
   `DestinationConfirmed`, `Settled`, `Expired`, `Cancelled`, `Reorged`,
-  `InsufficientReserveAtSettlement`, `DestinationSubmissionFailed`, `ManualReview`, `Failed`. States
-  after `SourceFinalized` are defined on the wire but not yet driven by an implemented code path — the
-  UI must render every state without crashing but must not assume the full pipeline is exercised.
+  `InsufficientReserveAtSettlement`, `DestinationSubmissionFailed`, `ManualReview`, `RefundPending`,
+  `RefundBroadcast`, `Refunded`, `Failed`. States after `SourceFinalized` are defined on the wire but
+  not yet driven by an implemented code path — the UI must render every state without crashing but
+  must not assume the full pipeline is exercised.
+- The `Refund*` family is live in production: a request that cannot settle goes to `ManualReview` and
+  the operator returns the deposit, walking `ManualReview -> RefundPending` (`reason` =
+  `glc_refund_started`), `RefundPending -> RefundBroadcast` (`reason` = `glc_refund_broadcast`), then
+  `RefundBroadcast -> Refunded`. `Refunded` is terminal and is **not** a failure — the funds came
+  back — and is not a settlement success either.
+- Because the backend can add lifecycle states at any time, `GET /explorer/events` validates its
+  `from_state`/`to_state` structurally (a `RequestState`-shaped identifier) rather than against the
+  enum, so one unrecognised state degrades to a neutral badge in its own row instead of failing the
+  whole feed. `GET /transfers/:id` stays strict: one transfer, one contract break, surfaced.
 - `SolToGlc` has **no create endpoint**. The user must submit the on-chain `deposit_to_reserve`
   Anchor instruction directly (program id `BnCFcMaZtpXUzZhXZdQSeQWH4A2BMv5ZaebGe6Ysv2oY` — a
   **dev/localnet-only** id, not a production deployment), then discover the resulting transfer via

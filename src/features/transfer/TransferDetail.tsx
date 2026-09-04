@@ -16,8 +16,10 @@ import {
   directions,
   isFailureState,
   isManualReview,
+  isRefundState,
   isUnexercisedState,
 } from "@/lib/bridge";
+import type { RefundState } from "@/lib/bridge";
 import { goldcoinTxUrl, solanaTxUrl } from "@/lib/config/links";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { TransferStepper } from "./TransferStepper";
@@ -115,14 +117,22 @@ export function TransferDetail({
         </Alert>
       )}
 
-      {!isFailureState(transfer.state) && !isManualReview(transfer.state) && (
-        <TransferStepper
-          direction={transfer.direction}
-          state={transfer.state}
-          sourceConfirmations={transfer.source_confirmations}
-          requiredSourceConfirmations={transfer.required_source_confirmations}
-        />
+      {isRefundState(transfer.state) && (
+        <Alert level="info" {...refundCopy(transfer.state)}>
+          {transfer.failure_reason && <p>{transfer.failure_reason}</p>}
+        </Alert>
       )}
+
+      {!isFailureState(transfer.state) &&
+        !isManualReview(transfer.state) &&
+        !isRefundState(transfer.state) && (
+          <TransferStepper
+            direction={transfer.direction}
+            state={transfer.state}
+            sourceConfirmations={transfer.source_confirmations}
+            requiredSourceConfirmations={transfer.required_source_confirmations}
+          />
+        )}
 
       {isUnexercisedState(transfer.state) && (
         <p className="text-body-sm text-ink-500 mt-2">
@@ -196,6 +206,48 @@ export function TransferDetail({
       </dl>
     </Card>
   );
+}
+
+/**
+ * Refund copy, per state. A refund is not a failure — the deposit is coming
+ * back — so this is an informational alert, not a danger one, and it never
+ * tells the user to do something there is nothing to do about. The happy-path
+ * stepper is suppressed for these states: this transfer left that path and
+ * showing it with no step highlighted would imply it is still progressing
+ * toward settlement.
+ *
+ * The destination of the refund is deliberately unnamed: `TransferView`
+ * carries no refund address, so "returned to you" is the most this page can
+ * say without inventing a detail.
+ */
+function refundCopy(state: RefundState): {
+  title: string;
+  funds: string;
+  next: string;
+} {
+  switch (state) {
+    case "RefundPending":
+      return {
+        title: "A refund for this transfer has been started.",
+        funds:
+          "This transfer will not settle, and your deposit is not lost — it is being returned to you.",
+        next: "No action is needed. The refund transaction will appear here once it is broadcast.",
+      };
+    case "RefundBroadcast":
+      return {
+        title: "The refund for this transfer has been broadcast.",
+        funds:
+          "Your deposit is on its way back to you and is waiting to confirm on-chain.",
+        next: "No action is needed. This page updates when the refund confirms.",
+      };
+    case "Refunded":
+      return {
+        title: "This transfer was refunded.",
+        funds:
+          "Your deposit has been returned to you. This transfer did not settle, and the bridge is not holding these funds.",
+        next: "No action is needed. Contact support with this transfer id if the returned funds have not arrived.",
+      };
+  }
 }
 
 function TxRow({

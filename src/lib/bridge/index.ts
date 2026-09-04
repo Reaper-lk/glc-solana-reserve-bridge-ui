@@ -35,10 +35,14 @@ export {
   isSuccessState,
   isFailureState,
   isManualReview,
+  isRefundState,
   isUnexercisedState,
+  isKnownRequestState,
+  transitionLabel,
   happyPathFor,
   REQUEST_STATE_LABELS,
 } from "./state";
+export type { RefundState } from "./state";
 
 export {
   directionGateState,
