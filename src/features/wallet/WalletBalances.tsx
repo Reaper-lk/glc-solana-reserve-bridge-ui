@@ -75,10 +75,13 @@ export function WalletBalances({ className }: { className?: string }) {
                 — GLC
               </span>
             ) : (
+              /* Exact: this is a spendable balance. A rounded-up balance
+                 would offer the holder an amount they cannot send. */
               <TokenAmount
                 raw={token.data.raw}
                 decimals={token.data.decimals}
                 symbol={token.data.symbol}
+                precision="exact"
               />
             )}
           </dd>
@@ -100,6 +103,7 @@ export function WalletBalances({ className }: { className?: string }) {
               raw={sol.data.raw}
               decimals={sol.data.decimals}
               symbol={sol.data.symbol}
+              precision="exact"
               options={{ maxFractionDigits: 4 }}
             />
           )}
