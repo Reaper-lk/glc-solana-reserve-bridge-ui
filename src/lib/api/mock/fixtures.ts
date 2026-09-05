@@ -46,8 +46,8 @@ export function statusFixture(now: () => Date): BridgeStatusDto {
     sol_to_glc_available: true,
     glc_to_sol_quota_exhausted: false,
     sol_to_glc_quota_exhausted: false,
-    glc_to_sol_rolling_volume_remaining: 17_500_000000,
-    sol_to_glc_rolling_volume_remaining: 100_000_000000,
+    glc_to_sol_rolling_volume_remaining: "17500000000",
+    sol_to_glc_rolling_volume_remaining: "100000000000",
   };
 }
 
@@ -61,8 +61,8 @@ export function pausedStatusFixture(): BridgeStatusDto {
     sol_to_glc_available: true,
     glc_to_sol_quota_exhausted: false,
     sol_to_glc_quota_exhausted: false,
-    glc_to_sol_rolling_volume_remaining: 17_500_000000,
-    sol_to_glc_rolling_volume_remaining: 100_000_000000,
+    glc_to_sol_rolling_volume_remaining: "17500000000",
+    sol_to_glc_rolling_volume_remaining: "100000000000",
   };
 }
 
@@ -82,8 +82,8 @@ export function quotaExhaustedStatusFixture(): BridgeStatusDto {
     sol_to_glc_available: true,
     glc_to_sol_quota_exhausted: true,
     sol_to_glc_quota_exhausted: false,
-    glc_to_sol_rolling_volume_remaining: 40_000000,
-    sol_to_glc_rolling_volume_remaining: 100_000_000000,
+    glc_to_sol_rolling_volume_remaining: "40000000",
+    sol_to_glc_rolling_volume_remaining: "100000000000",
   };
 }
 
@@ -101,8 +101,8 @@ export function quotaPausedStatusFixture(): BridgeStatusDto {
     sol_to_glc_available: true,
     glc_to_sol_quota_exhausted: true,
     sol_to_glc_quota_exhausted: false,
-    glc_to_sol_rolling_volume_remaining: 0,
-    sol_to_glc_rolling_volume_remaining: 100_000_000000,
+    glc_to_sol_rolling_volume_remaining: "0",
+    sol_to_glc_rolling_volume_remaining: "100000000000",
   };
 }
 
@@ -119,23 +119,23 @@ export function limitsFixture(): TransferLimitsDto {
   // (`minimumGrossCanonicalForMinTransferAmount`), never hardcoded, so
   // there is no fixed "rounder" constant to keep in sync here.
   return {
-    min_transfer_amount: 99_000000,
-    per_transfer_limit: 20_000_000000,
+    min_transfer_amount: "99000000",
+    per_transfer_limit: "20000000000",
     bridge_fee_bps: BRIDGE_FEE_BPS,
   };
 }
 
 export function reserveFixture(): ReserveAvailabilityDto {
   return {
-    goldcoin_available_capacity: 4_250_000_00000000,
-    solana_available_capacity: 3_980_000_00000000,
+    goldcoin_available_capacity: "425000000000000",
+    solana_available_capacity: "398000000000000",
   };
 }
 
 export function insufficientReserveFixture(): ReserveAvailabilityDto {
   return {
-    goldcoin_available_capacity: 4_250_000_00000000,
-    solana_available_capacity: 50_00000000,
+    goldcoin_available_capacity: "425000000000000",
+    solana_available_capacity: "5000000000",
   };
 }
 
@@ -156,8 +156,8 @@ export function statsFixture(): BridgeStatsDto {
     sol_to_glc_available: true,
     glc_to_sol_quota_exhausted: false,
     sol_to_glc_quota_exhausted: false,
-    glc_to_sol_rolling_volume_remaining: 17_500_000000,
-    sol_to_glc_rolling_volume_remaining: 100_000_000000,
+    glc_to_sol_rolling_volume_remaining: "17500000000",
+    sol_to_glc_rolling_volume_remaining: "100000000000",
     bridge_fee_bps: BRIDGE_FEE_BPS,
     glc_to_sol: {
       total_requests: 1284,
@@ -173,15 +173,15 @@ export function statsFixture(): BridgeStatsDto {
     },
     goldcoin_reserve: {
       paused: false,
-      available_capacity: 4_250_000_00000000,
-      settled_volume_atomic: 82_400_000_00000000,
-      accrued_fees_atomic: 824_000_00000000,
+      available_capacity: "425000000000000",
+      settled_volume_atomic: "8240000000000000",
+      accrued_fees_atomic: "82400000000000",
     },
     solana_reserve: {
       paused: false,
-      available_capacity: 3_980_000_00000000,
-      settled_volume_atomic: 61_100_000_00000000,
-      accrued_fees_atomic: 611_000_00000000,
+      available_capacity: "398000000000000",
+      settled_volume_atomic: "6110000000000000",
+      accrued_fees_atomic: "61100000000000",
     },
     goldcoin_indexer_halted: false,
     goldcoin_indexer_seconds_since_tick: 8,
@@ -232,17 +232,19 @@ export function transfersFixture(): TransferViewDto[] {
   const base = NOW_UNIX();
   return SAMPLE_STATES.map((state, index) => {
     const direction = index % 2 === 0 ? ("GlcToSol" as const) : ("SolToGlc" as const);
-    const gross = 500_00000000 + index * 37_00000000;
-    const fee = Math.floor((gross * BRIDGE_FEE_BPS) / 10_000);
+    // BigInt throughout: these are atomic amounts, and the fixture must be
+    // exact for the same reason the real payload is.
+    const gross = 500_00000000n + BigInt(index) * 37_00000000n;
+    const fee = (gross * BigInt(BRIDGE_FEE_BPS)) / 10_000n;
     const terminal = state === "Settled" || state === "Expired";
     return {
       id: 1000 + index,
       direction,
       state,
-      gross_amount_atomic: gross,
+      gross_amount_atomic: gross.toString(),
       fee_bps: BRIDGE_FEE_BPS,
-      fee_amount_atomic: fee,
-      net_amount_atomic: gross - fee,
+      fee_amount_atomic: fee.toString(),
+      net_amount_atomic: (gross - fee).toString(),
       created_at: base - (SAMPLE_STATES.length - index) * 900,
       source_txid: state === "AwaitingDeposit" ? null : "a".repeat(64),
       source_confirmations: state === "AwaitingDeposit" ? 0 : 12,
@@ -304,16 +306,16 @@ export function explorerEventsFixture(): ExplorerEventDto[] {
 export function reserveHistoryFixture(): ReserveHistoryEntryDto[] {
   const base = NOW_UNIX();
   return Array.from({ length: 12 }, (_, index) => {
-    const expected = 4_000_000_00000000 + index * 5_000_00000000;
-    const observed = expected - (index === 5 ? 1_200_00000000 : 0);
+    const expected = 4_000_000_00000000n + BigInt(index) * 5_000_00000000n;
+    const observed = expected - (index === 5 ? 1_200_00000000n : 0n);
     return {
       id: index + 1,
       direction:
         index % 2 === 0 ? ("SolanaReserve" as const) : ("GoldcoinReserve" as const),
       detected_at: base - (12 - index) * 3600,
-      expected_atomic: expected,
-      observed_atomic: observed,
-      delta_atomic: observed - expected,
+      expected_atomic: expected.toString(),
+      observed_atomic: observed.toString(),
+      delta_atomic: (observed - expected).toString(),
       classification: observed === expected ? "balanced" : "under-observed",
       auto_paused: false,
     };

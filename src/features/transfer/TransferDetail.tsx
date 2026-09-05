@@ -147,7 +147,7 @@ export function TransferDetail({
           <dt className="text-body-sm text-ink-500">You bridge</dt>
           <dd>
             <TokenAmount
-              raw={String(transfer.gross_amount_atomic)}
+              raw={transfer.gross_amount_atomic}
               decimals={GOLDCOIN_DECIMALS}
               symbol={CANONICAL_SYMBOL}
             />
@@ -160,7 +160,7 @@ export function TransferDetail({
           </dt>
           <dd className="text-ink-600">
             <TokenAmount
-              raw={String(transfer.fee_amount_atomic)}
+              raw={transfer.fee_amount_atomic}
               decimals={GOLDCOIN_DECIMALS}
               symbol={CANONICAL_SYMBOL}
             />
@@ -170,7 +170,7 @@ export function TransferDetail({
           <dt className="text-body-sm text-ink-500">You receive</dt>
           <dd className="text-ink-950 font-medium">
             <TokenAmount
-              raw={String(transfer.net_amount_atomic)}
+              raw={transfer.net_amount_atomic}
               decimals={GOLDCOIN_DECIMALS}
               symbol={CANONICAL_SYMBOL}
             />

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toBigInt } from "@/lib/api/schemas/common";
 import { Wallet } from "lucide-react";
 import {
   Alert,
@@ -135,10 +136,13 @@ export function BridgeCard() {
   const amountValidation = amountBounds
     ? validateAmount(amountInput, amountBounds)
     : null;
+  // Kept as an exact decimal string, never widened to a `number`: a
+  // canonical amount can exceed Number.MAX_SAFE_INTEGER, and the value
+  // submitted must be the value the user typed.
   const canonicalGrossAmount =
     amountValidation?.raw !== null && amountValidation?.raw !== undefined
-      ? Number(sourceRawToCanonical(amountValidation.raw, sourceToken.decimals))
-      : 0;
+      ? sourceRawToCanonical(amountValidation.raw, sourceToken.decimals)
+      : "0";
 
   const quote = useQuote(direction, canonicalGrossAmount);
 
@@ -229,7 +233,7 @@ export function BridgeCard() {
     }
     if (
       dirState === "capacity-constrained" ||
-      (destinationReserveCapacity !== null && destinationReserveCapacity <= 0)
+      (destinationReserveCapacity !== null && toBigInt(destinationReserveCapacity) <= 0n)
     ) {
       return {
         can: false,
@@ -424,7 +428,7 @@ export function BridgeCard() {
             : recipientRateLimitedError();
         }
         const sourceAtomic = BigInt(
-          canonicalToSourceRawExact(String(canonicalGrossAmount), sourceToken.decimals),
+          canonicalToSourceRawExact(canonicalGrossAmount, sourceToken.decimals),
         );
         // `GET /transfers` has no way to ask for "the request this exact
         // deposit created" — SolToGlc requests carry no source_txid (see
@@ -571,17 +575,18 @@ export function BridgeCard() {
               setRecipient("");
             }}
           />
-          {destinationReserveCapacity !== null && destinationReserveCapacity > 0 && (
-            <p className="text-body-sm text-ink-500 mt-2">
-              Available capacity:{" "}
-              <TokenAmount
-                raw={String(destinationReserveCapacity)}
-                decimals={destinationToken.decimals}
-                symbol={destinationToken.symbol}
-                className="text-ink-700"
-              />
-            </p>
-          )}
+          {destinationReserveCapacity !== null &&
+            toBigInt(destinationReserveCapacity) > 0n && (
+              <p className="text-body-sm text-ink-500 mt-2">
+                Available capacity:{" "}
+                <TokenAmount
+                  raw={destinationReserveCapacity}
+                  decimals={destinationToken.decimals}
+                  symbol={destinationToken.symbol}
+                  className="text-ink-700"
+                />
+              </p>
+            )}
         </div>
 
         {gate.blocker && (
@@ -684,7 +689,7 @@ export function BridgeCard() {
 
         {direction === "SolToGlc" && <ExchangeAddressWarning />}
 
-        {canonicalGrossAmount > 0 && <QuoteBreakdown quote={quote} />}
+        {toBigInt(canonicalGrossAmount) > 0n && <QuoteBreakdown quote={quote} />}
 
         {submitError ? <ErrorState error={submitError} /> : null}
 

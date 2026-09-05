@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
-  atomicAmountSchema,
   directionSchema,
+  nonNegativeAtomicAmountSchema,
   paginatedSchema,
   unixSecondsSchema,
 } from "./common";
@@ -60,10 +60,11 @@ export const transferViewSchema = z.object({
   id: z.number().int(),
   direction: directionSchema,
   state: requestStateSchema,
-  gross_amount_atomic: atomicAmountSchema,
+  gross_amount_atomic: nonNegativeAtomicAmountSchema,
+  /** Basis points — bounded, stays a number. */
   fee_bps: z.number().int().nonnegative(),
-  fee_amount_atomic: atomicAmountSchema,
-  net_amount_atomic: atomicAmountSchema,
+  fee_amount_atomic: nonNegativeAtomicAmountSchema,
+  net_amount_atomic: nonNegativeAtomicAmountSchema,
   created_at: unixSecondsSchema,
   source_txid: z.string().nullable(),
   source_confirmations: z.number().int().nonnegative(),
@@ -79,7 +80,12 @@ export type TransferListDto = z.infer<typeof transferListSchema>;
 
 /** Request body for `POST /transfers` — `CreateTransferInput`. GlcToSol only. */
 export const createTransferRequestSchema = z.object({
-  amount_atomic: z.number().int().positive(),
+  /**
+   * Sent as an exact decimal string. The backend accepts a string or a
+   * number, and a string is the only form that can carry an amount above
+   * `Number.MAX_SAFE_INTEGER` without corrupting it.
+   */
+  amount_atomic: z.string().regex(/^\d+$/, "must be a decimal integer string"),
   recipient: z.string().min(1),
 });
 

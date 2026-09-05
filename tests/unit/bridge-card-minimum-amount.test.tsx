@@ -123,12 +123,12 @@ vi.mock("@/lib/solana", () => ({
 function glcToSolQuote() {
   return {
     direction: "GlcToSol" as const,
-    gross_amount: 500_00000000,
+    gross_amount: "50000000000",
     gross_display_amount: "500.00000000",
     fee_bps: 300,
-    fee_amount: 30_00000000,
+    fee_amount: "3000000000",
     fee_display_amount: "30.00000000",
-    net_amount: 470_000000,
+    net_amount: "470000000",
     net_display_amount: "470.000000",
     source_decimals: 8,
     destination_decimals: 6,
@@ -140,12 +140,12 @@ function glcToSolQuote() {
 function solToGlcQuote() {
   return {
     direction: "SolToGlc" as const,
-    gross_amount: 500_000000,
+    gross_amount: "500000000",
     gross_display_amount: "500.000000",
     fee_bps: 300,
-    fee_amount: 30_00000000,
+    fee_amount: "3000000000",
     fee_display_amount: "30.00000000",
-    net_amount: 470_00000000,
+    net_amount: "47000000000",
     net_display_amount: "470.00000000",
     source_decimals: 6,
     destination_decimals: 8,

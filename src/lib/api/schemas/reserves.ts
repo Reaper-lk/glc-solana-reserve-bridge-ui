@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { paginatedSchema, reserveDirectionSchema, unixSecondsSchema } from "./common";
+import {
+  atomicAmountSchema,
+  paginatedSchema,
+  reserveDirectionSchema,
+  unixSecondsSchema,
+} from "./common";
 
 /**
  * `GET /reserves/history` item — `ReserveHistoryEntry`.
@@ -16,9 +21,10 @@ export const reserveHistoryEntrySchema = z.object({
   id: z.number().int(),
   direction: z.enum(["GoldcoinReserve", "SolanaReserve"]),
   detected_at: unixSecondsSchema,
-  expected_atomic: z.number().int(),
-  observed_atomic: z.number().int(),
-  delta_atomic: z.number().int(),
+  expected_atomic: atomicAmountSchema,
+  observed_atomic: atomicAmountSchema,
+  /** Signed by nature: negative when the observed balance is short. */
+  delta_atomic: atomicAmountSchema,
   classification: z.string(),
   auto_paused: z.boolean(),
 });

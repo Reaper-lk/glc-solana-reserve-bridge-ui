@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { atomicAmountSchema, unixSecondsSchema } from "./common";
+import {
+  atomicAmountSchema,
+  nonNegativeAtomicAmountSchema,
+  unixSecondsSchema,
+} from "./common";
 
 const directionStatsSchema = z.object({
   total_requests: z.number().int().nonnegative(),
@@ -10,9 +14,10 @@ const directionStatsSchema = z.object({
 
 const reserveStatsSchema = z.object({
   paused: z.boolean(),
-  available_capacity: z.number().int(),
-  settled_volume_atomic: atomicAmountSchema,
-  accrued_fees_atomic: atomicAmountSchema,
+  /** Signed: a capacity below zero is a real diagnostic state. */
+  available_capacity: atomicAmountSchema,
+  settled_volume_atomic: nonNegativeAtomicAmountSchema,
+  accrued_fees_atomic: nonNegativeAtomicAmountSchema,
 });
 
 /** `GET /stats` — `BridgeStats` in service/src/api.rs. */
@@ -24,8 +29,8 @@ export const bridgeStatsSchema = z.object({
   /** Same quota fields as `GET /status` — see status.ts for units. */
   glc_to_sol_quota_exhausted: z.boolean(),
   sol_to_glc_quota_exhausted: z.boolean(),
-  glc_to_sol_rolling_volume_remaining: atomicAmountSchema,
-  sol_to_glc_rolling_volume_remaining: atomicAmountSchema,
+  glc_to_sol_rolling_volume_remaining: nonNegativeAtomicAmountSchema,
+  sol_to_glc_rolling_volume_remaining: nonNegativeAtomicAmountSchema,
   bridge_fee_bps: z.number().int().nonnegative(),
   glc_to_sol: directionStatsSchema,
   sol_to_glc: directionStatsSchema,

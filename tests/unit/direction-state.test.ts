@@ -28,8 +28,8 @@ function status(overrides: Partial<BridgeStatusDto> = {}): BridgeStatusDto {
     sol_to_glc_available: true,
     glc_to_sol_quota_exhausted: false,
     sol_to_glc_quota_exhausted: false,
-    glc_to_sol_rolling_volume_remaining: 100_000_000000,
-    sol_to_glc_rolling_volume_remaining: 100_000_000000,
+    glc_to_sol_rolling_volume_remaining: "100000000000",
+    sol_to_glc_rolling_volume_remaining: "100000000000",
     ...overrides,
   };
 }
@@ -44,7 +44,7 @@ describe("directionGateState", () => {
     const s = status({
       glc_to_sol_available: false,
       glc_to_sol_quota_exhausted: true,
-      glc_to_sol_rolling_volume_remaining: 40_000000,
+      glc_to_sol_rolling_volume_remaining: "40000000",
     });
     expect(directionGateState(s, "GlcToSol")).toBe("quota-exhausted");
     expect(directionGateState(s, "SolToGlc")).toBe("active");
@@ -54,7 +54,7 @@ describe("directionGateState", () => {
     const s = status({
       sol_to_glc_available: false,
       sol_to_glc_quota_exhausted: true,
-      sol_to_glc_rolling_volume_remaining: 0,
+      sol_to_glc_rolling_volume_remaining: "0",
     });
     expect(directionGateState(s, "SolToGlc")).toBe("quota-exhausted");
     expect(directionGateState(s, "GlcToSol")).toBe("active");
@@ -64,7 +64,7 @@ describe("directionGateState", () => {
     const s = status({
       glc_to_sol_available: false,
       glc_to_sol_quota_exhausted: true,
-      glc_to_sol_rolling_volume_remaining: 0,
+      glc_to_sol_rolling_volume_remaining: "0",
       solana_paused: true,
     });
     expect(directionGateState(s, "GlcToSol")).toBe("quota-paused");
@@ -92,11 +92,11 @@ describe("directionGateState", () => {
 
   it("reads each direction's own rolling remaining", () => {
     const s = status({
-      glc_to_sol_rolling_volume_remaining: 17_500_000000,
-      sol_to_glc_rolling_volume_remaining: 82_500_000000,
+      glc_to_sol_rolling_volume_remaining: "17500000000",
+      sol_to_glc_rolling_volume_remaining: "82500000000",
     });
-    expect(rollingVolumeRemaining(s, "GlcToSol")).toBe(17_500_000000);
-    expect(rollingVolumeRemaining(s, "SolToGlc")).toBe(82_500_000000);
+    expect(rollingVolumeRemaining(s, "GlcToSol")).toBe("17500000000");
+    expect(rollingVolumeRemaining(s, "SolToGlc")).toBe("82500000000");
   });
 });
 
