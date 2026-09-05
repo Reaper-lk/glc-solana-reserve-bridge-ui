@@ -5,6 +5,7 @@ import { Footer } from "./Footer";
 import { BridgeStatusBar } from "./BridgeStatusBar";
 import { ReserveBanner } from "./ReserveBanner";
 import { WalletSlot } from "./WalletSlot";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { isMockMode } from "@/lib/api";
 import { devBuildSha } from "@/lib/dev/build-info";
 import { env } from "@/lib/config/env";
@@ -37,10 +38,10 @@ export function AppShell({
   initialStatus?: BridgeStatusDto;
 }) {
   return (
-    <div className="flex min-h-dvh flex-col bg-white">
+    <div className="bg-surface flex min-h-dvh flex-col">
       <a
         href="#main"
-        className="focus:bg-ink-950 focus:text-body sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:px-4 focus:py-2 focus:text-white"
+        className="focus:bg-ink-950 focus:text-body focus:text-on-inverse sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:px-4 focus:py-2"
       >
         Skip to main content
       </a>
@@ -100,6 +101,14 @@ export function AppShell({
       </main>
 
       <Footer />
+
+      {/*
+        Last in the DOM on purpose: the control is fixed to the corner, so its
+        position in the tab order is a free choice, and putting it after the
+        footer keeps it out of the way of every keyboard user who came here to
+        move funds rather than to change the theme.
+      */}
+      <ThemeToggle />
     </div>
   );
 }

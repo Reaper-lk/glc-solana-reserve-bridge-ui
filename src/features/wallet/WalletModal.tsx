@@ -47,7 +47,7 @@ export function WalletModal({
         <Dialog.Overlay className="bg-ink-950/45 fixed inset-0 z-50" />
         <Dialog.Content
           className={cn(
-            "shadow-elev-3 fixed z-50 bg-white focus:outline-none",
+            "shadow-elev-3 bg-surface-raised fixed z-50 focus:outline-none",
             // Full-screen sheet below md, centred dialog above (design spec D2).
             "inset-x-0 top-0 bottom-0 flex flex-col",
             "md:inset-auto md:top-1/2 md:left-1/2 md:h-auto md:w-[440px]",

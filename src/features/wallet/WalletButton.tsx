@@ -74,7 +74,7 @@ export function WalletButton() {
   return (
     <>
       <DropdownMenu.Root>
-        <DropdownMenu.Trigger className="border-ink-300 hover:bg-ink-50 inline-flex h-10 items-center gap-2 rounded-md border bg-white px-3">
+        <DropdownMenu.Trigger className="border-ink-300 hover:bg-ink-50 bg-surface-raised inline-flex h-10 items-center gap-2 rounded-md border px-3">
           <span className="flex flex-col items-start leading-tight">
             <AddressCompact address={address} lead={4} tail={4} />
             <WalletBalances className="text-mono-sm" />
@@ -90,7 +90,7 @@ export function WalletButton() {
           <DropdownMenu.Content
             align="end"
             sideOffset={6}
-            className="border-ink-200 shadow-elev-2 z-50 min-w-56 rounded-md border bg-white p-1"
+            className="border-ink-200 shadow-elev-2 bg-surface-raised z-50 min-w-56 rounded-md border p-1"
           >
             {wallet && (
               <p className="text-body-sm text-ink-500 px-3 py-2">

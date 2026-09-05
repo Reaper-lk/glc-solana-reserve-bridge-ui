@@ -28,11 +28,16 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: "bg-ink-950 text-white hover:bg-ink-900",
-        secondary: "border border-ink-300 bg-white text-ink-900 hover:bg-ink-50",
+        primary: "bg-ink-950 text-on-inverse hover:bg-ink-900",
+        secondary: "border border-ink-300 bg-surface-raised text-ink-900 hover:bg-ink-50",
         tertiary: "text-ink-700 hover:bg-ink-50",
+        /*
+         * Literal white, and it stays literal in both themes: this label sits
+         * on a saturated red that does not invert, so inverting the text with
+         * the ink scale would put near-black on it in dark mode.
+         */
         danger: "bg-danger-500 text-white hover:bg-danger-700",
-        brand: "bg-gold-400 text-ink-950 hover:bg-gold-500",
+        brand: "bg-gold-400 text-on-gold hover:bg-gold-500",
       },
       size: {
         sm: "h-8 rounded-sm px-3 text-body-sm",

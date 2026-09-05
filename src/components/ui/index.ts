@@ -13,3 +13,4 @@ export { EmptyState, ErrorState } from "./States";
 export { Container } from "./Container";
 export { ChainBadge } from "./ChainBadge";
 export { StickyActionBar } from "./StickyActionBar";
+export { ThemeToggle } from "./ThemeToggle";
