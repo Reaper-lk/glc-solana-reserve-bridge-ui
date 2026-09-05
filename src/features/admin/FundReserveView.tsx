@@ -116,6 +116,7 @@ export function FundReserveView() {
               decimals={reserveBalance.data.decimals}
               symbol={reserveBalance.data.symbol}
               className="text-heading-3"
+              precision="exact"
             />
           )}
         </div>
@@ -201,6 +202,7 @@ export function FundReserveView() {
               decimals={walletBalance.data.decimals}
               symbol={walletBalance.data.symbol}
               className="text-heading-3"
+              precision="exact"
             />
           ) : (
             <p className="text-body text-ink-400">—</p>
@@ -214,6 +216,7 @@ export function FundReserveView() {
               decimals={reserveBalance.data.decimals}
               symbol={reserveBalance.data.symbol}
               className="text-heading-3"
+              precision="exact"
             />
           ) : (
             <p className="text-body text-ink-400">—</p>

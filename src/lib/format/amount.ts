@@ -6,6 +6,17 @@
  * `0.1 + 0.2` is a defect in a bridge UI, and a float cannot hold a large GLC
  * balance without silently losing precision. Conversion to a human-readable
  * decimal happens exactly once, here, using integer arithmetic.
+ *
+ * Two precisions exist, and the distinction is deliberate:
+ *
+ * - EXACT, the default, shows every digit the token has. It is for figures a
+ *   person acts on literally — the amount to send to a deposit address, the
+ *   published minimum and maximum, a wallet balance they are about to spend.
+ * - DISPLAY, `DISPLAY_FORMAT_OPTIONS`, shows exactly two decimal places. It is
+ *   for summary, stat and value surfaces, where `96,218,058.29927559 GLC` is
+ *   noise that costs a reader the magnitude they came for.
+ *
+ * Both read the same exact base units. Neither ever mutates a stored value.
  */
 
 export class AmountFormatError extends Error {
@@ -16,6 +27,17 @@ export class AmountFormatError extends Error {
 }
 
 const BASE_UNITS_PATTERN = /^-?\d+$/;
+const DECIMAL_PATTERN = /^-?\d+(\.\d+)?$/;
+
+/**
+ * How a value that does not fit the requested precision is reduced.
+ *
+ * `truncate` never overstates a figure by so much as one base unit, which is
+ * why it is the default for exact surfaces. `nearest` rounds half away from
+ * zero, which is what a reader expects of a two-decimal summary: a settled
+ * volume of `…29927559` reads as `…30`, not `…29`.
+ */
+export type RoundingMode = "truncate" | "nearest";
 
 export interface FormatOptions {
   /** Digits always shown after the point. Default 2, matching the design docs. */
@@ -24,13 +46,34 @@ export interface FormatOptions {
   readonly maxFractionDigits?: number;
   /** Thousands grouping. Default true. */
   readonly grouping?: boolean;
+  /** How excess precision is dropped. Default `truncate`. */
+  readonly rounding?: RoundingMode;
 }
+
+/** Fraction digits shown on summary, stat and value surfaces. */
+export const DISPLAY_FRACTION_DIGITS = 2;
+
+/**
+ * The single display precision for user-facing GLC surfaces: exactly two
+ * decimal places, rounded to nearest, thousands separators kept.
+ *
+ * Every summary/stat/value surface goes through this — via `TokenAmount`,
+ * `formatDisplayAmount` or `formatDisplayDecimal` — rather than calling
+ * `toFixed` at the call site, so the precision is one decision in one place.
+ */
+export const DISPLAY_FORMAT_OPTIONS: FormatOptions = Object.freeze({
+  minFractionDigits: DISPLAY_FRACTION_DIGITS,
+  maxFractionDigits: DISPLAY_FRACTION_DIGITS,
+  rounding: "nearest",
+  grouping: true,
+});
 
 /**
  * Render an integer base-unit string as a decimal string.
  *
- * Truncates rather than rounds: showing a user more of a balance than they
- * hold, even by one unit at the display layer, is the wrong direction to err.
+ * The arithmetic is exact: digits are reduced with BigInt division, so a value
+ * far beyond `Number.MAX_SAFE_INTEGER` formats without losing a digit. The
+ * input string is never modified.
  */
 export function formatBaseUnits(
   raw: string,
@@ -47,9 +90,10 @@ export function formatBaseUnits(
   }
 
   const {
-    minFractionDigits = Math.min(2, decimals),
+    minFractionDigits = Math.min(DISPLAY_FRACTION_DIGITS, decimals),
     maxFractionDigits = decimals,
     grouping = true,
+    rounding = "truncate",
   } = options;
 
   if (minFractionDigits > maxFractionDigits) {
@@ -57,20 +101,60 @@ export function formatBaseUnits(
   }
 
   const negative = raw.startsWith("-");
-  const digits = (negative ? raw.slice(1) : raw).replace(/^0+(?=\d)/, "");
-  const padded = digits.padStart(decimals + 1, "0");
+  const digits = negative ? raw.slice(1) : raw;
 
-  const wholePart = padded.slice(0, padded.length - decimals);
-  const fractionPart = decimals === 0 ? "" : padded.slice(padded.length - decimals);
+  // Digits kept after the point, and digits the requested precision drops.
+  const kept = Math.min(maxFractionDigits, decimals);
+  const dropped = decimals - kept;
 
-  const truncated = fractionPart.slice(0, Math.min(maxFractionDigits, decimals));
-  const trimmed = truncated.replace(/0+$/, "");
+  let scaled = BigInt(digits);
+  if (dropped > 0) {
+    const divisor = 10n ** BigInt(dropped);
+    const remainder = scaled % divisor;
+    scaled /= divisor;
+    // Half away from zero, on the magnitude — the sign is carried separately.
+    if (rounding === "nearest" && remainder * 2n >= divisor) scaled += 1n;
+  }
+
+  const padded = scaled.toString().padStart(kept + 1, "0");
+  const wholePart = kept === 0 ? padded : padded.slice(0, padded.length - kept);
+  const fractionPart = kept === 0 ? "" : padded.slice(padded.length - kept);
+
+  const trimmed = fractionPart.replace(/0+$/, "");
   const fraction = trimmed.padEnd(minFractionDigits, "0");
 
   const whole = grouping ? groupDigits(wholePart) : wholePart;
-  const sign = negative && /[1-9]/.test(padded) ? "-" : "";
+  // A value that rounds to zero is zero: "-0.00" is not a balance.
+  const sign = negative && scaled !== 0n ? "-" : "";
 
   return fraction.length > 0 ? `${sign}${whole}.${fraction}` : `${sign}${whole}`;
+}
+
+/**
+ * Render base units at display precision: exactly two decimal places, grouped.
+ *
+ * Formatting only. The base units passed in are untouched, and every caller
+ * keeps the exact value it was given for arithmetic and for the API.
+ */
+export function formatDisplayAmount(raw: string, decimals: number): string {
+  return formatBaseUnits(raw, decimals, DISPLAY_FORMAT_OPTIONS);
+}
+
+/**
+ * Render a fixed-point decimal string at display precision.
+ *
+ * For figures the backend already serves as a decimal rather than as base
+ * units — `POST /quote` returns `gross_display_amount` and friends. The digits
+ * are re-read as base units so the reduction is the same exact integer
+ * arithmetic, never a float parse.
+ */
+export function formatDisplayDecimal(value: string): string {
+  const trimmed = value.trim();
+  if (!DECIMAL_PATTERN.test(trimmed)) {
+    throw new AmountFormatError(`Expected a decimal string, received "${value}"`);
+  }
+  const [whole = "", fraction = ""] = trimmed.split(".");
+  return formatDisplayAmount(`${whole}${fraction}`, fraction.length);
 }
 
 function groupDigits(value: string): string {

@@ -195,9 +195,10 @@ describe("BridgeCard — POST /quote integration and fee presentation", () => {
     );
     expect(screen.getByText("Bridge fee (3%)")).toBeInTheDocument();
     expect(screen.getByText("You receive")).toBeInTheDocument();
-    expect(screen.getByText(/1000\.00000000/)).toBeInTheDocument();
-    expect(screen.getByText(/−30\.00000000/)).toBeInTheDocument();
-    expect(screen.getByText(/970\.00000000/)).toBeInTheDocument();
+    // The backend's own figures, at the shared two-decimal display precision.
+    expect(screen.getByText(/1,000\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/−30\.00/)).toBeInTheDocument();
+    expect(screen.getByText(/970\.00/)).toBeInTheDocument();
   });
 
   it("never displays a fee/net figure it computed itself — only what the quote returned", async () => {
@@ -210,8 +211,11 @@ describe("BridgeCard — POST /quote integration and fee presentation", () => {
     await waitFor(() => expect(getLimits).toHaveBeenCalled());
     await user.type(screen.getByLabelText(/Amount in GLC/i), "1000");
 
-    expect(await screen.findByText(/7\.77000000/)).toBeInTheDocument();
-    expect(screen.getByText(/992\.23000000/)).toBeInTheDocument();
+    // Formatting-only: these are the quote's fee/net strings, not a fee this
+    // component derived from the gross amount (which would read 30 / 970).
+    expect(await screen.findByText(/7\.77/)).toBeInTheDocument();
+    expect(screen.getByText(/992\.23/)).toBeInTheDocument();
+    expect(screen.queryByText(/−30\.00/)).not.toBeInTheDocument();
   });
 });
 
