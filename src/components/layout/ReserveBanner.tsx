@@ -5,6 +5,7 @@ import { CircleX } from "lucide-react";
 import { routes } from "@/lib/config/links";
 import { useReserve } from "@/lib/query/hooks";
 import { directions } from "@/lib/bridge";
+import { toBigInt } from "@/lib/api/schemas/common";
 
 /**
  * The insufficient-liquidity banner.
@@ -24,8 +25,9 @@ export function ReserveBanner() {
 
   if (!data) return null;
 
-  const goldcoinShort = data.goldcoin_available_capacity <= 0;
-  const solanaShort = data.solana_available_capacity <= 0;
+  // Exact atomic strings compared as bigints — see `atomicAmountSchema`.
+  const goldcoinShort = toBigInt(data.goldcoin_available_capacity) <= 0n;
+  const solanaShort = toBigInt(data.solana_available_capacity) <= 0n;
 
   if (!goldcoinShort && !solanaShort) return null;
 

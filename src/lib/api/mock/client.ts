@@ -43,8 +43,18 @@ export interface MockClientOptions {
 const GOLDCOIN_DECIMALS = 8;
 const SOLANA_DECIMALS = 6;
 
-function formatDisplay(atomic: number, decimals: number): string {
-  return (atomic / 10 ** decimals).toFixed(decimals);
+/**
+ * Exact atomic -> decimal string. Integer/BigInt arithmetic only: the real
+ * backend computes these with checked integer math and a float here would
+ * make the mock disagree with production for large amounts.
+ */
+function formatDisplay(atomic: bigint, decimals: number): string {
+  const scale = 10n ** BigInt(decimals);
+  const negative = atomic < 0n;
+  const magnitude = negative ? -atomic : atomic;
+  const whole = magnitude / scale;
+  const fraction = (magnitude % scale).toString().padStart(decimals, "0");
+  return `${negative ? "-" : ""}${whole}.${fraction}`;
 }
 
 /**
@@ -107,14 +117,14 @@ export class MockBridgeClient implements BridgeApiClient {
 
   async getQuote(request: {
     direction: "GlcToSol" | "SolToGlc";
-    gross_amount: number;
+    gross_amount: string;
   }): Promise<QuoteOutputDto> {
-    if (request.gross_amount <= 0)
-      throw badRequestError("gross_amount must be greater than zero");
+    const gross = BigInt(request.gross_amount);
+    if (gross <= 0n) throw badRequestError("gross_amount must be greater than zero");
 
     const feeBps = fixtures.BRIDGE_FEE_BPS;
-    const fee = Math.floor((request.gross_amount * feeBps) / 10_000);
-    const net = request.gross_amount - fee;
+    const fee = (gross * BigInt(feeBps)) / 10_000n;
+    const net = gross - fee;
     const sourceDecimals =
       request.direction === "GlcToSol" ? GOLDCOIN_DECIMALS : SOLANA_DECIMALS;
     const destDecimals =
@@ -122,12 +132,12 @@ export class MockBridgeClient implements BridgeApiClient {
 
     const output = {
       direction: request.direction,
-      gross_amount: request.gross_amount,
-      gross_display_amount: formatDisplay(request.gross_amount, GOLDCOIN_DECIMALS),
+      gross_amount: gross.toString(),
+      gross_display_amount: formatDisplay(gross, GOLDCOIN_DECIMALS),
       fee_bps: feeBps,
-      fee_amount: fee,
+      fee_amount: fee.toString(),
       fee_display_amount: formatDisplay(fee, GOLDCOIN_DECIMALS),
-      net_amount: net,
+      net_amount: net.toString(),
       net_display_amount: formatDisplay(net, GOLDCOIN_DECIMALS),
       source_decimals: sourceDecimals,
       destination_decimals: destDecimals,
@@ -175,16 +185,17 @@ export class MockBridgeClient implements BridgeApiClient {
 
     const id = this.nextId++;
     const feeBps = fixtures.BRIDGE_FEE_BPS;
-    const fee = Math.floor((validated.amount_atomic * feeBps) / 10_000);
+    const gross = BigInt(validated.amount_atomic);
+    const fee = (gross * BigInt(feeBps)) / 10_000n;
 
     this.created.set(id, {
       id,
       direction: "GlcToSol",
       state: "AwaitingDeposit",
-      gross_amount_atomic: validated.amount_atomic,
+      gross_amount_atomic: gross.toString(),
       fee_bps: feeBps,
-      fee_amount_atomic: fee,
-      net_amount_atomic: validated.amount_atomic - fee,
+      fee_amount_atomic: fee.toString(),
+      net_amount_atomic: (gross - fee).toString(),
       created_at: Math.floor(this.now().getTime() / 1000),
       source_txid: null,
       source_confirmations: 0,

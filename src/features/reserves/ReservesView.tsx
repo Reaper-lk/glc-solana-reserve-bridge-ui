@@ -16,6 +16,7 @@ import { directionAvailabilityStatus } from "@/lib/status";
 import { GOLDCOIN_GLC, SOLANA_GLC, directions } from "@/lib/bridge";
 import { cn } from "@/lib/utils/cn";
 import type { ReserveHistoryEntryDto } from "@/lib/api/schemas/reserves";
+import { clampAtomicAtZero, isNegativeAtomic, toBigInt } from "@/lib/api/schemas/common";
 
 const HISTORY_PAGE_SIZE = 20;
 
@@ -42,9 +43,12 @@ export function ReservesView() {
   if (reserve.isError) return <ErrorState error={reserve.error} />;
   if (stats.isError) return <ErrorState error={stats.error} />;
 
-  const availability = (capacity: number, paused: boolean) => {
+  // `capacity` is an exact atomic string; compared as a bigint so a value
+  // beyond Number.MAX_SAFE_INTEGER is judged on its real magnitude.
+  const availability = (capacity: string, paused: boolean) => {
     if (paused) return directionAvailabilityStatus.paused;
-    if (capacity <= 0) return directionAvailabilityStatus["insufficient-liquidity"];
+    if (toBigInt(capacity) <= 0n)
+      return directionAvailabilityStatus["insufficient-liquidity"];
     return directionAvailabilityStatus.available;
   };
 
@@ -66,14 +70,14 @@ export function ReservesView() {
           </p>
           <div className="mt-4">
             <TokenAmount
-              raw={String(Math.max(reserve.data.solana_available_capacity, 0))}
+              raw={clampAtomicAtZero(reserve.data.solana_available_capacity)}
               decimals={SOLANA_GLC.decimals}
               symbol={SOLANA_GLC.symbol}
               className="text-heading-2"
             />
             <p className="text-body-sm text-ink-500 mt-1">Available capacity</p>
           </div>
-          {reserve.data.solana_available_capacity < 0 && (
+          {isNegativeAtomic(reserve.data.solana_available_capacity) && (
             <p className="text-body-sm text-danger-700 mt-2 flex items-center gap-1.5">
               <TriangleAlert aria-hidden="true" className="size-4" />
               Reported capacity is negative — this reserve needs operator attention.
@@ -96,14 +100,14 @@ export function ReservesView() {
           </p>
           <div className="mt-4">
             <TokenAmount
-              raw={String(Math.max(reserve.data.goldcoin_available_capacity, 0))}
+              raw={clampAtomicAtZero(reserve.data.goldcoin_available_capacity)}
               decimals={GOLDCOIN_GLC.decimals}
               symbol={GOLDCOIN_GLC.symbol}
               className="text-heading-2"
             />
             <p className="text-body-sm text-ink-500 mt-1">Available capacity</p>
           </div>
-          {reserve.data.goldcoin_available_capacity < 0 && (
+          {isNegativeAtomic(reserve.data.goldcoin_available_capacity) && (
             <p className="text-body-sm text-danger-700 mt-2 flex items-center gap-1.5">
               <TriangleAlert aria-hidden="true" className="size-4" />
               Reported capacity is negative — this reserve needs operator attention.
@@ -209,10 +213,12 @@ function ReserveHistoryRows({ items }: { items: readonly ReserveHistoryEntryDto[
                 <td
                   className={cn(
                     "tabular text-body-sm py-2.5 pr-4",
-                    entry.delta_atomic < 0 ? "text-danger-700" : "text-ink-700",
+                    isNegativeAtomic(entry.delta_atomic)
+                      ? "text-danger-700"
+                      : "text-ink-700",
                   )}
                 >
-                  {entry.delta_atomic > 0 ? "+" : ""}
+                  {toBigInt(entry.delta_atomic) > 0n ? "+" : ""}
                   {entry.delta_atomic}
                 </td>
                 <td className="text-body-sm py-2.5 pr-6">

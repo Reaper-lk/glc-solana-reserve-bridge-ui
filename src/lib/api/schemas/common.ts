@@ -8,11 +8,9 @@ import { z } from "zod";
  * partially-trusted object handed to a component.
  *
  * The backend (`service/src/api.rs` in glc-solana-reserve-bridge) serializes
- * u64/i64 amounts as plain JSON numbers, not strings — there is no
- * alternative wire format to validate against. Very large values could in
- * principle lose precision at 2^53, a real backend characteristic rather
- * than a frontend choice; amounts are still always rendered from these
- * integers, never from a derived float.
+ * atomic monetary amounts as DECIMAL STRINGS — see
+ * `docs/31-atomic-amount-json-encoding.md` there, and `atomicAmountSchema`
+ * below for why the numeric form could never have worked.
  */
 
 export const isoTimestampSchema = z.iso.datetime({ offset: true });
@@ -20,7 +18,99 @@ export const isoTimestampSchema = z.iso.datetime({ offset: true });
 /** Unix seconds, as the bridge API reports every timestamp. */
 export const unixSecondsSchema = z.number().int().nonnegative();
 
-export const atomicAmountSchema = z.number().int().nonnegative();
+/**
+ * An atomic monetary amount, normalised to an exact integer string.
+ *
+ * # Why not a number
+ *
+ * JSON has one numeric type and JavaScript parses it into an IEEE-754
+ * double, exact only up to `Number.MAX_SAFE_INTEGER` (2^53 - 1 =
+ * 9007199254740991). Production `/stats` served
+ * `settled_volume_atomic: 9408405829927559`; `JSON.parse` returned
+ * `9408405829927560`. The digits were already gone by the time any schema
+ * ran, and the Reserves page failed rather than render a wrong balance.
+ *
+ * The backend now sends these as strings, which survive `JSON.parse`
+ * byte-for-byte. This schema keeps them as strings all the way to
+ * `formatBaseUnits`, which has always done its arithmetic on digit strings
+ * and `BigInt` — so an amount is never a `number` anywhere in this app.
+ *
+ * # Why a legacy number is still accepted, but only when provably safe
+ *
+ * During rollout this UI may talk to a backend that still sends numbers.
+ * A number is accepted only if it is a safe integer, i.e. only when the
+ * value provably survived the parse; anything above the safe range is
+ * REJECTED rather than coerced. Accepting it would mean displaying a
+ * corrupted balance, which is strictly worse than the error it replaces —
+ * and unlike the error, silent.
+ *
+ * The output type is `string` in both cases, so nothing downstream has to
+ * know which form arrived.
+ */
+export const atomicAmountSchema = z
+  .union([z.string(), z.number()])
+  .superRefine((value, ctx) => {
+    if (typeof value === "number") {
+      if (!Number.isInteger(value)) {
+        ctx.addIssue({ code: "custom", message: "atomic amount must be an integer" });
+        return;
+      }
+      if (!Number.isSafeInteger(value)) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "atomic amount exceeds Number.MAX_SAFE_INTEGER and was already corrupted by " +
+            "JSON.parse; the backend must send this field as a decimal string",
+        });
+      }
+      return;
+    }
+    if (!/^-?\d+$/.test(value)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "atomic amount must be a decimal integer string",
+      });
+    }
+  })
+  .transform((value) =>
+    typeof value === "number" ? String(value) : normaliseIntegerString(value),
+  );
+
+/** As above, but rejects negatives — for amounts that cannot be below zero. */
+export const nonNegativeAtomicAmountSchema = atomicAmountSchema.refine(
+  (value) => !value.startsWith("-"),
+  { error: "atomic amount must not be negative" },
+);
+
+/**
+ * Canonicalises `"-0"` to `"0"` and strips redundant leading zeros, so two
+ * equal amounts always compare equal as strings. Input is already known to
+ * match `/^-?\d+$/`.
+ */
+function normaliseIntegerString(value: string): string {
+  const negative = value.startsWith("-");
+  const digits = (negative ? value.slice(1) : value).replace(/^0+(?=\d)/, "");
+  return negative && /[1-9]/.test(digits) ? `-${digits}` : digits;
+}
+
+/**
+ * An atomic amount as a `bigint`, for the few places that need to COMPARE
+ * or clamp rather than format. Exact by construction: the string never
+ * passes through a `number`.
+ */
+export function toBigInt(atomic: string): bigint {
+  return BigInt(atomic);
+}
+
+/** `max(atomic, 0)` without leaving the exact domain. */
+export function clampAtomicAtZero(atomic: string): string {
+  return atomic.startsWith("-") ? "0" : atomic;
+}
+
+/** Whether an exact atomic amount is negative. */
+export function isNegativeAtomic(atomic: string): boolean {
+  return atomic.startsWith("-") && /[1-9]/.test(atomic);
+}
 
 /**
  * A URL the UI will render as a link.

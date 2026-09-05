@@ -7,52 +7,58 @@ describe("MockBridgeClient — quote / fee presentation", () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
     const quote = await client.getQuote({
       direction: "GlcToSol",
-      gross_amount: 1_000_00000000,
+      gross_amount: "100000000000",
     });
     expect(quote.fee_bps).toBe(300);
-    expect(quote.fee_amount).toBe(30_00000000);
-    expect(quote.net_amount).toBe(970_00000000);
-    expect(quote.gross_amount).toBe(quote.fee_amount + quote.net_amount);
+    expect(quote.fee_amount).toBe("3000000000");
+    expect(quote.net_amount).toBe("97000000000");
+    expect(BigInt(quote.gross_amount)).toBe(
+      BigInt(quote.fee_amount) + BigInt(quote.net_amount),
+    );
   });
 
   it("computes the same 3% fee for SolToGlc", async () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
     const quote = await client.getQuote({
       direction: "SolToGlc",
-      gross_amount: 500_00000000,
+      gross_amount: "50000000000",
     });
-    expect(quote.fee_amount).toBe(15_00000000);
-    expect(quote.net_amount).toBe(485_00000000);
+    expect(quote.fee_amount).toBe("1500000000");
+    expect(quote.net_amount).toBe("48500000000");
   });
 
   it("calculates the 3% fee correctly for a normal 2,000 GLC transfer", async () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
     const quote = await client.getQuote({
       direction: "GlcToSol",
-      gross_amount: 2_000_00000000,
+      gross_amount: "200000000000",
     });
     expect(quote.fee_bps).toBe(300);
-    expect(quote.fee_amount).toBe(60_00000000);
-    expect(quote.net_amount).toBe(1_940_00000000);
-    expect(quote.gross_amount).toBe(quote.fee_amount + quote.net_amount);
+    expect(quote.fee_amount).toBe("6000000000");
+    expect(quote.net_amount).toBe("194000000000");
+    expect(BigInt(quote.gross_amount)).toBe(
+      BigInt(quote.fee_amount) + BigInt(quote.net_amount),
+    );
   });
 
   it("calculates the 3% fee at the 20,000 GLC per-transfer maximum: 19,400 GLC net", async () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
     const quote = await client.getQuote({
       direction: "GlcToSol",
-      gross_amount: 20_000_00000000,
+      gross_amount: "2000000000000",
     });
     expect(quote.fee_bps).toBe(300);
-    expect(quote.fee_amount).toBe(600_00000000);
-    expect(quote.net_amount).toBe(19_400_00000000);
-    expect(quote.gross_amount).toBe(quote.fee_amount + quote.net_amount);
+    expect(quote.fee_amount).toBe("60000000000");
+    expect(quote.net_amount).toBe("1940000000000");
+    expect(BigInt(quote.gross_amount)).toBe(
+      BigInt(quote.fee_amount) + BigInt(quote.net_amount),
+    );
   });
 
   it("rejects a zero gross amount", async () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
     await expect(
-      client.getQuote({ direction: "GlcToSol", gross_amount: 0 }),
+      client.getQuote({ direction: "GlcToSol", gross_amount: "0" }),
     ).rejects.toThrow();
   });
 });
@@ -94,7 +100,7 @@ describe("MockBridgeClient — direction availability / reserve scenarios", () =
     expect(status.glc_to_sol_available).toBe(true);
     expect(status.sol_to_glc_available).toBe(true);
     const reserve = await client.getReserve();
-    expect(reserve.solana_available_capacity).toBeGreaterThan(0);
+    expect(BigInt(reserve.solana_available_capacity)).toBeGreaterThan(0n);
   });
 
   it("paused scenario: createTransfer is refused with the single direction-unavailable 409", async () => {
@@ -103,7 +109,7 @@ describe("MockBridgeClient — direction availability / reserve scenarios", () =
     expect(status.solana_paused).toBe(true);
 
     try {
-      await client.createTransfer({ amount_atomic: 100_00000000, recipient: "someone" });
+      await client.createTransfer({ amount_atomic: "10000000000", recipient: "someone" });
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);
@@ -117,12 +123,13 @@ describe("MockBridgeClient — direction availability / reserve scenarios", () =
       scenario: "insufficient-liquidity",
     });
     const reserve = await client.getReserve();
-    expect(reserve.solana_available_capacity).toBeLessThan(
-      reserve.goldcoin_available_capacity,
+    // Exact atomic strings — compared as bigints, never as numbers.
+    expect(BigInt(reserve.solana_available_capacity)).toBeLessThan(
+      BigInt(reserve.goldcoin_available_capacity),
     );
 
     try {
-      await client.createTransfer({ amount_atomic: 100_00000000, recipient: "someone" });
+      await client.createTransfer({ amount_atomic: "10000000000", recipient: "someone" });
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);
@@ -135,12 +142,12 @@ describe("MockBridgeClient — transfer lifecycle and lookup", () => {
   it("createTransfer then getTransfer round-trips the same figures", async () => {
     const client = new MockBridgeClient({ latencyMs: 0 });
     const created = await client.createTransfer({
-      amount_atomic: 200_00000000,
+      amount_atomic: "20000000000",
       recipient: "abc",
     });
     const transfer = await client.getTransfer(created.request_id);
-    expect(transfer.gross_amount_atomic).toBe(200_00000000);
-    expect(transfer.fee_amount_atomic).toBe(6_00000000);
+    expect(transfer.gross_amount_atomic).toBe("20000000000");
+    expect(transfer.fee_amount_atomic).toBe("600000000");
     expect(transfer.state).toBe("AwaitingDeposit");
   });
 
