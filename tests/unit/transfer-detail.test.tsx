@@ -15,6 +15,49 @@ function transferWith(overrides: Partial<TransferViewDto>): TransferViewDto {
   return { ...fixtures.transfersFixture()[0]!, ...overrides };
 }
 
+/**
+ * Production request #2477, exactly as the backend reports it after the
+ * refund: a `GlcToSol` request for 29,100 GLC whose deposit actually arrived
+ * as 29,050 GLC, parked on `deposit_amount_mismatch`, refunded in full, no
+ * bridge fee charged, nothing released on Solana.
+ *
+ * The quote trio is the real one the request was created under — 29,100 gross,
+ * 873 fee, 28,227 net — because reproducing the defect means carrying exactly
+ * the figures the page used to render as an outcome.
+ */
+const REQUESTED = "2910000000000"; // 29,100 GLC
+const DEPOSITED = "2905000000000"; // 29,050 GLC
+const QUOTED_FEE = "87300000000"; // 873 GLC, never charged
+const QUOTED_NET = "2822700000000"; // 28,227 GLC, never delivered
+
+function transfer2477(
+  state: "RefundPending" | "RefundBroadcast" | "Refunded",
+  refundOverrides: Partial<NonNullable<TransferViewDto["refund"]>> = {},
+): TransferViewDto {
+  return transferWith({
+    id: 2477,
+    direction: "GlcToSol",
+    state,
+    gross_amount_atomic: REQUESTED,
+    fee_bps: 300,
+    fee_amount_atomic: QUOTED_FEE,
+    net_amount_atomic: QUOTED_NET,
+    source_txid: "d".repeat(64),
+    destination_txid: null,
+    failure_reason: null,
+    refund: {
+      state: state === "Refunded" ? "Refunded" : "Broadcast",
+      observed_amount_atomic: DEPOSITED,
+      refund_amount_atomic: DEPOSITED,
+      fee_charged_atomic: "0",
+      refund_txid: "f7a160c716c3fad29b06c1c9549ca678dde30a143dd9f69675ce277016dec323",
+      broadcast_at: 1_756_000_000,
+      refunded_at: state === "Refunded" ? 1_756_000_600 : null,
+      ...refundOverrides,
+    },
+  });
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
 });
@@ -171,5 +214,138 @@ describe("TransferDetail — real backend state machine, never a fabricated succ
     getTransfer.mockResolvedValue(transfer);
     renderWithQueryClient(<TransferDetail id={9} />);
     expect(await screen.findAllByText(/Awaiting your deposit/i)).not.toHaveLength(0);
+  });
+});
+
+/**
+ * Regression cover for production request #2477.
+ *
+ * The page rendered the settlement quote — "You bridge 29,100 GLC / Bridge fee
+ * (3%) 873 GLC / You receive 28,227 GLC" — on a transfer that settled nothing,
+ * was charged nothing, delivered nothing, and had 29,050 GLC returned. Every
+ * one of those three figures described a settlement that never happened.
+ */
+describe("TransferDetail — a refunded transfer shows the refund, never the quote", () => {
+  it("shows #2477's real refund principal and none of the settlement trio", async () => {
+    getTransfer.mockResolvedValue(transfer2477("Refunded"));
+    renderWithQueryClient(<TransferDetail id={2477} />);
+
+    await screen.findByText(/this transfer was refunded/i);
+
+    // The one figure that is true: 29,050 GLC actually went back. It appears
+    // twice — once as what arrived, once as what was returned.
+    expect(screen.getByText(/Refunded to you/i)).toBeInTheDocument();
+    expect(screen.getAllByText("29,050.00")).toHaveLength(2);
+
+    // The three that are not. `queryByText` matches the rendered text of a
+    // single element, which is exactly how `TokenAmount` emits an amount.
+    expect(screen.queryByText("28,227.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("873.00")).not.toBeInTheDocument();
+    expect(screen.queryByText(/You receive/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Bridge fee \(3%\)/i)).not.toBeInTheDocument();
+  });
+
+  it("states plainly that no bridge fee was charged, and why", async () => {
+    getTransfer.mockResolvedValue(transfer2477("Refunded"));
+    renderWithQueryClient(<TransferDetail id={2477} />);
+
+    expect(await screen.findByText(/no bridge fee was charged/i)).toBeInTheDocument();
+    // Both the refund alert and the fee note say it, which is the point: the
+    // reason sits with the fee, not only in the banner.
+    expect(screen.getAllByText(/did not settle/i).length).toBeGreaterThan(0);
+  });
+
+  it("distinguishes the requested amount from the amount actually deposited", async () => {
+    getTransfer.mockResolvedValue(transfer2477("Refunded"));
+    renderWithQueryClient(<TransferDetail id={2477} />);
+
+    await screen.findByText(/this transfer was refunded/i);
+    expect(screen.getByText(/You requested/i)).toBeInTheDocument();
+    expect(screen.getByText("29,100.00")).toBeInTheDocument();
+    expect(screen.getByText(/Actually deposited/i)).toBeInTheDocument();
+  });
+
+  it("hides the deposited row when the deposit matched what was requested", async () => {
+    getTransfer.mockResolvedValue(
+      transfer2477("Refunded", {
+        observed_amount_atomic: REQUESTED,
+        refund_amount_atomic: REQUESTED,
+      }),
+    );
+    renderWithQueryClient(<TransferDetail id={2477} />);
+
+    await screen.findByText(/this transfer was refunded/i);
+    expect(screen.queryByText(/Actually deposited/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Refunded to you/i)).toBeInTheDocument();
+  });
+
+  it("suppresses the settlement trio in every refund state, not just the terminal one", async () => {
+    for (const state of ["RefundPending", "RefundBroadcast", "Refunded"] as const) {
+      getTransfer.mockResolvedValue(transfer2477(state));
+      const { unmount } = renderWithQueryClient(<TransferDetail id={2477} />);
+
+      expect(await screen.findAllByText("29,050.00")).toHaveLength(2);
+      expect(screen.queryByText("28,227.00")).not.toBeInTheDocument();
+      expect(screen.queryByText("873.00")).not.toBeInTheDocument();
+      expect(screen.queryByText(/You receive/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/no bridge fee was charged/i)).toBeInTheDocument();
+
+      unmount();
+      getTransfer.mockReset();
+    }
+  });
+
+  it("labels an in-flight refund as still on its way, not as already returned", async () => {
+    getTransfer.mockResolvedValue(
+      transfer2477("RefundBroadcast", { state: "Broadcast", refunded_at: null }),
+    );
+    renderWithQueryClient(<TransferDetail id={2477} />);
+
+    expect(await screen.findByText(/Being returned to you/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Refunded to you/i)).not.toBeInTheDocument();
+  });
+
+  it("refuses to fall back to the quote when the backend sends no refund object", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({ id: 2477, state: "Refunded", refund: null }),
+    );
+    renderWithQueryClient(<TransferDetail id={2477} />);
+
+    await screen.findByText(/this transfer was refunded/i);
+    // An older backend cannot tell us the principal, so the page says so
+    // rather than presenting the net as if it had been delivered.
+    expect(screen.getByText(/Not available on this page/i)).toBeInTheDocument();
+    expect(screen.queryByText(/You receive/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/no bridge fee was charged/i)).toBeInTheDocument();
+  });
+
+  it("still shows the gross / fee / net trio for a settled transfer", async () => {
+    getTransfer.mockResolvedValue(
+      transferWith({
+        id: 12,
+        state: "Settled",
+        gross_amount_atomic: REQUESTED,
+        fee_bps: 300,
+        fee_amount_atomic: QUOTED_FEE,
+        net_amount_atomic: QUOTED_NET,
+        refund: null,
+      }),
+    );
+    renderWithQueryClient(<TransferDetail id={12} />);
+
+    expect(await screen.findByText(/You bridge/i)).toBeInTheDocument();
+    expect(screen.getByText(/Bridge fee \(3%\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/You receive/i)).toBeInTheDocument();
+    expect(screen.getByText("29,100.00")).toBeInTheDocument();
+    expect(screen.getByText("873.00")).toBeInTheDocument();
+    expect(screen.getByText("28,227.00")).toBeInTheDocument();
+  });
+
+  it("links the refund transaction, on the source chain the deposit arrived on", async () => {
+    getTransfer.mockResolvedValue(transfer2477("Refunded"));
+    renderWithQueryClient(<TransferDetail id={2477} />);
+
+    await screen.findByText(/this transfer was refunded/i);
+    expect(screen.getByText(/Refund transaction/i)).toBeInTheDocument();
   });
 });
