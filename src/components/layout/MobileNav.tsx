@@ -48,7 +48,7 @@ export function MobileNav({ walletSlot }: { walletSlot?: ReactNode }) {
         />
         <Dialog.Content
           className={cn(
-            "fixed inset-x-0 top-0 bottom-0 z-50 flex flex-col bg-white",
+            "bg-surface-raised fixed inset-x-0 top-0 bottom-0 z-50 flex flex-col",
             "shadow-elev-3 focus:outline-none",
             "data-[state=open]:animate-[sheet-in_var(--duration-base)_var(--ease-decelerate)]",
             "data-[state=closed]:animate-[sheet-out_var(--duration-fast)_var(--ease-accelerate)]",

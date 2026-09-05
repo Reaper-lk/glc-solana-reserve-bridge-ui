@@ -9,6 +9,7 @@ import { QueryProvider } from "@/lib/query/provider";
 import { SolanaProvider } from "@/lib/solana";
 import { loadInitialStatus } from "@/lib/api/initial-status";
 import { env } from "@/lib/config/env";
+import { buildPrePaintScript } from "@/lib/theme/pre-paint-script";
 
 export const metadata: Metadata = {
   metadataBase: new URL(env.appUrl),
@@ -36,18 +37,56 @@ export const viewport: Viewport = {
  * quickly instead of blocking every route for the client's full timeout.
  */
 
+/*
+ * Built once at module scope: it is a constant string, and rebuilding it per
+ * request would be work on the critical path of every page.
+ */
+const prePaintScript = buildPrePaintScript();
+
 export default async function RootLayout({ children }: { children: ReactNode }) {
   /*
    * Reading a request header opts this tree into per-request rendering,
    * which is what lets Next stamp the CSP nonce onto its own script tags —
    * see middleware.ts.
    */
-  await headers();
+  const requestHeaders = await headers();
+
+  /*
+   * The same nonce middleware put in the policy. Without it the pre-paint
+   * theme script below is blocked outright by `script-src` and every visitor
+   * with a dark preference gets a white flash — so this is read from the
+   * request rather than assumed.
+   */
+  const nonce = requestHeaders.get("x-nonce");
 
   const initialStatus = await loadInitialStatus();
 
   return (
-    <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`}>
+    /*
+     * `suppressHydrationWarning` is required and is scoped to this element
+     * alone: the pre-paint script rewrites <html>'s class, `data-theme` and
+     * `color-scheme` before React ever sees the document, and without this
+     * React would treat its own (themeless) output as the truth, discard the
+     * DOM and re-render the tree — which is both the flash we are preventing
+     * and a wasted client render.
+     */
+    <html
+      lang="en"
+      className={`${plexSans.variable} ${plexMono.variable}`}
+      suppressHydrationWarning
+    >
+      <head>
+        {/*
+          Synchronous, first thing in <head>, and inline on purpose. An
+          external file would be a second round trip before first paint, and
+          `useLayoutEffect` runs only after hydration — by which point a slow
+          connection has already painted the wrong theme. See src/lib/theme.
+        */}
+        <script
+          {...(nonce ? { nonce } : {})}
+          dangerouslySetInnerHTML={{ __html: prePaintScript }}
+        />
+      </head>
       <body>
         <QueryProvider>
           <SolanaProvider>
