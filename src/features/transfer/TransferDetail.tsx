@@ -20,6 +20,7 @@ import {
   isUnexercisedState,
 } from "@/lib/bridge";
 import type { RefundState } from "@/lib/bridge";
+import type { TransferViewDto } from "@/lib/api/schemas/transfer";
 import { goldcoinTxUrl, solanaTxUrl } from "@/lib/config/links";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { TransferStepper } from "./TransferStepper";
@@ -143,39 +144,11 @@ export function TransferDetail({
       )}
 
       <dl className="border-ink-100 mt-6 grid grid-cols-3 gap-4 border-t pt-4">
-        <div>
-          <dt className="text-body-sm text-ink-500">You bridge</dt>
-          <dd>
-            <TokenAmount
-              raw={transfer.gross_amount_atomic}
-              decimals={GOLDCOIN_DECIMALS}
-              symbol={CANONICAL_SYMBOL}
-            />
-          </dd>
-        </div>
-        <div>
-          <dt className="text-body-sm text-ink-500">
-            Bridge fee (
-            {(transfer.fee_bps / 100).toFixed(transfer.fee_bps % 100 === 0 ? 0 : 2)}%)
-          </dt>
-          <dd className="text-ink-600">
-            <TokenAmount
-              raw={transfer.fee_amount_atomic}
-              decimals={GOLDCOIN_DECIMALS}
-              symbol={CANONICAL_SYMBOL}
-            />
-          </dd>
-        </div>
-        <div>
-          <dt className="text-body-sm text-ink-500">You receive</dt>
-          <dd className="text-ink-950 font-medium">
-            <TokenAmount
-              raw={transfer.net_amount_atomic}
-              decimals={GOLDCOIN_DECIMALS}
-              symbol={CANONICAL_SYMBOL}
-            />
-          </dd>
-        </div>
+        {isRefundState(transfer.state) ? (
+          <RefundAmounts transfer={transfer} />
+        ) : (
+          <SettlementAmounts transfer={transfer} />
+        )}
 
         {transfer.source_txid && (
           <TxRow
@@ -187,6 +160,22 @@ export function TransferDetail({
                 : ((transfer.direction === "GlcToSol"
                     ? goldcoinTxUrl(transfer.source_txid)
                     : solanaTxUrl(transfer.source_txid)) ?? undefined)
+            }
+          />
+        )}
+        {transfer.refund?.refund_txid && (
+          <TxRow
+            label="Refund transaction"
+            txid={transfer.refund.refund_txid}
+            href={
+              readOnly
+                ? undefined
+                : // A refund travels back down the SOURCE chain — the one the
+                  // deposit arrived on — which is the opposite of the
+                  // destination transaction below.
+                  ((transfer.direction === "GlcToSol"
+                    ? goldcoinTxUrl(transfer.refund.refund_txid)
+                    : solanaTxUrl(transfer.refund.refund_txid)) ?? undefined)
             }
           />
         )}
@@ -205,6 +194,155 @@ export function TransferDetail({
         )}
       </dl>
     </Card>
+  );
+}
+
+/**
+ * The gross / fee / net trio, for a transfer that is on — or has completed —
+ * the settlement path. Unchanged: for a `Settled` transfer these three are
+ * exactly what happened.
+ */
+function SettlementAmounts({ transfer }: { transfer: TransferViewDto }) {
+  return (
+    <>
+      <div>
+        <dt className="text-body-sm text-ink-500">You bridge</dt>
+        <dd>
+          <TokenAmount
+            raw={transfer.gross_amount_atomic}
+            decimals={GOLDCOIN_DECIMALS}
+            symbol={CANONICAL_SYMBOL}
+          />
+        </dd>
+      </div>
+      <div>
+        <dt className="text-body-sm text-ink-500">
+          Bridge fee (
+          {(transfer.fee_bps / 100).toFixed(transfer.fee_bps % 100 === 0 ? 0 : 2)}%)
+        </dt>
+        <dd className="text-ink-600">
+          <TokenAmount
+            raw={transfer.fee_amount_atomic}
+            decimals={GOLDCOIN_DECIMALS}
+            symbol={CANONICAL_SYMBOL}
+          />
+        </dd>
+      </div>
+      <div>
+        <dt className="text-body-sm text-ink-500">You receive</dt>
+        <dd className="text-ink-950 font-medium">
+          <TokenAmount
+            raw={transfer.net_amount_atomic}
+            decimals={GOLDCOIN_DECIMALS}
+            symbol={CANONICAL_SYMBOL}
+          />
+        </dd>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The amounts panel for a transfer that left the settlement path to be
+ * refunded.
+ *
+ * A refunded request settles NOTHING: no bridge fee is charged and no
+ * destination payout is made. `gross_amount_atomic`/`fee_amount_atomic`/
+ * `net_amount_atomic` are the QUOTE the request was created under, so showing
+ * them here shows three things that did not happen — which is exactly what
+ * production request #2477 did, presenting "You bridge 29,100 GLC / Bridge fee
+ * (3%) 873 GLC / You receive 28,227 GLC" for a request that was charged
+ * nothing, paid out nothing, and had 29,050 GLC returned.
+ *
+ * So the fee and the net are not rendered at all here, and every figure that
+ * IS rendered comes from `transfer.refund` — the backend's own refund row.
+ * Nothing on this page derives a refund amount from the quote, from
+ * `failure_reason`, or from arithmetic of its own.
+ *
+ * When `refund` is absent — an older backend, or a refund row the endpoint
+ * could not read — the panel says so rather than falling back to the trio.
+ * "We cannot show you the amount" is recoverable; a confidently wrong amount
+ * is not.
+ */
+function RefundAmounts({ transfer }: { transfer: TransferViewDto }) {
+  const refund = transfer.refund;
+  const requested = transfer.gross_amount_atomic;
+  const deposited = refund?.observed_amount_atomic ?? null;
+
+  // Amounts are normalised decimal strings (`atomicAmountSchema` canonicalises
+  // them), so an exact string comparison IS an exact numeric comparison — no
+  // BigInt round-trip needed, and no float ever involved.
+  const depositDiffers = deposited !== null && deposited !== requested;
+  const settled = refund !== null && refund.state === "Refunded";
+  const feeWasCharged = refund !== null && refund.fee_charged_atomic !== "0";
+
+  return (
+    <>
+      <div>
+        <dt className="text-body-sm text-ink-500">You requested</dt>
+        <dd className="text-ink-600">
+          <TokenAmount
+            raw={requested}
+            decimals={GOLDCOIN_DECIMALS}
+            symbol={CANONICAL_SYMBOL}
+          />
+        </dd>
+      </div>
+
+      {depositDiffers && (
+        <div>
+          <dt className="text-body-sm text-ink-500">Actually deposited</dt>
+          <dd className="text-ink-600">
+            <TokenAmount
+              raw={deposited}
+              decimals={GOLDCOIN_DECIMALS}
+              symbol={CANONICAL_SYMBOL}
+            />
+          </dd>
+        </div>
+      )}
+
+      <div>
+        <dt className="text-body-sm text-ink-500">
+          {settled ? "Refunded to you" : "Being returned to you"}
+        </dt>
+        <dd className="text-ink-950 font-medium">
+          {refund ? (
+            <TokenAmount
+              raw={refund.refund_amount_atomic}
+              decimals={GOLDCOIN_DECIMALS}
+              symbol={CANONICAL_SYMBOL}
+            />
+          ) : (
+            <span className="text-ink-500">Not available on this page</span>
+          )}
+        </dd>
+      </div>
+
+      <div className="col-span-3">
+        <dt className="sr-only">Bridge fee</dt>
+        <dd className="text-body-sm text-ink-500">
+          {feeWasCharged ? (
+            <>
+              A bridge fee of{" "}
+              <TokenAmount
+                raw={refund.fee_charged_atomic}
+                decimals={GOLDCOIN_DECIMALS}
+                symbol={CANONICAL_SYMBOL}
+              />{" "}
+              was charged on this transfer.
+            </>
+          ) : (
+            <>
+              No bridge fee was charged: this transfer did not settle, so the fee never
+              applied and nothing was delivered on the destination chain.
+              {depositDiffers &&
+                " The amount returned is what actually arrived on chain, not the amount originally requested."}
+            </>
+          )}
+        </dd>
+      </div>
+    </>
   );
 }
 

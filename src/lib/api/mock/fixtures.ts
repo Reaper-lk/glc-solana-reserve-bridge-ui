@@ -7,7 +7,8 @@ import type {
 import type { BridgeStatsDto } from "../schemas/stats";
 import type { ExplorerEventDto } from "../schemas/explorer";
 import type { ReserveHistoryEntryDto } from "../schemas/reserves";
-import type { TransferViewDto, RequestState } from "../schemas/transfer";
+import type { TransferViewDto, RefundViewDto, RequestState } from "../schemas/transfer";
+import { isRefundState } from "@/lib/bridge";
 
 /**
  * Typed in-repo fixtures for `NEXT_PUBLIC_BRIDGE_API_MODE=mock`.
@@ -251,8 +252,48 @@ export function transfersFixture(): TransferViewDto[] {
       required_source_confirmations: direction === "GlcToSol" ? 12 : null,
       destination_txid: terminal ? "b".repeat(64) : null,
       failure_reason: state === "ManualReview" ? MANUAL_REVIEW_REASON : null,
+      // Only the refund lifecycle carries one, exactly as the backend
+      // attaches it (`RefundView` in service/src/api.rs): a settled or
+      // in-flight transfer has no refund to describe.
+      refund: isRefundState(state) ? refundFixture(direction, gross, state) : null,
     };
   });
+}
+
+/**
+ * The refund facts the backend's refund row would carry for one of these
+ * transfers.
+ *
+ * A `SolToGlc` deposit cannot diverge from its expected gross — the request is
+ * folded FROM the on-chain obligation, so the observed amount is what created
+ * it. A `GlcToSol` deposit can arrive short, which is precisely what put
+ * production request #2477 into `ManualReview`, so that direction is modelled
+ * with a 50 GLC shortfall and mock mode renders the requested-vs-deposited
+ * distinction rather than only the case where the two agree.
+ */
+function refundFixture(
+  direction: "GlcToSol" | "SolToGlc",
+  gross: bigint,
+  state: RequestState,
+): RefundViewDto {
+  // BigInt throughout, for the same reason the surrounding fixture uses it:
+  // these are atomic amounts and must be exact.
+  const principal = direction === "GlcToSol" ? gross - 50_00000000n : gross;
+  const broadcast = state !== "RefundPending";
+  const confirmed = state === "Refunded";
+  return {
+    state: confirmed ? "Refunded" : broadcast ? "Broadcast" : "Built",
+    observed_amount_atomic: principal.toString(),
+    // The depositor receives the full observed deposit; the vault absorbs the
+    // miner fee.
+    refund_amount_atomic: principal.toString(),
+    // The bridge fee accrues at settlement only, and a refunded request never
+    // settles.
+    fee_charged_atomic: "0",
+    refund_txid: broadcast ? "c".repeat(64) : null,
+    broadcast_at: broadcast ? NOW_UNIX() - 600 : null,
+    refunded_at: confirmed ? NOW_UNIX() - 300 : null,
+  };
 }
 
 export function explorerEventsFixture(): ExplorerEventDto[] {

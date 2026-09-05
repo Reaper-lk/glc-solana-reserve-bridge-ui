@@ -55,6 +55,61 @@ export const requestStateSchema = z.enum([
 
 export type RequestState = z.infer<typeof requestStateSchema>;
 
+/**
+ * `RefundView` — the authoritative refund facts for a transfer whose deposit
+ * is being, or has been, returned. The backend attaches it exactly when the
+ * transfer is in one of the three refund-lifecycle states.
+ *
+ * # Why the settlement trio is not enough
+ *
+ * A refunded request never settled, so `gross_amount_atomic` /
+ * `fee_amount_atomic` / `net_amount_atomic` describe only the settlement that
+ * did not happen — they are the QUOTE the request was created under, not an
+ * outcome. Production request #2477 (`GlcToSol`; 29,100 GLC requested,
+ * 29,050 GLC actually deposited, parked on `deposit_amount_mismatch`, then
+ * refunded in full with no fee charged and no Solana payout) rendered as
+ * "You bridge 29,100 GLC / Bridge fee (3%) 873 GLC / You receive 28,227 GLC".
+ * All three figures were false.
+ *
+ * Everything here comes from the backend's own refund row (`goldcoin_refunds`
+ * / `solana_refunds` in glc-solana-reserve-bridge), written from
+ * independently chain-verified evidence. This UI must never reconstruct a
+ * refund amount from the expected gross, from the net, from `failure_reason`,
+ * or by arithmetic of its own.
+ *
+ * There is deliberately no refund DESTINATION address: `TransferView` is
+ * served unauthenticated on the public explorer route and has never carried
+ * any party's address.
+ */
+export const refundViewSchema = z.object({
+  /**
+   * The refund ROW's lifecycle state, which is finer-grained than the
+   * transfer's own: `Built`/`Signed`/`Broadcast`/`Refunded` for `GlcToSol`,
+   * `Pending`/`Broadcast`/`Confirmed` for `SolToGlc`. Deliberately an open
+   * string rather than an enum: it is supplementary detail, and a value added
+   * backend-side later must not fail the whole transfer the way an unknown
+   * `state` legitimately does.
+   */
+  state: z.string().min(1),
+  /** What actually arrived on the source chain — canonical units. */
+  observed_amount_atomic: nonNegativeAtomicAmountSchema,
+  /** The principal actually returned to the depositor — canonical units. */
+  refund_amount_atomic: nonNegativeAtomicAmountSchema,
+  /**
+   * The bridge fee actually charged. The backend sends `0` for every refund —
+   * the fee accrues at settlement only — but it is read rather than assumed,
+   * so the "no bridge fee was charged" statement this UI makes is the
+   * backend's own, never the UI's invention.
+   */
+  fee_charged_atomic: nonNegativeAtomicAmountSchema,
+  /** Goldcoin txid or Solana signature; null until the refund is broadcast. */
+  refund_txid: z.string().nullable(),
+  broadcast_at: unixSecondsSchema.nullable(),
+  refunded_at: unixSecondsSchema.nullable(),
+});
+
+export type RefundViewDto = z.infer<typeof refundViewSchema>;
+
 /** `TransferView` — used by GET /transfers/:id and as list items in GET /transfers. */
 export const transferViewSchema = z.object({
   id: z.number().int(),
@@ -71,6 +126,16 @@ export const transferViewSchema = z.object({
   required_source_confirmations: z.number().int().nonnegative().nullable(),
   destination_txid: z.string().nullable(),
   failure_reason: z.string().nullable(),
+  /**
+   * Present only for the refund lifecycle — see {@link refundViewSchema}.
+   *
+   * Accepted as absent as well as null, because this UI can be deployed ahead
+   * of a backend that serves the field. A refund-state transfer without it
+   * still must NOT fall back to the settlement trio: the component renders
+   * what it knows and says the rest is unavailable, rather than presenting
+   * quote figures as an outcome.
+   */
+  refund: refundViewSchema.nullish().transform((value) => value ?? null),
 });
 
 export type TransferViewDto = z.infer<typeof transferViewSchema>;
