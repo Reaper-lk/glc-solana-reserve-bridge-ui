@@ -34,9 +34,9 @@ test.describe("bridge form", () => {
     await expect(page.getByText("You bridge")).toBeVisible();
     await expect(page.getByText("Bridge fee (3%)")).toBeVisible();
     await expect(page.getByText("You receive")).toBeVisible();
-    await expect(page.getByText(/1000\.00000000/)).toBeVisible();
-    await expect(page.getByText(/−30\.00000000/)).toBeVisible();
-    await expect(page.getByText(/970\.00000000/)).toBeVisible();
+    await expect(page.getByText(/1,000\.00/)).toBeVisible();
+    await expect(page.getByText(/−30\.00/)).toBeVisible();
+    await expect(page.getByText(/970\.00/)).toBeVisible();
   });
 
   test("publishes min/max limits from the backend rather than hardcoding them", async ({
