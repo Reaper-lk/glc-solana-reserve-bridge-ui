@@ -63,7 +63,7 @@ export interface BridgeApiClient {
   getStats(signal?: AbortSignal): Promise<BridgeStatsDto>;
 
   getQuote(
-    request: { direction: Direction; gross_amount: number },
+    request: { direction: Direction; gross_amount: string },
     signal?: AbortSignal,
   ): Promise<QuoteOutputDto>;
 

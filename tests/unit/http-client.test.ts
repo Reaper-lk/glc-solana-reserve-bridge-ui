@@ -92,7 +92,7 @@ describe("HttpBridgeClient", () => {
     respondError(409, "the destination reserve is paused");
     const client = new HttpBridgeClient(BASE);
     try {
-      await client.createTransfer({ amount_atomic: 100, recipient: "x" });
+      await client.createTransfer({ amount_atomic: "100", recipient: "x" });
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);
@@ -107,7 +107,7 @@ describe("HttpBridgeClient", () => {
     );
     const client = new HttpBridgeClient(BASE);
     try {
-      await client.createTransfer({ amount_atomic: 100, recipient: "x" });
+      await client.createTransfer({ amount_atomic: "100", recipient: "x" });
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);
@@ -119,7 +119,7 @@ describe("HttpBridgeClient", () => {
     respondError(400, "amount_atomic must be greater than zero");
     const client = new HttpBridgeClient(BASE);
     try {
-      await client.createTransfer({ amount_atomic: 100, recipient: "x" });
+      await client.createTransfer({ amount_atomic: "100", recipient: "x" });
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);
@@ -180,7 +180,7 @@ describe("HttpBridgeClient", () => {
     respondOk(fixtures.transfersFixture()[0], 200);
     const client = new HttpBridgeClient(BASE);
     try {
-      await client.createTransfer({ amount_atomic: 100, recipient: "x" });
+      await client.createTransfer({ amount_atomic: "100", recipient: "x" });
       expect.unreachable("createTransfer should have thrown");
     } catch (error) {
       expect(isApiError(error)).toBe(true);

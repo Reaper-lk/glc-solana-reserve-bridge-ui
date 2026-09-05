@@ -76,12 +76,12 @@ function goodQuote(overrides: Partial<ReturnType<typeof baseQuote>> = {}) {
 function baseQuote() {
   return {
     direction: "GlcToSol" as const,
-    gross_amount: 1_000_00000000,
+    gross_amount: "100000000000",
     gross_display_amount: "1000.00000000",
     fee_bps: 300,
-    fee_amount: 30_00000000,
+    fee_amount: "3000000000",
     fee_display_amount: "30.00000000",
-    net_amount: 970_00000000,
+    net_amount: "97000000000",
     net_display_amount: "970.00000000",
     source_decimals: 8,
     destination_decimals: 6,
@@ -157,8 +157,8 @@ describe("BridgeCard — amount entry and validation", () => {
 
   it("rejects an amount below the published minimum", async () => {
     getLimits.mockResolvedValue({
-      min_transfer_amount: 100_00000000,
-      per_transfer_limit: 250_000_00000000,
+      min_transfer_amount: "10000000000",
+      per_transfer_limit: "25000000000000",
       bridge_fee_bps: 100,
     });
     const user = userEvent.setup();
@@ -183,7 +183,7 @@ describe("BridgeCard — POST /quote integration and fee presentation", () => {
 
     await waitFor(() => {
       expect(getQuote).toHaveBeenCalledWith(
-        { direction: "GlcToSol", gross_amount: 1_000_00000000 },
+        { direction: "GlcToSol", gross_amount: "100000000000" },
         expect.anything(),
       );
     });
@@ -229,8 +229,8 @@ describe("BridgeCard — reserve capacity and pause gating", () => {
 
   it("disables submission with a stated reason when reserve capacity is exhausted", async () => {
     getReserve.mockResolvedValue({
-      goldcoin_available_capacity: 5_000_00000000,
-      solana_available_capacity: 0,
+      goldcoin_available_capacity: "500000000000",
+      solana_available_capacity: "0",
     });
     renderWithQueryClient(<BridgeCard />);
 
@@ -268,7 +268,7 @@ describe("BridgeCard — transfer submission", () => {
     expect(screen.getByText(/1,000\.00/)).toBeInTheDocument();
     expect(screen.queryByText(/OP_RETURN/i)).not.toBeInTheDocument();
     expect(createTransfer).toHaveBeenCalledWith({
-      amount_atomic: 1_000_00000000,
+      amount_atomic: "100000000000",
       recipient: VALID_SOLANA_ADDRESS,
     });
   });
@@ -415,7 +415,7 @@ describe("BridgeCard — rolling 24h quota states (backend 2026-08-22 workflow)"
   it("blocks submission when the amount exceeds remaining capacity, without altering the amount", async () => {
     getStatus.mockResolvedValue({
       ...fixtures.statusFixture(() => new Date()),
-      glc_to_sol_rolling_volume_remaining: 5_000_000000, // 5,000 GLC left
+      glc_to_sol_rolling_volume_remaining: "5000000000", // 5,000 GLC left
     });
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeCard />);
