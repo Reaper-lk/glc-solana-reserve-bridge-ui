@@ -61,6 +61,30 @@
   --color-chain-goldcoin: #c89211;
   --color-chain-solana: #6b54d3;
 
+  /* --- Surfaces (E2) ------------------------------------------------------
+     The page plane and the raised planes that sit on it. Named rather than
+     written as literal white, so the dark theme file can move them: every
+     `bg-white` in the app before dark mode is one of these two. */
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+
+  /* Text on an inverted (ink-950) fill — the primary button, the selected
+     direction, the skip link. Inverts with the ink scale, so ink-on-ink can
+     never happen in either theme. */
+  --color-on-inverse: #ffffff;
+
+  /* Text on a brand-gold fill. Deliberately NOT inverted: gold is a light
+     colour in both themes, and white on gold never reaches contrast (E2). */
+  --color-on-gold: #0b0d0f;
+
+  /* QR modules. Fixed in both themes on purpose — a deposit address that
+     will not scan is a funds problem, not a styling preference (G4). */
+  --color-qr-light: #ffffff;
+  --color-qr-dark: #0b0d0f;
+  /* The brand mark at the centre of the symbol sits on that fixed white, so
+     it does not follow the theme either. */
+  --color-qr-mark: #c89211;
+
   /* --- Typography (E3) --------------------------------------------------- */
   --font-sans: var(--font-plex-sans), system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
@@ -258,12 +282,32 @@
 }
 
 /* =============================================================================
-   Dark theme tokens — defined now so dark mode is a theme file rather than a
-   retrofit (E2). Not yet reachable: no toggle ships in Phase 0.
+   Dark theme tokens (E2).
+
+   Dark mode is a theme file, not a retrofit: the ink scale INVERTS in place,
+   so every `text-ink-500` and `bg-ink-50` in the app resolves correctly in
+   both themes without a single `dark:` variant at the call site. Only the
+   things that cannot invert — surfaces, text on a fill, the QR symbol —
+   carry their own tokens above.
+
+   Brand gold keeps its hue in both themes; only its lightness moves, because
+   the same gold that reads on white disappears on near-black. The rule that
+   gold is never a status colour is unchanged here.
+
+   The `.dark` class is put on <html> by src/lib/theme, before first paint.
    ========================================================================== */
 @custom-variant dark (&:where(.dark, .dark *));
 
 .dark {
+  /* Native UI — form controls, scrollbars, the canvas behind the page. */
+  color-scheme: dark;
+
+  /* --- Surfaces ---------------------------------------------------------- */
+  --color-surface: #0e1115;
+  --color-surface-raised: #171b21;
+  --color-on-inverse: #0b0d0f;
+
+  /* --- Neutrals, inverted ------------------------------------------------ */
   --color-ink-950: #f7f8fa;
   --color-ink-900: #eff1f4;
   --color-ink-700: #c7ccd2;
@@ -275,19 +319,53 @@
   --color-ink-100: #1a1e23;
   --color-ink-50: #14171a;
 
+  /* --- Brand gold — same hue, lifted for a dark ground ------------------- */
+  --color-gold-900: #fbedcf;
   --color-gold-700: #eec46b;
+  --color-gold-600: #e6b74a;
   --color-gold-500: #e0a82a;
   --color-gold-400: #eec46b;
+  --color-gold-300: #b3830f;
+  --color-gold-200: #6a4c0f;
+  --color-gold-100: #3d2c0e;
   --color-gold-50: #2a2113;
 
+  /* --- Semantic ----------------------------------------------------------
+     The `-700` step carries text and the `-50`/`-100` steps carry tints and
+     hairlines, so both ends swap. `-500` is a fill (dots, the alert's left
+     rule, the danger button) and moves only as far as it must to clear 3:1
+     on the dark ground — danger-500 does not move at all, because it is the
+     one fill that carries white text. */
   --color-success-700: #6cd3a1;
+  --color-success-500: #1f9d5e;
+  --color-success-100: #1e4a35;
   --color-success-50: #10281d;
+
   --color-danger-700: #f09b90;
+  --color-danger-500: #c0392b;
+  --color-danger-100: #5a201a;
   --color-danger-50: #2c1613;
+
   --color-info-700: #8fb8f5;
+  --color-info-500: #4a83e6;
+  --color-info-100: #1e3357;
   --color-info-50: #131f31;
+
   --color-warn-700: #f3a877;
+  --color-warn-500: #dd5b1a;
+  --color-warn-100: #5c2a11;
   --color-warn-50: #2b1710;
+
+  /* --- Chain identity — identity only, never status ---------------------- */
+  --color-chain-goldcoin: #e0a82a;
+  --color-chain-solana: #a996f0;
+
+  /* --- Elevation ---------------------------------------------------------
+     A shadow tuned for white is invisible on near-black. Dark elevation is
+     carried by a deeper shadow plus the raised surface token above. */
+  --shadow-elev-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-elev-2: 0 4px 12px rgb(0 0 0 / 0.45);
+  --shadow-elev-3: 0 16px 40px rgb(0 0 0 / 0.6);
 }
 
 /* =============================================================================
@@ -296,10 +374,13 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    /* Overridden to `dark` by the .dark block above. Declared here so the
+       light theme is a stated choice rather than the browser's guess. */
+    color-scheme: light;
   }
 
   body {
-    background-color: var(--color-white);
+    background-color: var(--color-surface);
     color: var(--color-ink-950);
     font-family: var(--font-sans);
     font-size: var(--text-body);

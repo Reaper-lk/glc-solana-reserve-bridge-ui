@@ -39,6 +39,8 @@ export function ReserveBanner() {
         : `The Solana reserve is out of available capacity — ${directions.GlcToSol.label} is affected.`;
 
   return (
+    // Literal white on the danger fill, in both themes — see Button's
+    // `danger` variant for why this one does not follow the ink scale.
     <div role="alert" className="bg-danger-500 text-white">
       <div className="max-w-page mx-auto flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 md:px-6">
         <CircleX aria-hidden="true" className="size-5 shrink-0" strokeWidth={2} />

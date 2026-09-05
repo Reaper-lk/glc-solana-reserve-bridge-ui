@@ -10,13 +10,13 @@ import { cn } from "@/lib/utils/cn";
 const cardVariants = cva("rounded-lg", {
   variants: {
     variant: {
-      default: "border border-ink-200 bg-white shadow-elev-1",
-      raised: "border border-ink-200 bg-white shadow-elev-2",
+      default: "border border-ink-200 bg-surface-raised shadow-elev-1",
+      raised: "border border-ink-200 bg-surface-raised shadow-elev-2",
       inset: "border border-ink-200 bg-ink-50",
       /** Highlighted trust information. Brand, never status. */
       accent: "border border-gold-200 bg-gold-50",
       interactive:
-        "border border-ink-200 bg-white shadow-elev-1 transition-shadow hover:shadow-elev-2 cursor-pointer",
+        "border border-ink-200 bg-surface-raised shadow-elev-1 transition-shadow hover:shadow-elev-2 cursor-pointer",
     },
     padding: {
       none: "",

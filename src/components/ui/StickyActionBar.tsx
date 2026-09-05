@@ -27,7 +27,7 @@ export function StickyActionBar({
       className={cn(
         // Negative margins let the bar span the card's padding on mobile so it
         // reads as a bar rather than a floating button.
-        "border-ink-200 sticky bottom-0 z-10 -mx-4 border-t bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]",
+        "border-ink-200 bg-surface-raised sticky bottom-0 z-10 -mx-4 border-t px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]",
         "md:static md:mx-0 md:border-0 md:bg-transparent md:p-0",
         className,
       )}
