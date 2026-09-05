@@ -86,18 +86,18 @@ function QrCode({ value, label }: { value: string; label: string }) {
       viewBox={`0 0 ${size} ${size}`}
       role="img"
       aria-label={label}
-      className="border-ink-200 size-[180px] rounded-md border bg-white p-1"
+      className="border-ink-200 bg-qr-light size-[180px] rounded-md border p-1"
       shapeRendering="crispEdges"
     >
       {/*
         One path for every dark module rather than several hundred <rect>
         elements. Same rendering, a fraction of the DOM.
       */}
-      <path d={path} className="fill-ink-950" />
+      <path d={path} className="fill-qr-dark" />
       {/* Brand mark, per G4. Identity only — it carries no status. */}
       <path
         d={`M${centre},${centre - 1.8}L${centre + 1.8},${centre}L${centre},${centre + 1.8}L${centre - 1.8},${centre}Z`}
-        className="fill-chain-goldcoin stroke-white"
+        className="fill-qr-mark stroke-qr-light"
         strokeWidth={0.6}
       />
     </svg>

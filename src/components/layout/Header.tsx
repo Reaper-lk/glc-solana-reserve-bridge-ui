@@ -24,7 +24,7 @@ export function Header({ walletSlot }: { walletSlot?: ReactNode }) {
   const pathname = usePathname();
 
   return (
-    <header className="border-ink-200 sticky top-0 z-40 border-b bg-white">
+    <header className="border-ink-200 bg-surface-raised sticky top-0 z-40 border-b">
       <div className="max-w-page mx-auto flex h-16 items-center gap-4 px-4 md:px-6">
         <Link
           href={routes.home}
@@ -49,7 +49,7 @@ export function Header({ walletSlot }: { walletSlot?: ReactNode }) {
                 align="start"
                 sideOffset={-8}
                 className={cn(
-                  "border-ink-200 shadow-elev-2 z-50 min-w-56 origin-top rounded-md border bg-white p-1",
+                  "border-ink-200 shadow-elev-2 bg-surface-raised z-50 min-w-56 origin-top rounded-md border p-1",
                   "data-[state=open]:[animation:menu-in_var(--duration-base)_var(--ease-decelerate)]",
                   "data-[state=closed]:[animation:menu-out_var(--duration-fast)_var(--ease-accelerate)]",
                 )}

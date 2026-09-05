@@ -56,7 +56,7 @@ export function ActivityView() {
         />
         <button
           type="submit"
-          className="bg-ink-950 text-body-sm rounded-lg px-4 py-2 font-medium text-white"
+          className="bg-ink-950 text-body-sm text-on-inverse rounded-lg px-4 py-2 font-medium"
         >
           Search
         </button>

@@ -38,7 +38,7 @@ export function DirectionSelector({
             className={cn(
               "min-w-0 flex-1 rounded-lg border px-4 py-3 text-left transition-colors",
               selected
-                ? "border-ink-950 bg-ink-950 text-white"
+                ? "border-ink-950 bg-ink-950 text-on-inverse"
                 : "border-ink-200 hover:bg-ink-50 text-ink-900",
             )}
           >
