@@ -93,10 +93,10 @@ describe("schemas reject malformed backend responses", () => {
   it("rejects a quote missing display-amount strings", () => {
     const malformed = {
       direction: "GlcToSol",
-      gross_amount: 100,
+      gross_amount: "100",
       fee_bps: 100,
-      fee_amount: 1,
-      net_amount: 99,
+      fee_amount: "1",
+      net_amount: "99",
       source_decimals: 8,
       destination_decimals: 6,
       source_asset: "GLC (Goldcoin)",

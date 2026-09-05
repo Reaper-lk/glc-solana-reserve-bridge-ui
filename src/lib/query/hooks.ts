@@ -94,13 +94,14 @@ export function useStats(initialData?: BridgeStatsDto): UseQueryResult<BridgeSta
  */
 export function useQuote(
   direction: Direction,
-  grossAmount: number,
+  /** Exact canonical atomic amount as a decimal string; "0" means none. */
+  grossAmount: string,
 ): UseQueryResult<QuoteOutputDto> {
   return useQuery({
     queryKey: queryKeys.quote(direction, grossAmount),
     queryFn: ({ signal }) =>
       bridgeApi.getQuote({ direction, gross_amount: grossAmount }, signal),
-    enabled: grossAmount > 0,
+    enabled: BigInt(grossAmount) > 0n,
     staleTime: 5_000,
     retry: false,
   });

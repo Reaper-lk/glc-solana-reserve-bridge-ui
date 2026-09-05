@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { atomicAmountSchema, directionSchema } from "./common";
+import { directionSchema, nonNegativeAtomicAmountSchema } from "./common";
 
 /** Request body for `POST /quote` — `QuoteInput`. */
 export const quoteRequestSchema = z.object({
   direction: directionSchema,
-  gross_amount: z.number().int().positive(),
+  /** Exact decimal string — see `createTransferRequestSchema`. */
+  gross_amount: z.string().regex(/^\d+$/, "must be a decimal integer string"),
 });
 
 export type QuoteRequest = z.infer<typeof quoteRequestSchema>;
@@ -16,12 +17,12 @@ export type QuoteRequest = z.infer<typeof quoteRequestSchema>;
  */
 export const quoteOutputSchema = z.object({
   direction: directionSchema,
-  gross_amount: atomicAmountSchema,
+  gross_amount: nonNegativeAtomicAmountSchema,
   gross_display_amount: z.string().min(1),
   fee_bps: z.number().int().nonnegative(),
-  fee_amount: atomicAmountSchema,
+  fee_amount: nonNegativeAtomicAmountSchema,
   fee_display_amount: z.string().min(1),
-  net_amount: atomicAmountSchema,
+  net_amount: nonNegativeAtomicAmountSchema,
   net_display_amount: z.string().min(1),
   source_decimals: z.number().int().min(0).max(30),
   destination_decimals: z.number().int().min(0).max(30),

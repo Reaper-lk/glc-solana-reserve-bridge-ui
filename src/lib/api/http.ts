@@ -85,7 +85,7 @@ export class HttpBridgeClient implements BridgeApiClient {
   }
 
   getQuote(
-    request: { direction: Direction; gross_amount: number },
+    request: { direction: Direction; gross_amount: string },
     signal?: AbortSignal,
   ) {
     return this.request("/quote", quoteOutputSchema, {}, signal, request);

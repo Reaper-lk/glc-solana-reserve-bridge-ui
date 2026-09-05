@@ -9,6 +9,7 @@ import { directionGateState, directions, GOLDCOIN_GLC, SOLANA_GLC } from "@/lib/
 import type { DirectionGateState } from "@/lib/bridge";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 import type { Direction } from "@/lib/api/schemas/common";
+import { clampAtomicAtZero } from "@/lib/api/schemas/common";
 
 export function StatusView() {
   const status = useBridgeStatus();
@@ -50,7 +51,7 @@ export function StatusView() {
         <DirectionStatusCard
           title={directions.GlcToSol.label}
           status={availability("GlcToSol")}
-          capacityRaw={String(Math.max(reserve.data.solana_available_capacity, 0))}
+          capacityRaw={clampAtomicAtZero(reserve.data.solana_available_capacity)}
           token={SOLANA_GLC}
           statusData={data}
           direction="GlcToSol"
@@ -58,7 +59,7 @@ export function StatusView() {
         <DirectionStatusCard
           title={directions.SolToGlc.label}
           status={availability("SolToGlc")}
-          capacityRaw={String(Math.max(reserve.data.goldcoin_available_capacity, 0))}
+          capacityRaw={clampAtomicAtZero(reserve.data.goldcoin_available_capacity)}
           token={GOLDCOIN_GLC}
           statusData={data}
           direction="SolToGlc"

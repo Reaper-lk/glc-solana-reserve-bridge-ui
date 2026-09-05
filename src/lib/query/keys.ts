@@ -12,7 +12,7 @@ export const queryKeys = {
   reserve: () => ["bridge", "reserve"] as const,
   health: () => ["bridge", "health"] as const,
   stats: () => ["bridge", "stats"] as const,
-  quote: (direction: string, grossAmount: number) =>
+  quote: (direction: string, grossAmount: string) =>
     ["bridge", "quote", direction, grossAmount] as const,
   recipientEligibility: (address: string, wallet: string | null) =>
     ["bridge", "recipient-eligibility", address, wallet] as const,

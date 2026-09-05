@@ -36,8 +36,8 @@ describe("ReservesView", () => {
 
   it("flags insufficient liquidity when a reserve's capacity is exhausted", async () => {
     getReserve.mockResolvedValue({
-      goldcoin_available_capacity: 4_250_000_00000000,
-      solana_available_capacity: 0,
+      goldcoin_available_capacity: "425000000000000",
+      solana_available_capacity: "0",
     });
     getStats.mockResolvedValue(fixtures.statsFixture());
     renderWithQueryClient(<ReservesView />);
@@ -58,8 +58,8 @@ describe("ReservesView", () => {
 
   it("flags a negative reported capacity as needing operator attention rather than hiding it", async () => {
     getReserve.mockResolvedValue({
-      goldcoin_available_capacity: -5_00000000,
-      solana_available_capacity: 100_00000000,
+      goldcoin_available_capacity: "-500000000",
+      solana_available_capacity: "10000000000",
     });
     getStats.mockResolvedValue(fixtures.statsFixture());
     renderWithQueryClient(<ReservesView />);
@@ -84,9 +84,9 @@ describe("ReservesView", () => {
           id: 1,
           direction: "SolanaReserve",
           detected_at: 0,
-          expected_atomic: 100,
-          observed_atomic: 100,
-          delta_atomic: 0,
+          expected_atomic: "100",
+          observed_atomic: "100",
+          delta_atomic: "0",
           classification: "SKIPPED: rpc unavailable",
           auto_paused: false,
         },
@@ -113,9 +113,9 @@ describe("ReservesView", () => {
           id: 1,
           direction: "SolanaReserve",
           detected_at: 0,
-          expected_atomic: 100,
-          observed_atomic: 60,
-          delta_atomic: -40,
+          expected_atomic: "100",
+          observed_atomic: "60",
+          delta_atomic: "-40",
           classification: "IN_FLIGHT_EXPLAINED",
           auto_paused: false,
         },
