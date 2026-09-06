@@ -4,6 +4,7 @@ import { Header } from "./Header";
 import { Footer } from "./Footer";
 import { BridgeStatusBar } from "./BridgeStatusBar";
 import { ReserveBanner } from "./ReserveBanner";
+import { NetworkAnnouncement } from "./NetworkAnnouncement";
 import { WalletSlot } from "./WalletSlot";
 import { CornerDock } from "./CornerDock";
 import { HelpWidget } from "@/components/help/HelpWidget";
@@ -97,6 +98,16 @@ export function AppShell({
         */}
         <ReserveBanner />
       </div>
+
+      {/*
+        Its own landmark, outside the notices region above. This strip
+        announces a future integration and is derived from a static constant
+        (src/lib/config/announcement.ts) — it reports nothing about the live
+        bridge, and a reader navigating by landmark should not find it filed
+        among notices about money movement. It sits after ReserveBanner so a
+        liquidity warning is never pushed below a product announcement.
+      */}
+      <NetworkAnnouncement />
 
       <main id="main" className="flex-1">
         {children}
