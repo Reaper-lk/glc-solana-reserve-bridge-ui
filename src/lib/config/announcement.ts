@@ -46,7 +46,7 @@ export const NETWORK_ANNOUNCEMENT: NetworkAnnouncement = {
   network: "Robinhood",
   status: "coming-soon",
   title: "Robinhood Network Integration",
-  description: "GLC bridging to and from Robinhood network will be available next week.",
+  description: "GLC bridging with Robinhood Chain launches next week.",
   secondaryText: "More details soon.",
   learnMoreHref: null,
   storageKey: "glc-bridge-announcement-robinhood",
