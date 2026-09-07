@@ -7,7 +7,30 @@
  * fee, and net amounts; see `src/lib/query/hooks.ts`'s `useQuote`.
  */
 
-export { directions, oppositeDirection, GOLDCOIN_GLC, SOLANA_GLC } from "./direction";
+export {
+  directions,
+  oppositeDirection,
+  routeDisplay,
+  GOLDCOIN_GLC,
+  SOLANA_GLC,
+  ROBINHOOD_GLC,
+  type RouteDisplay,
+} from "./direction";
+export {
+  isRouteOpen,
+  routeAvailability,
+  routeAvailabilitySummary,
+  type RouteAvailability,
+  type RouteAvailabilitySummary,
+} from "./route-availability";
+export {
+  canonicalToRobinhoodRaw,
+  isCanonicalRobinhoodAmount,
+  largestCanonicalRobinhoodAmountAtMost,
+  robinhoodRawToCanonicalExact,
+  CANONICAL_TO_ROBINHOOD_SCALE,
+  ROBINHOOD_DECIMALS,
+} from "./robinhood-amount";
 export type {
   ChainDescriptor,
   DirectionDescriptor,
@@ -56,4 +79,30 @@ export {
   QUOTA_PAUSED_BODY,
   QUOTA_PAUSED_NEXT,
 } from "./direction-state";
-export type { DirectionGateState } from "./direction-state";
+export type { DirectionGateState, SolanaGovernedRoute } from "./direction-state";
+
+export {
+  CHAIN_DESCRIPTORS,
+  descriptorFor,
+  displayDescriptorFor,
+  GOLDCOIN_GLC as GOLDCOIN_GLC_TOKEN,
+  type ChainFamily,
+} from "./chain-registry";
+
+export {
+  destinationsFor,
+  isDefinedPair,
+  resolveRoute,
+  routeForPair,
+  sourceChainIds,
+  type RouteResolution,
+} from "./route-resolution";
+
+export {
+  adapterFor,
+  type AddressCheck,
+  type ChainAdapter,
+  type FundingKind,
+} from "./chain-adapters";
+
+export { maximumBridgeableAmount, type MaximumBridgeableInput } from "./max-amount";

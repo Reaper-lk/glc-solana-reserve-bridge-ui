@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderWithQueryClient } from "./test-utils";
+import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { encodeBase58Check } from "@/lib/bridge/glc-address";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
@@ -50,6 +50,7 @@ const SOL_TO_GLC_MINIMUM_INPUT = "102.061856";
 const SOL_TO_GLC_JUST_BELOW_MINIMUM_INPUT = "102.061855";
 
 const getStatus = vi.fn();
+const getChains = vi.fn();
 const getLimits = vi.fn();
 const getReserve = vi.fn();
 const getQuote = vi.fn();
@@ -59,6 +60,7 @@ const listTransfers = vi.fn();
 vi.mock("@/lib/api", async () => ({
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
+    getChains: (...args: unknown[]) => getChains(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
     getReserve: (...args: unknown[]) => getReserve(...args),
     getQuote: (...args: unknown[]) => getQuote(...args),
@@ -118,6 +120,11 @@ vi.mock("@/lib/solana", () => ({
   useWalletConnection: () => walletConnection,
   useDepositToReserve: () => ({ capability: depositCapability, deposit: vi.fn() }),
   isValidAddress: (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value),
+  // The FROM panel reads a source balance; with no wallet connected the
+  // hook short-circuits before the query, so a minimal stub is enough.
+  useTokenBalance: () => ({ isPending: true, isError: false, data: undefined }),
+  isTokenBalanceAvailable: () => true,
+  walletQueryKeys: { balances: () => ["solana", "balance"] },
 }));
 
 function glcToSolQuote() {
@@ -161,6 +168,10 @@ beforeEach(() => {
   walletConnection.address = WALLET_ADDRESS;
   walletConnection.canSign = true;
   getStatus.mockResolvedValue(fixtures.statusFixture(() => new Date()));
+  // The route registry every gate now consults. The default fixture is
+  // the real shipping state: both legacy routes open, both Robinhood
+  // routes implemented-but-disabled, the Solana<->Robinhood pair inert.
+  getChains.mockResolvedValue(fixtures.chainsFixture(() => new Date()));
   getLimits.mockResolvedValue(fixtures.limitsFixture());
   getReserve.mockResolvedValue(fixtures.reserveFixture());
   depositCapability.mockReturnValue({ available: true });
@@ -198,7 +209,11 @@ async function typeSolToGlcAmount(
   amount: string,
 ) {
   renderWithQueryClient(<BridgeCard />);
-  await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
+  // Networks are chosen in the two selectors; the route is derived from
+  // the pair. `selectNetwork` waits for `GET /chains` to answer first —
+  // availability is never assumed, so the control is genuinely disabled
+  // until then.
+  await selectNetwork(user, "Source network", /Solana/);
   await waitFor(() => expect(getLimits).toHaveBeenCalled());
   await user.type(screen.getByLabelText(/Amount in GLC/i), amount);
   await user.type(
@@ -225,24 +240,20 @@ describe("BridgeCard — minimum bridge amount (Goldcoin -> Solana)", () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, GLC_TO_SOL_JUST_BELOW_MINIMUM_INPUT);
     await expectMinimumMessage(GLC_TO_SOL_MINIMUM_DISPLAY);
-    expect(
-      screen.getByRole("button", { name: /Create deposit request/i }),
-    ).toBeDisabled();
+    expect(primaryCta()).toBeDisabled();
   });
 
   it("rejects 100 GLC (the stale pre-fix minimum, now well under the real floor)", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, "100");
     await expectMinimumMessage(GLC_TO_SOL_MINIMUM_DISPLAY);
-    expect(
-      screen.getByRole("button", { name: /Create deposit request/i }),
-    ).toBeDisabled();
+    expect(primaryCta()).toBeDisabled();
   });
 
   it("accepts exactly the minimum, 102.06185566 GLC", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, GLC_TO_SOL_MINIMUM_INPUT);
-    const submit = await screen.findByRole("button", { name: /Create deposit request/i });
+    const submit = primaryCta();
     await waitFor(() => expect(submit).toBeEnabled());
     expect(screen.queryByText(/minimum transfer is/i)).not.toBeInTheDocument();
   });
@@ -250,7 +261,7 @@ describe("BridgeCard — minimum bridge amount (Goldcoin -> Solana)", () => {
   it("accepts a normal amount above the minimum", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, "500");
-    const submit = await screen.findByRole("button", { name: /Create deposit request/i });
+    const submit = primaryCta();
     await waitFor(() => expect(submit).toBeEnabled());
     expect(screen.queryByText(/minimum transfer is/i)).not.toBeInTheDocument();
   });
@@ -274,20 +285,20 @@ describe("BridgeCard — minimum bridge amount (Solana -> Goldcoin)", () => {
     const user = userEvent.setup();
     await typeSolToGlcAmount(user, SOL_TO_GLC_JUST_BELOW_MINIMUM_INPUT);
     await expectMinimumMessage(SOL_TO_GLC_MINIMUM_DISPLAY);
-    expect(screen.getByRole("button", { name: /Deposit from wallet/i })).toBeDisabled();
+    expect(primaryCta()).toBeDisabled();
   });
 
   it("rejects 100 GLC (the stale pre-fix minimum, now well under the real floor)", async () => {
     const user = userEvent.setup();
     await typeSolToGlcAmount(user, "100");
     await expectMinimumMessage(SOL_TO_GLC_MINIMUM_DISPLAY);
-    expect(screen.getByRole("button", { name: /Deposit from wallet/i })).toBeDisabled();
+    expect(primaryCta()).toBeDisabled();
   });
 
   it("accepts exactly the minimum, 102.061856 GLC", async () => {
     const user = userEvent.setup();
     await typeSolToGlcAmount(user, SOL_TO_GLC_MINIMUM_INPUT);
-    const submit = await screen.findByRole("button", { name: /Deposit from wallet/i });
+    const submit = primaryCta();
     await waitFor(() => expect(submit).toBeEnabled());
     expect(screen.queryByText(/minimum transfer is/i)).not.toBeInTheDocument();
   });
@@ -295,7 +306,7 @@ describe("BridgeCard — minimum bridge amount (Solana -> Goldcoin)", () => {
   it("accepts a normal amount above the minimum", async () => {
     const user = userEvent.setup();
     await typeSolToGlcAmount(user, "500");
-    const submit = await screen.findByRole("button", { name: /Deposit from wallet/i });
+    const submit = primaryCta();
     await waitFor(() => expect(submit).toBeEnabled());
     expect(screen.queryByText(/minimum transfer is/i)).not.toBeInTheDocument();
   });

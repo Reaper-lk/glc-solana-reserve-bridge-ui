@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderWithQueryClient } from "./test-utils";
+import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { encodeBase58Check } from "@/lib/bridge/glc-address";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
@@ -23,6 +23,7 @@ import type * as EnvModule from "@/lib/config/env";
  */
 
 const getStatus = vi.fn();
+const getChains = vi.fn();
 const getLimits = vi.fn();
 const getReserve = vi.fn();
 const getQuote = vi.fn();
@@ -33,6 +34,7 @@ const getSolToGlcRecipientEligibility = vi.fn();
 vi.mock("@/lib/api", async () => ({
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
+    getChains: (...args: unknown[]) => getChains(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
     getReserve: (...args: unknown[]) => getReserve(...args),
     getQuote: (...args: unknown[]) => getQuote(...args),
@@ -83,6 +85,11 @@ vi.mock("@/lib/solana", () => ({
   useWalletConnection: () => walletConnection,
   useDepositToReserve: () => ({ capability: depositCapability, deposit: depositFn }),
   isValidAddress: (value: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value),
+  // The FROM panel reads a source balance; with no wallet connected the
+  // hook short-circuits before the query, so a minimal stub is enough.
+  useTokenBalance: () => ({ isPending: true, isError: false, data: undefined }),
+  isTokenBalanceAvailable: () => true,
+  walletQueryKeys: { balances: () => ["solana", "balance"] },
 }));
 
 function quote() {
@@ -127,7 +134,11 @@ function page(items: Array<{ id: number; direction: "SolToGlc" | "GlcToSol" }>) 
 
 async function fillAndSubmitSolToGlc(user: ReturnType<typeof userEvent.setup>) {
   renderWithQueryClient(<BridgeCard />);
-  await user.click(screen.getByRole("radio", { name: /GLC on Solana.*GLC L1/i }));
+  // Networks are chosen in the two selectors; the route is derived from
+  // the pair. `selectNetwork` waits for `GET /chains` to answer first —
+  // availability is never assumed, so the control is genuinely disabled
+  // until then.
+  await selectNetwork(user, "Source network", /Solana/);
   await waitFor(() => expect(getLimits).toHaveBeenCalled());
 
   await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
@@ -136,7 +147,7 @@ async function fillAndSubmitSolToGlc(user: ReturnType<typeof userEvent.setup>) {
     GOLDCOIN_ADDRESS,
   );
 
-  const submit = await screen.findByRole("button", { name: /Deposit from wallet/i });
+  const submit = primaryCta();
   await waitFor(() => expect(submit).toBeEnabled());
   await user.click(submit);
 }
@@ -150,6 +161,10 @@ beforeEach(() => {
   walletConnection.address = WALLET_ADDRESS;
   walletConnection.canSign = true;
   getStatus.mockResolvedValue(fixtures.statusFixture(() => new Date()));
+  // The route registry every gate now consults. The default fixture is
+  // the real shipping state: both legacy routes open, both Robinhood
+  // routes implemented-but-disabled, the Solana<->Robinhood pair inert.
+  getChains.mockResolvedValue(fixtures.chainsFixture(() => new Date()));
   getLimits.mockResolvedValue(fixtures.limitsFixture());
   getReserve.mockResolvedValue(fixtures.reserveFixture());
   getQuote.mockResolvedValue(quote());
