@@ -430,10 +430,13 @@ export function BridgeForm() {
   return phase.kind !== "form" ? (
     <SubmittedPhase phase={phase} router={router} />
   ) : (
-    <Card variant="raised" padding="md">
-      <div className="mb-3">
+    // A flat 20px rather than `md`'s 16/24 step: at a 510px measure the
+    // desktop half of that step was the card's largest single band of
+    // empty space, and the panels are the better place to spend it.
+    <Card variant="raised" padding="none" className="p-4 md:p-5">
+      <div className="mb-2">
         <h1 className="text-heading-2">Bridge GLC</h1>
-        <p className="text-body-sm text-ink-500 mt-0.5">
+        <p className="text-body-sm text-ink-500 mt-1">
           Reserve-backed, 1:1. Nothing is minted, burned, or wrapped.
         </p>
       </div>
@@ -441,7 +444,7 @@ export function BridgeForm() {
       {/* Its own landmark: the header carries a "Connect wallet" control of
           its own, and both tests and assistive tech need to address THIS
           form's primary action without ambiguity. */}
-      <section aria-label="Bridge transfer" className="flex flex-col gap-2.5">
+      <section aria-label="Bridge transfer" className="flex flex-col gap-2">
         <NetworkPanel
           label="From"
           selector={
@@ -453,17 +456,19 @@ export function BridgeForm() {
             />
           }
           amount={
-            // The field and every line of metadata under it share one gap,
-            // so the limits, the balance and a validation message cannot
-            // space themselves differently from one another.
+            <AmountInput
+              id="bridge-amount"
+              ariaLabel={`Amount in ${sourceToken.symbol}`}
+              value={amountInput}
+              onChange={setAmountInput}
+              symbol={sourceToken.symbol}
+            />
+          }
+          meta={
+            // Every line under the amount row shares one gap, so the
+            // limits, the balance and a validation message cannot space
+            // themselves differently from one another.
             <div className="flex flex-col gap-1">
-              <AmountInput
-                id="bridge-amount"
-                ariaLabel={`Amount in ${sourceToken.symbol}`}
-                value={amountInput}
-                onChange={setAmountInput}
-                symbol={sourceToken.symbol}
-              />
               {amountValidation && isReportableProblem(amountValidation.problem) && (
                 <p className="text-body-sm text-danger-700">{amountValidation.message}</p>
               )}
@@ -527,15 +532,17 @@ export function BridgeForm() {
             />
           }
           amount={
+            <AmountEstimate
+              ariaLabel={`Estimated amount received in ${destinationToken.symbol}`}
+              value={
+                quote.data ? formatDisplayDecimal(quote.data.net_display_amount) : null
+              }
+              symbol={destinationToken.symbol}
+              pending={quote.isPending && toBigInt(canonicalGrossAmount) > 0n}
+            />
+          }
+          meta={
             <div className="flex flex-col gap-1">
-              <AmountEstimate
-                ariaLabel={`Estimated amount received in ${destinationToken.symbol}`}
-                value={
-                  quote.data ? formatDisplayDecimal(quote.data.net_display_amount) : null
-                }
-                symbol={destinationToken.symbol}
-                pending={quote.isPending && toBigInt(canonicalGrossAmount) > 0n}
-              />
               {/* A quote failure is stated in full, through the same
                   three-part error formula as everywhere else. The disabled
                   button's reason alone would leave the user with a dead
@@ -597,6 +604,11 @@ export function BridgeForm() {
           size="lg"
           variant="primary"
           loading={submitting}
+          // `lg`'s type and horizontal padding, one step off its 48px
+          // height. 44px is the floor for a touch target, and the form's
+          // primary action is the one control that should sit exactly on
+          // it rather than above it.
+          className="h-11"
           onClick={() => void submit()}
           {...(!gate.can
             ? {

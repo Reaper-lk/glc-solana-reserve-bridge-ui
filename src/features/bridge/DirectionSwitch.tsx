@@ -31,10 +31,13 @@ export function DirectionSwitch({
   disabledReason?: string | undefined;
 }) {
   return (
-    // Pulled into the gap on both sides. The button keeps its 40px hit area
-    // — the empty band around it is what shrinks, so the two panels read as
-    // one control pair rather than two cards with a gap between them.
-    <div className="-my-1.5 flex justify-center">
+    // Pulled into the gap on both sides, far enough that the button now
+    // sits ON the seam rather than in a band between the panels — which is
+    // what makes the pair read as one control instead of two cards. The
+    // button keeps its full 40px hit area; only the empty space shrinks,
+    // 44px of band down to 32px. `z-10` because the TO panel is painted
+    // after it and would otherwise clip the overlap.
+    <div className="relative z-10 -my-3 flex justify-center">
       <button
         type="button"
         onClick={onSwitch}
@@ -42,7 +45,10 @@ export function DirectionSwitch({
         aria-label="Reverse transfer direction"
         {...(disabled && disabledReason ? { title: disabledReason } : {})}
         className={cn(
-          "border-ink-200 bg-surface-raised grid size-10 place-items-center rounded-full border transition-colors",
+          // `surface-raised` and a soft lift against two recessed panels:
+          // the control reads as sitting ON the seam between them, which
+          // is what connects the pair. Size and hit area are unchanged.
+          "border-ink-200 bg-surface-raised shadow-elev-1 grid size-10 place-items-center rounded-full border transition-colors",
           disabled
             ? "cursor-not-allowed opacity-50"
             : "hover:bg-ink-50 focus-visible:border-ink-400",
