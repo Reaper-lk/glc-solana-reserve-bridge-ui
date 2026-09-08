@@ -80,7 +80,7 @@ export function NetworkSelector({
   }, [open]);
 
   return (
-    <div ref={containerRef} className="relative">
+    <div ref={containerRef} className="relative h-full">
       <button
         type="button"
         aria-label={label}
@@ -90,11 +90,24 @@ export function NetworkSelector({
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          // `py-1.5` with the tightened leading below keeps the trigger a
-          // 48px control — still comfortably above the 44px touch target,
-          // and 12px shorter than the default rhythm gave it.
-          "border-ink-200 hover:bg-ink-50 flex w-full items-center gap-2.5 rounded-lg border px-3 py-1.5 text-left transition-colors",
-          "focus-visible:border-ink-400 outline-none",
+          // The right half of the amount row, not a box of its own: no
+          // border and no radius except on the outer corners it shares
+          // with the row, so its hover fill stops where the row's border
+          // starts. `py-1.5` with the tightened leading below keeps it a
+          // 48px control, comfortably above the 44px touch target.
+          "hover:bg-ink-50 flex h-full w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors",
+          // Bottom half when the row is stacked below `sm`, right half
+          // above it.
+          "rounded-b-lg sm:rounded-tr-lg sm:rounded-bl-none",
+          // `ink-50` and not `ink-100` for that hover fill: the family
+          // line below is `ink-500`, which clears 4.5:1 on `ink-50` — the
+          // pair the panels themselves already use — but lands at 4.27:1
+          // on `ink-100`. A hover state is not worth failing AA for.
+          //
+          // Focus is a RING and not a deeper fill, so it reads as focus
+          // here rather than as a stronger hover, and stays distinct from
+          // focus in the amount field, which turns the row's own border.
+          "focus-visible:ring-ink-400 outline-none focus-visible:ring-2 focus-visible:ring-inset",
           disabled && "cursor-not-allowed opacity-60",
         )}
       >
@@ -103,7 +116,7 @@ export function NetworkSelector({
           {/* Leading is tightened, never the size: the network name and its
               family both stay at their design sizes, so the row loses
               height without losing legibility. */}
-          <span className="text-body text-ink-900 block truncate leading-5 font-medium">
+          <span className="text-body text-ink-700 block truncate leading-5 font-medium">
             {value.name}
           </span>
           <span className="text-body-sm text-ink-500 block truncate leading-4">
@@ -127,7 +140,13 @@ export function NetworkSelector({
           id={listboxId}
           role="listbox"
           aria-label={label}
-          className="border-ink-200 bg-surface-raised shadow-elev-2 absolute z-20 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border py-1"
+          // Anchored to the trigger's RIGHT edge and given its own width
+          // from `sm` up. The trigger is a 12rem column inside the amount
+          // row there, and an option carrying a network's name, family,
+          // status and the backend's reason for a closed route does not
+          // read at 12rem. It opens leftward into the panel, which is
+          // where the room is, so it can never leave the card.
+          className="border-ink-200 bg-surface-raised shadow-elev-2 absolute z-20 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border py-1 sm:right-0 sm:w-80"
         >
           {options.map((option) => {
             const selected = option.chain.id === value.id;

@@ -82,10 +82,12 @@ export function DestinationContext({
       >
         {adapter.addressLabel}
       </label>
-      {/* `py-2` is kept below `md`, where the base layer forces inputs to
-          16px so iOS does not zoom: the field has to stay tall enough for
-          that text and for a thumb. Only the desktop row tightens. */}
-      <div className="border-ink-200 focus-within:border-ink-400 flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors md:py-1.5">
+      {/* One height at every width, 42px. The desktop row used to tighten
+          to 30px, which was smaller than anything else in the panel and
+          read as an afterthought next to a 50px amount row; 42px also
+          clears the 16px the base layer forces on inputs below `md` so
+          iOS does not zoom, with room for a thumb. */}
+      <div className="border-ink-200 bg-surface-raised focus-within:border-ink-400 flex items-center gap-2 rounded-lg border px-3 py-3 transition-colors">
         <Wallet aria-hidden="true" className="text-ink-400 size-4 shrink-0" />
         <input
           id="bridge-recipient"
@@ -101,7 +103,9 @@ export function DestinationContext({
         <button
           type="button"
           onClick={() => onChange(connectedSolanaAddress)}
-          className="bg-ink-50 text-ink-700 hover:bg-ink-100 text-body-sm mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition-colors"
+          // Stepped up one from the panel's own `ink-50`, for the same
+          // reason MAX was: a chip the colour of its ground is invisible.
+          className="bg-ink-100 text-ink-700 hover:bg-ink-200 text-body-sm mt-1.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 transition-colors"
         >
           Use connected wallet ({connectedSolanaAddress.slice(0, 4)}…
           {connectedSolanaAddress.slice(-4)})

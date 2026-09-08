@@ -1,6 +1,5 @@
 "use client";
 
-import { Card } from "@/components/ui";
 import type { RouteAvailability } from "@/lib/bridge";
 import type { ChainDescriptor } from "@/lib/bridge";
 import type { QuoteOutputDto } from "@/lib/api/schemas/quote";
@@ -49,13 +48,18 @@ export function RouteSummary({
   const status = statusLabel(availability);
 
   return (
-    <Card padding="none" className="px-4 py-3">
-      {/* Two across at every width, never four. The compact card is ~530px
+    // A recessed block on the card's plane rather than a bordered card of
+    // its own — the same `ink-50` step the FROM/TO panels sit on. The
+    // outline it used to carry was the fourth nested rectangle in a 510px
+    // card and the only one separating content that is already separated
+    // by being the last thing in the form.
+    <div className="bg-ink-50 rounded-lg px-3 py-2.5">
+      {/* Two across at every width, never four. The compact card is ~510px
           wide, which leaves a four-column cell too narrow to hold
           "Goldcoin → Robinhood" or a fee's rate-and-amount on one line —
           each then ran onto a second line, costing more height than the
           second row of a two-column grid does. */}
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
         <Row label="Route">
           {/* Wraps rather than truncates: a route name clipped to
               "Goldcoin → Robinho…" is worse than one on two lines. */}
@@ -112,7 +116,7 @@ export function RouteSummary({
           </div>
         )}
       </dl>
-    </Card>
+    </div>
   );
 }
 
@@ -128,7 +132,10 @@ function Row({
   return (
     <div className={className}>
       <dt className="text-body-sm text-ink-500 leading-4">{label}</dt>
-      <dd className="text-body text-ink-900 min-w-0">{children}</dd>
+      {/* Leading tightened, size untouched: a summary of four short
+          figures does not need `body`'s reading leading, and two points a
+          row is four off the card for nothing a reader can perceive. */}
+      <dd className="text-body text-ink-900 min-w-0 leading-5">{children}</dd>
     </div>
   );
 }

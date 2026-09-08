@@ -170,12 +170,15 @@
   --container-wide: 1200px; /* explorer tables */
   --container-card: 680px; /* transfer receipts and the admin fund form —
                               wide single-column pages of label/value detail. */
-  --container-bridge: 580px; /* the bridge form. Deliberately narrower than
-                                `card`: a transfer form reads as one object,
-                                and at 680px the two network panels stretched
-                                into bands. The route summary pairs its
-                                figures two-across at this measure instead of
-                                four, which is what the extra 100px bought. */
+  --container-bridge: 558px; /* the bridge form — a 510px card. Deliberately
+                                narrower than `card`: a transfer form reads as
+                                one object, and at 680px the two network
+                                panels stretched into bands. 510px is the
+                                narrowest measure at which the source panel's
+                                "Min … · Max … · … remaining today" line, the
+                                merged amount+network row and the route
+                                summary's two columns each still hold one
+                                line. */
   --container-prose: 680px; /* long-form, 68-72ch measure */
   --container-modal: 480px;
 

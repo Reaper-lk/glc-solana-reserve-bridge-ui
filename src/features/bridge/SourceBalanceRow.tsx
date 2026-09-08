@@ -69,7 +69,10 @@ export function SourceBalanceRow({
           "focus-visible:border-ink-500 focus-visible:ring-ink-300 outline-none focus-visible:ring-2",
           maxAmount === null
             ? "border-ink-200 text-ink-400 cursor-not-allowed"
-            : "border-ink-300 text-ink-700 hover:bg-ink-50",
+            : // `ink-100`, not `ink-50`: the panel this sits on is now
+              // `ink-50` itself, and a hover fill the same colour as its
+              // ground is no hover state at all.
+              "border-ink-300 text-ink-700 hover:bg-ink-100",
         )}
       >
         MAX
