@@ -11,7 +11,7 @@ export function Container({
   className,
   children,
 }: {
-  size?: "page" | "wide" | "prose" | "card";
+  size?: "page" | "wide" | "prose" | "card" | "bridge";
   as?: ElementType;
   className?: string;
   children: ReactNode;
@@ -21,6 +21,7 @@ export function Container({
     wide: "max-w-wide",
     prose: "max-w-prose",
     card: "max-w-card",
+    bridge: "max-w-bridge",
   }[size];
 
   return (

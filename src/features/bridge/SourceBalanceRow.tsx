@@ -35,7 +35,10 @@ export function SourceBalanceRow({
   if (balance.kind === "unsupported" || balance.kind === "disconnected") return null;
 
   return (
-    <div className="mt-1 flex items-center justify-between gap-3">
+    // No top margin of its own: the amount block owns the rhythm between
+    // the field and every line of metadata under it, so they cannot drift
+    // apart from one another.
+    <div className="flex items-center justify-between gap-3">
       <p className="text-body-sm text-ink-500 min-w-0 truncate">
         {balance.kind === "known" ? (
           <>

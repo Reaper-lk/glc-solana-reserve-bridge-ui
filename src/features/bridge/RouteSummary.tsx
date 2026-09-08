@@ -49,11 +49,13 @@ export function RouteSummary({
   const status = statusLabel(availability);
 
   return (
-    <Card padding="md">
-      {/* Four across only from `md`. The card is ~630px wide, so `sm`
-          (640px viewport) is not a safe proxy for "this GRID is wide" —
-          at 520px the four columns overlapped their own values. */}
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4">
+    <Card padding="none" className="px-4 py-3">
+      {/* Two across at every width, never four. The compact card is ~530px
+          wide, which leaves a four-column cell too narrow to hold
+          "Goldcoin → Robinhood" or a fee's rate-and-amount on one line —
+          each then ran onto a second line, costing more height than the
+          second row of a two-column grid does. */}
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
         <Row label="Route">
           {/* Wraps rather than truncates: a route name clipped to
               "Goldcoin → Robinho…" is worse than one on two lines. */}
@@ -91,7 +93,7 @@ export function RouteSummary({
         </Row>
 
         {requiredConfirmations !== undefined && (
-          <Row label="Confirmations" className="col-span-2 md:col-span-4">
+          <Row label="Confirmations" className="col-span-2">
             <span>
               {requiredConfirmations} on {source.name} before settlement begins
             </span>
@@ -99,7 +101,7 @@ export function RouteSummary({
         )}
 
         {availability.kind !== "open" && (
-          <div className="col-span-2 md:col-span-4">
+          <div className="col-span-2">
             <dt className="sr-only">Why this route is unavailable</dt>
             {/* The backend's own sentence. This UI never authors a second
                 explanation of a closed route, and never infers which gate
@@ -125,8 +127,8 @@ function Row({
 }) {
   return (
     <div className={className}>
-      <dt className="text-body-sm text-ink-500">{label}</dt>
-      <dd className="text-body text-ink-900 mt-0.5 min-w-0">{children}</dd>
+      <dt className="text-body-sm text-ink-500 leading-4">{label}</dt>
+      <dd className="text-body text-ink-900 min-w-0">{children}</dd>
     </div>
   );
 }
