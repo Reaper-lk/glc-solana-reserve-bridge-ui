@@ -430,10 +430,10 @@ export function BridgeForm() {
   return phase.kind !== "form" ? (
     <SubmittedPhase phase={phase} router={router} />
   ) : (
-    <Card variant="raised" padding="lg">
-      <div className="mb-5">
+    <Card variant="raised" padding="md">
+      <div className="mb-3">
         <h1 className="text-heading-2">Bridge GLC</h1>
-        <p className="text-body-sm text-ink-500 mt-1">
+        <p className="text-body-sm text-ink-500 mt-0.5">
           Reserve-backed, 1:1. Nothing is minted, burned, or wrapped.
         </p>
       </div>
@@ -441,7 +441,7 @@ export function BridgeForm() {
       {/* Its own landmark: the header carries a "Connect wallet" control of
           its own, and both tests and assistive tech need to address THIS
           form's primary action without ambiguity. */}
-      <section aria-label="Bridge transfer" className="flex flex-col gap-3">
+      <section aria-label="Bridge transfer" className="flex flex-col gap-2.5">
         <NetworkPanel
           label="From"
           selector={
@@ -453,7 +453,10 @@ export function BridgeForm() {
             />
           }
           amount={
-            <div>
+            // The field and every line of metadata under it share one gap,
+            // so the limits, the balance and a validation message cannot
+            // space themselves differently from one another.
+            <div className="flex flex-col gap-1">
               <AmountInput
                 id="bridge-amount"
                 ariaLabel={`Amount in ${sourceToken.symbol}`}
@@ -462,9 +465,7 @@ export function BridgeForm() {
                 symbol={sourceToken.symbol}
               />
               {amountValidation && isReportableProblem(amountValidation.problem) && (
-                <p className="text-body-sm text-danger-700 mt-1">
-                  {amountValidation.message}
-                </p>
+                <p className="text-body-sm text-danger-700">{amountValidation.message}</p>
               )}
               <SourceBalanceRow
                 balance={sourceBalance}
@@ -472,7 +473,7 @@ export function BridgeForm() {
                 onMax={applyMax}
               />
               {amountBounds?.minimum !== undefined && (
-                <p className="text-body-sm text-ink-500 mt-1">
+                <p className="text-body-sm text-ink-500">
                   Min{" "}
                   {display(
                     amountBounds.minimum,
@@ -526,7 +527,7 @@ export function BridgeForm() {
             />
           }
           amount={
-            <div>
+            <div className="flex flex-col gap-1">
               <AmountEstimate
                 ariaLabel={`Estimated amount received in ${destinationToken.symbol}`}
                 value={
@@ -540,13 +541,13 @@ export function BridgeForm() {
                   button's reason alone would leave the user with a dead
                   control and no account of what went wrong. */}
               {quote.isError && (
-                <div className="mt-2">
+                <div className="mt-1">
                   <ErrorState error={quote.error} />
                 </div>
               )}
               {destinationReserveCapacity !== null &&
                 toBigInt(destinationReserveCapacity) > 0n && (
-                  <p className="text-body-sm text-ink-500 mt-1">
+                  <p className="text-body-sm text-ink-500">
                     Available capacity:{" "}
                     {display(
                       destinationReserveCapacity,
@@ -774,7 +775,7 @@ function SubmittedPhase({
 }) {
   if (phase.kind === "goldcoin-deposit") {
     return (
-      <Card variant="raised" padding="lg">
+      <Card variant="raised" padding="md">
         <h1 className="text-heading-2 mb-4">Send your deposit</h1>
         <DepositInstructions
           depositAddress={phase.depositAddress}
@@ -793,7 +794,7 @@ function SubmittedPhase({
 
   if (phase.kind === "solana-deposit-submitted") {
     return (
-      <Card variant="raised" padding="lg">
+      <Card variant="raised" padding="md">
         <h1 className="text-heading-2 mb-2">Deposit submitted</h1>
         <p className="text-body-sm text-ink-600">
           Your Solana transaction has been submitted (signature{" "}
@@ -805,7 +806,7 @@ function SubmittedPhase({
   }
 
   return (
-    <Card variant="raised" padding="lg">
+    <Card variant="raised" padding="md">
       <h1 className="text-heading-2 mb-2">Deposit submitted</h1>
       <p className="text-body-sm text-ink-600">
         Your Robinhood Chain transaction has confirmed (transaction{" "}

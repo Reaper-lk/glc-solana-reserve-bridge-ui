@@ -31,7 +31,10 @@ export function DirectionSwitch({
   disabledReason?: string | undefined;
 }) {
   return (
-    <div className="flex justify-center">
+    // Pulled into the gap on both sides. The button keeps its 40px hit area
+    // — the empty band around it is what shrinks, so the two panels read as
+    // one control pair rather than two cards with a gap between them.
+    <div className="-my-1.5 flex justify-center">
       <button
         type="button"
         onClick={onSwitch}

@@ -33,7 +33,11 @@ export function NetworkPanel({
     <section
       aria-label={label}
       className={cn(
-        "border-ink-200 bg-surface flex flex-col gap-3 rounded-xl border p-4",
+        // Compact by intent: `gap-2`/`p-3` is the density a transfer form
+        // wants, not the generous `gap-3`/`p-4` of a content card. Mobile
+        // keeps the same rhythm — nothing inside is a tap target that
+        // depends on the panel's own padding for its size.
+        "border-ink-200 bg-surface flex flex-col gap-2 rounded-xl border p-3",
         className,
       )}
     >
@@ -83,7 +87,7 @@ export function AmountInput({
         // An explicit colour rather than an inherited one: the panel sits on a
         // tinted surface in dark mode, where an inherited value renders the
         // typed amount dimmer than the quoted one beside it.
-        className="text-heading-2 tabular text-ink-900 placeholder:text-ink-500 min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2.5 outline-none disabled:cursor-not-allowed"
+        className="text-heading-2 tabular text-ink-900 placeholder:text-ink-500 min-w-0 flex-1 rounded-lg bg-transparent px-3 py-2 outline-none disabled:cursor-not-allowed"
       />
       <span className="text-body text-ink-500 font-medium">{symbol}</span>
     </div>
@@ -118,7 +122,7 @@ export function AmountEstimate({
     >
       <span
         className={cn(
-          "text-heading-2 tabular min-w-0 flex-1 truncate px-3 py-2.5",
+          "text-heading-2 tabular min-w-0 flex-1 truncate px-3 py-2",
           // `ink-400` on the panel's tinted background falls below the 3:1
           // contrast threshold even at this size — a placeholder still has
           // to be readable.

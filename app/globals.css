@@ -168,10 +168,14 @@
   /* --- Layout containers (E4) -------------------------------------------- */
   --container-page: 1120px;
   --container-wide: 1200px; /* explorer tables */
-  --container-card: 680px; /* bridge card — two stacked network panels need
-                              more measure than the old single-column form:
-                              at 520px the route summary's four columns
-                              collided and every figure wrapped. */
+  --container-card: 680px; /* transfer receipts and the admin fund form —
+                              wide single-column pages of label/value detail. */
+  --container-bridge: 580px; /* the bridge form. Deliberately narrower than
+                                `card`: a transfer form reads as one object,
+                                and at 680px the two network panels stretched
+                                into bands. The route summary pairs its
+                                figures two-across at this measure instead of
+                                four, which is what the extra 100px bought. */
   --container-prose: 680px; /* long-form, 68-72ch measure */
   --container-modal: 480px;
 

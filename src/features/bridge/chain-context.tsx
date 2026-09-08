@@ -76,10 +76,16 @@ export function DestinationContext({
 
   return (
     <div>
-      <label htmlFor="bridge-recipient" className="text-body-sm text-ink-600 mb-1 block">
+      <label
+        htmlFor="bridge-recipient"
+        className="text-body-sm text-ink-600 mb-0.5 block"
+      >
         {adapter.addressLabel}
       </label>
-      <div className="border-ink-200 focus-within:border-ink-400 flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors">
+      {/* `py-2` is kept below `md`, where the base layer forces inputs to
+          16px so iOS does not zoom: the field has to stay tall enough for
+          that text and for a thumb. Only the desktop row tightens. */}
+      <div className="border-ink-200 focus-within:border-ink-400 flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors md:py-1.5">
         <Wallet aria-hidden="true" className="text-ink-400 size-4 shrink-0" />
         <input
           id="bridge-recipient"
@@ -111,7 +117,7 @@ export function DestinationContext({
           payouts. Shown for every route that ends on Goldcoin, not just
           the one it was originally written for. */}
       {adapter.chain.id === "goldcoin" && (
-        <div className="mt-3">
+        <div className="mt-2">
           <ExchangeAddressWarning />
         </div>
       )}

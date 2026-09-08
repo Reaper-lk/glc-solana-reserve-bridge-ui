@@ -90,17 +90,25 @@ export function NetworkSelector({
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          "border-ink-200 hover:bg-ink-50 flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
+          // `py-1.5` with the tightened leading below keeps the trigger a
+          // 48px control — still comfortably above the 44px touch target,
+          // and 12px shorter than the default rhythm gave it.
+          "border-ink-200 hover:bg-ink-50 flex w-full items-center gap-2.5 rounded-lg border px-3 py-1.5 text-left transition-colors",
           "focus-visible:border-ink-400 outline-none",
           disabled && "cursor-not-allowed opacity-60",
         )}
       >
         <NetworkMark chain={value} />
         <span className="min-w-0 flex-1">
-          <span className="text-body text-ink-900 block truncate font-medium">
+          {/* Leading is tightened, never the size: the network name and its
+              family both stay at their design sizes, so the row loses
+              height without losing legibility. */}
+          <span className="text-body text-ink-900 block truncate leading-5 font-medium">
             {value.name}
           </span>
-          <span className="text-body-sm text-ink-500 block truncate">{value.family}</span>
+          <span className="text-body-sm text-ink-500 block truncate leading-4">
+            {value.family}
+          </span>
         </span>
         <ChevronDown
           aria-hidden="true"
@@ -182,7 +190,7 @@ function NetworkMark({ chain }: { chain: ChainDescriptor }) {
     <span
       aria-hidden="true"
       className={cn(
-        "grid size-8 shrink-0 place-items-center rounded-full border",
+        "grid size-7 shrink-0 place-items-center rounded-full border",
         "border-ink-200 bg-surface",
         chain.markClassName,
       )}
