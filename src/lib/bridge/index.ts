@@ -81,6 +81,18 @@ export {
 } from "./direction-state";
 export type { DirectionGateState, SolanaGovernedRoute } from "./direction-state";
 
+export {
+  robinhoodDestinationCapacity,
+  robinhoodRouteGateState,
+  robinhoodWindowFor,
+  robinhoodWindowRemaining,
+} from "./robinhood-route-state";
+export type {
+  RobinhoodFigure,
+  RobinhoodRoute,
+  RobinhoodRouteGateState,
+} from "./robinhood-route-state";
+
 export { destinationReserveGroups, executableRoutes } from "./route-families";
 export type { DestinationReserve, DestinationReserveGroup } from "./route-families";
 
