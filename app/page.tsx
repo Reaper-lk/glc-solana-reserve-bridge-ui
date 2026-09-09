@@ -135,8 +135,10 @@ function NetworkTile({
   return (
     <div
       className={cn(
-        "rounded-lg border px-3 py-2.5",
-        placeholder ? "border-ink-200 border-dashed" : "border-ink-200 bg-ink-50",
+        "border-ink-200 bg-ink-50 rounded-lg border px-3 py-2.5",
+        // Same fill as a real network so the rows read as one grid; the
+        // dashed edge and muted title are what still mark it as a slot.
+        placeholder && "border-dashed",
       )}
     >
       <p
