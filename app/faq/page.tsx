@@ -28,8 +28,9 @@ const ANSWERS: Record<FaqId, ReactNode> = {
   ),
   "what-is-the-fee": (
     <p>
-      A flat 3% of the gross amount, computed by the bridge backend on every quote and
-      transfer. Network fees are separate. See{" "}
+      Bridge fees are route-specific and are shown before you confirm a transfer. The rate
+      is computed by the bridge backend on every quote and transfer. Network fees are
+      separate. See{" "}
       <a href={routes.fees} className="underline underline-offset-2">
         fees &amp; limits
       </a>{" "}

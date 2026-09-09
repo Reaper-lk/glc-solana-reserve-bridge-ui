@@ -8,7 +8,6 @@ const TRUST_POINTS = [
   "No new GLC is ever created.",
   "No GLC is wrapped into a substitute token.",
   "Every transfer is fulfilled from existing, pre-funded reserves.",
-  "A flat 3% bridge fee applies, computed by the bridge backend. Network fees are separate.",
 ] as const;
 
 export default function HomePage() {
@@ -21,12 +20,12 @@ export default function HomePage() {
             <h1 className="text-display-xl text-ink-950 mt-2">
               Native GLC. Existing reserves.
               <br />
-              Two networks. One bridge.
+              Many networks. One bridge.
             </h1>
             <p className="text-body-lg text-ink-600 mt-4">
-              Move existing GLC between the Goldcoin blockchain and Solana. This is not a
-              wrapped-token bridge — it releases GLC that is already held in reserve on
-              the destination network, so supply never changes on either side.
+              Move existing GLC between the Goldcoin blockchain and other rails. This is
+              not a wrapped-token bridge — it releases GLC that is already held in reserve
+              on the destination network, so supply never changes on either side.
             </p>
 
             <ul className="mt-6 flex flex-col gap-2">
