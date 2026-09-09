@@ -204,8 +204,17 @@ export const settlementRouteSchema = z.enum([
 ]);
 export type SettlementRoute = z.infer<typeof settlementRouteSchema>;
 
-/** Whether a wire route is one the UI could ever initiate. */
-export function isSettlementRoute(route: Route): route is SettlementRoute {
+/**
+ * Whether a wire route is one the UI could ever initiate.
+ *
+ * Takes a bare `string` rather than a `Route`, because the caller that
+ * needs it most is reading `GET /chains`, whose route ids are open strings
+ * by design (see `./chains`). A `Route` still narrows exactly as before —
+ * `SettlementRoute` is a subtype of `string` — so this widening costs
+ * existing call sites nothing and stops the discovery path from having to
+ * pre-narrow an id it has not validated yet.
+ */
+export function isSettlementRoute(route: string): route is SettlementRoute {
   return settlementRouteSchema.safeParse(route).success;
 }
 

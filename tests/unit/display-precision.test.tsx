@@ -36,6 +36,7 @@ const REPORTED_MINT_ATOMIC = "96218058299275";
 const REPORTED_DISPLAY = "96,218,058.30";
 
 const getStats = vi.fn();
+const getChains = vi.fn();
 const getReserve = vi.fn();
 const getStatus = vi.fn();
 const getHealth = vi.fn();
@@ -45,6 +46,7 @@ const listReserveHistory = vi.fn();
 vi.mock("@/lib/api", () => ({
   bridgeApi: {
     getStats: (...args: unknown[]) => getStats(...args),
+    getChains: (...args: unknown[]) => getChains(...args),
     getReserve: (...args: unknown[]) => getReserve(...args),
     getStatus: (...args: unknown[]) => getStatus(...args),
     getHealth: (...args: unknown[]) => getHealth(...args),
@@ -56,6 +58,10 @@ vi.mock("@/lib/api", () => ({
 beforeEach(() => {
   vi.resetAllMocks();
   listReserveHistory.mockResolvedValue({ items: [], next_cursor: null, as_of: 0 });
+  // The explorer summary reads its route families from `GET /chains` — the
+  // settled figures are grouped by the reserve each executable route pays
+  // out of, which is the granularity `/stats` publishes.
+  getChains.mockResolvedValue(fixtures.chainsFixture(() => new Date()));
 });
 
 describe("TokenAmount", () => {

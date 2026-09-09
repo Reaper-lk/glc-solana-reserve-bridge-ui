@@ -81,6 +81,9 @@ export {
 } from "./direction-state";
 export type { DirectionGateState, SolanaGovernedRoute } from "./direction-state";
 
+export { destinationReserveGroups, executableRoutes } from "./route-families";
+export type { DestinationReserve, DestinationReserveGroup } from "./route-families";
+
 export {
   CHAIN_DESCRIPTORS,
   descriptorFor,
