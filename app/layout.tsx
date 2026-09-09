@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     template: "%s · Goldcoin Reserve Bridge",
   },
   description:
-    "Move existing GLC between the Goldcoin blockchain and Solana through a reserve-backed bridge. No minting, no wrapping — every transfer is publicly verifiable.",
+    "Move existing GLC between the Goldcoin blockchain and other supported rails using pre-funded reserves.",
   robots: { index: true, follow: true },
 };
 
