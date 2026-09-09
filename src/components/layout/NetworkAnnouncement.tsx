@@ -1,13 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { Clock, X } from "lucide-react";
+import { CircleCheck, Clock, X, type LucideIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { useIsMounted } from "@/lib/hooks/useIsMounted";
 import {
-  COMING_SOON_LABEL,
+  ANNOUNCEMENT_STATUS_LABEL,
   NETWORK_ANNOUNCEMENT,
   type NetworkAnnouncement as NetworkAnnouncementConfig,
+  type NetworkAnnouncementStatus,
 } from "@/lib/config/announcement";
 import { cn } from "@/lib/utils/cn";
 
@@ -27,11 +28,19 @@ import { cn } from "@/lib/utils/cn";
  * "Bridge notices" region: a reader navigating by landmark should not find a
  * product announcement filed among notices about money movement.
  *
- * One consequence worth stating: "coming soon" is carried by text and an icon,
- * never by colour. The gold outline is brand accent — gold is never a status
- * colour in this system (see src/lib/status) — and the strip's green is the
- * same token family the trust strip uses, which is why the state is spelled
- * out in words instead.
+ * One consequence worth stating: the state is carried by text and an icon,
+ * never by colour. The pre-launch outline is gold — brand accent, and gold is
+ * never a status colour in this system (see src/lib/status) — while the
+ * strip's green is the same token family the trust strip uses, which is why
+ * the state is spelled out in words instead. The launched badge borrows the
+ * success token for its outline, but the word and the icon still carry the
+ * meaning on their own, so a reader who cannot separate the two outlines
+ * loses nothing.
+ *
+ * Nothing here hardcodes which state is being announced: the badge's label,
+ * icon and outline are all looked up from `announcement.status`. Announcing
+ * the launch is therefore an edit to `src/lib/config/announcement.ts` alone —
+ * see that module's doc — and this file does not change at all.
  *
  * The strip offers no call to action. There is no Robinhood page to open, and
  * a disabled button explaining that is still a control the eye and the tab
@@ -47,6 +56,19 @@ import { cn } from "@/lib/utils/cn";
  * same guard `src/lib/theme/theme.ts` puts around `localStorage`.
  */
 const DISMISSED_VALUE = "dismissed";
+
+/**
+ * The badge, per announced status. Adding a status to the config forces a
+ * case here rather than silently falling through to the pre-launch one —
+ * which is the whole reason this is a total `Record` and not a ternary.
+ */
+const STATUS_BADGE: Record<
+  NetworkAnnouncementStatus,
+  { readonly icon: LucideIcon; readonly className: string }
+> = {
+  "coming-soon": { icon: Clock, className: "border-gold-700 text-gold-700" },
+  live: { icon: CircleCheck, className: "border-success-700 text-success-700" },
+};
 
 function readDismissed(storageKey: string): boolean {
   try {
@@ -101,6 +123,9 @@ export function NetworkAnnouncement({
   const remainder = announcement.title.startsWith(announcement.network)
     ? announcement.title.slice(announcement.network.length).trimStart()
     : null;
+
+  const badge = STATUS_BADGE[announcement.status];
+  const BadgeIcon = badge.icon;
 
   return (
     <div role="region" aria-label="Network announcement">
@@ -169,9 +194,14 @@ export function NetworkAnnouncement({
               Text and an icon, never the outline alone: a reader who cannot
               distinguish the gold border still reads the words.
             */}
-            <span className="text-overline border-gold-700 text-gold-700 inline-flex shrink-0 items-center gap-1 rounded-sm border px-2 py-0.5 uppercase">
-              <Clock aria-hidden="true" className="size-3" strokeWidth={2} />
-              {COMING_SOON_LABEL}
+            <span
+              className={cn(
+                "text-overline inline-flex shrink-0 items-center gap-1 rounded-sm border px-2 py-0.5 uppercase",
+                badge.className,
+              )}
+            >
+              <BadgeIcon aria-hidden="true" className="size-3" strokeWidth={2} />
+              {ANNOUNCEMENT_STATUS_LABEL[announcement.status]}
             </span>
 
             <div className="min-w-0 basis-full md:flex-1 md:basis-auto">

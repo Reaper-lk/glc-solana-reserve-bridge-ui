@@ -119,7 +119,13 @@ export function requestStateDescriptor(state: string): StatusDescriptor {
 /* -------------------------------------------------------------------------- */
 
 export type DirectionAvailability =
-  "available" | "paused" | "insufficient-liquidity" | "quota-exhausted" | "quota-paused";
+  | "available"
+  | "paused"
+  | "insufficient-liquidity"
+  | "quota-exhausted"
+  | "quota-paused"
+  | "degraded"
+  | "unknown";
 
 export const directionAvailabilityStatus: Record<
   DirectionAvailability,
@@ -144,6 +150,20 @@ export const directionAvailabilityStatus: Record<
     tone: "danger",
     icon: Pause,
   },
+  /**
+   * Open, but a figure this route depends on could not be read — an
+   * unreachable custody contract, or an indexer that has stopped ticking.
+   * Warn rather than danger: nothing is blocked and nothing is paused, but
+   * what is shown beside it may be stale, and saying "Available" would
+   * assert a liveness nothing verified.
+   */
+  degraded: { label: "Degraded", tone: "warn", icon: CircleAlert },
+  /**
+   * No reserve to report on, or the read has not answered. Neutral and
+   * explicitly unknown — never "Available", which fails open, and never
+   * "Paused", which asserts an operator action nobody took.
+   */
+  unknown: { label: "Unknown", tone: "neutral", icon: CircleHelp },
 };
 
 /* -------------------------------------------------------------------------- */

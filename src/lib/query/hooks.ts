@@ -15,6 +15,7 @@ import type {
   TransferLimitsDto,
 } from "@/lib/api/schemas/status";
 import type { BridgeStatsDto } from "@/lib/api/schemas/stats";
+import type { RobinhoodReserveDto } from "@/lib/api/schemas/robinhood";
 import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import type { ExplorerEventListDto } from "@/lib/api/schemas/explorer";
 import type { ReserveHistoryListDto } from "@/lib/api/schemas/reserves";
@@ -101,6 +102,40 @@ export function useStats(initialData?: BridgeStatsDto): UseQueryResult<BridgeSta
     queryFn: ({ signal }) => bridgeApi.getStats(signal),
     refetchInterval: pollIntervals.stats,
     ...(initialData ? { initialData } : {}),
+  });
+}
+
+/**
+ * The Robinhood reserve, its custody contract's rolling windows and its
+ * indexer's liveness (`GET /robinhood/reserve`).
+ *
+ * # Why this is caller-gated rather than always on
+ *
+ * `enabled` should be "a Robinhood route is open, per `GET /chains`".
+ * Two reasons, both about honesty rather than bandwidth:
+ *
+ * 1. A deployment that predates these endpoints answers 404. Firing the
+ *    request on every page load of every deployment would turn a route
+ *    nobody can use into a recurring error in the console and in the
+ *    query cache.
+ * 2. `/chains` stays the single availability authority. This endpoint
+ *    repeats the same `RouteGate` verdict, and gating on `/chains` is
+ *    what keeps that a convenience rather than a second opinion the UI
+ *    could accidentally prefer.
+ *
+ * `retry: false` for the same reason: a 404 here is a deployment fact,
+ * not a blip, and the caller renders "not published" rather than an
+ * error either way.
+ */
+export function useRobinhoodReserve(
+  enabled: boolean,
+): UseQueryResult<RobinhoodReserveDto> {
+  return useQuery({
+    queryKey: queryKeys.robinhoodReserve(),
+    queryFn: ({ signal }) => bridgeApi.getRobinhoodReserve(signal),
+    enabled,
+    refetchInterval: pollIntervals.robinhoodReserve,
+    retry: false,
   });
 }
 

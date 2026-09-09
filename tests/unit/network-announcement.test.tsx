@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { NetworkAnnouncement } from "@/components/layout/NetworkAnnouncement";
 import { BridgeStatusBar } from "@/components/layout/BridgeStatusBar";
 import {
+  ANNOUNCEMENT_STATUS_LABEL,
   COMING_SOON_LABEL,
   NETWORK_ANNOUNCEMENT,
   type NetworkAnnouncement as NetworkAnnouncementConfig,
@@ -270,5 +271,84 @@ describe("isolation from live bridge state", () => {
       "utf8",
     );
     expect(source).not.toMatch(/^import /m);
+  });
+});
+
+/**
+ * Readiness for the launch flip.
+ *
+ * The routes open when `GET /chains` says so, and this constant has no
+ * bearing on that — flipping it opens nothing and closing it closes
+ * nothing. What these cases pin is that when the flip does come, it is an
+ * edit to a VALUE and not a change to the component: the badge's word, its
+ * icon and its outline are all resolved from `announcement.status`, so
+ * nothing in `NetworkAnnouncement.tsx` has to be revisited under launch
+ * pressure.
+ *
+ * The shipped value stays `"coming-soon"` and is asserted as such, so this
+ * preparation cannot be mistaken for the announcement itself.
+ */
+describe("launch readiness", () => {
+  it("still announces the integration as coming soon", () => {
+    // The backend ships both Robinhood routes disabled. Announcing a route
+    // the gate still refuses is worse than announcing it a day late.
+    expect(config.status).toBe("coming-soon");
+    render(<NetworkAnnouncement />);
+    expect(within(banner()).getAllByText(COMING_SOON_LABEL)[0]).toBeInTheDocument();
+    expect(within(banner()).queryByText(ANNOUNCEMENT_STATUS_LABEL.live)).toBeNull();
+  });
+
+  it("renders the launched badge from the status alone, with no other edit", () => {
+    const live: NetworkAnnouncementConfig = {
+      ...config,
+      status: "live",
+      description: "GLC bridging with Robinhood Chain is live.",
+    };
+    render(<NetworkAnnouncement announcement={live} />);
+
+    expect(
+      within(banner()).getByText(ANNOUNCEMENT_STATUS_LABEL.live),
+    ).toBeInTheDocument();
+    expect(within(banner()).queryByText(COMING_SOON_LABEL)).toBeNull();
+    expect(within(banner()).getByText(live.description)).toBeInTheDocument();
+  });
+
+  it("keeps the strip's shape across the flip — same landmark, same one control", () => {
+    // The flip must not quietly reintroduce a call to action or a second
+    // line of copy; the reasons those are absent do not change at launch.
+    const live: NetworkAnnouncementConfig = { ...config, status: "live" };
+    render(<NetworkAnnouncement announcement={live} />);
+
+    expect(banner()).toHaveAccessibleName("Network announcement");
+    expect(within(banner()).getAllByRole("button")).toHaveLength(1);
+    expect(within(banner()).queryAllByRole("link")).toHaveLength(0);
+    expect(within(banner()).getAllByText(/./, { selector: "p" })).toHaveLength(1);
+  });
+
+  it("carries the launched state in words and an icon, never in colour alone", () => {
+    const live: NetworkAnnouncementConfig = { ...config, status: "live" };
+    render(<NetworkAnnouncement announcement={live} />);
+    const badge = within(banner()).getByText(ANNOUNCEMENT_STATUS_LABEL.live);
+
+    // A reader who cannot separate the gold outline from the green one
+    // still reads the word — and the icon changes too.
+    expect(badge.querySelector("svg")).not.toBeNull();
+    expect(badge.className).toContain("success");
+  });
+
+  it("has a label for every status the config can hold", () => {
+    // A status added to the union without a label would render an empty
+    // badge rather than failing to build.
+    for (const status of ["coming-soon", "live"] as const) {
+      expect(ANNOUNCEMENT_STATUS_LABEL[status]).toBeTruthy();
+    }
+  });
+
+  it("still pulls in no runtime state after the flip", () => {
+    // The isolation rule is not relaxed at launch: an announcement that
+    // reacted to the status endpoint would eventually be mistaken for it.
+    const live: NetworkAnnouncementConfig = { ...config, status: "live" };
+    render(<NetworkAnnouncement announcement={live} />);
+    expect(banner()).toBeInTheDocument();
   });
 });
