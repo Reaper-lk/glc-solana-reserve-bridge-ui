@@ -12,6 +12,7 @@ import {
   transferLimitsSchema,
 } from "../schemas/status";
 import { bridgeStatsSchema } from "../schemas/stats";
+import { robinhoodReserveSchema } from "../schemas/robinhood";
 import { chainsViewSchema } from "../schemas/chains";
 import { explorerEventListSchema } from "../schemas/explorer";
 import { reserveHistoryListSchema } from "../schemas/reserves";
@@ -139,6 +140,22 @@ export class MockBridgeClient implements BridgeApiClient {
   }
 
   /**
+   * `GET /robinhood/reserve`. Answers "not configured" in every scenario
+   * but `robinhood-open`, which is what the real backend answers today —
+   * a deployment with no `[reserve.robinhood]` section has no reserve to
+   * report, and reporting zeroes would claim an empty one exists.
+   */
+  async getRobinhoodReserve() {
+    return this.delay(
+      robinhoodReserveSchema.parse(
+        fixtures.robinhoodReserveFixture(this.now, {
+          open: this.scenario === "robinhood-open",
+        }),
+      ),
+    );
+  }
+
+  /**
    * Per-route decimals and asset names, mirroring the backend's own match
    * in `BridgeApi::quote`. Goldcoin is 8, Solana's mint is 6, and
    * Robinhood's token is a compile-time 18 — the backend calls that last
@@ -245,9 +262,20 @@ export class MockBridgeClient implements BridgeApiClient {
     );
   }
 
+  /**
+   * Robinhood rows exist only in the one scenario where `GET /chains`
+   * reports the routes open. Serving a `GlcToRhn` transfer alongside a
+   * `/chains` response calling that route unavailable would be a fixture
+   * describing a state the real backend cannot be in.
+   */
+  private transfers(): TransferViewDto[] {
+    return this.scenario === "robinhood-open"
+      ? fixtures.mixedTransfersFixture()
+      : fixtures.transfersFixture();
+  }
+
   async getTransfer(id: number) {
-    const found =
-      this.created.get(id) ?? fixtures.transfersFixture().find((t) => t.id === id);
+    const found = this.created.get(id) ?? this.transfers().find((t) => t.id === id);
     if (!found) throw notFoundError("transfer");
     return this.delay(transferViewSchema.parse(found));
   }
@@ -309,7 +337,7 @@ export class MockBridgeClient implements BridgeApiClient {
   }
 
   async listTransfers(params: ListTransfersParams) {
-    let items = [...fixtures.transfersFixture(), ...this.created.values()];
+    let items = [...this.transfers(), ...this.created.values()];
     if (params.state) items = items.filter((t) => t.state === params.state);
     items = items.sort((a, b) => b.created_at - a.created_at);
     return this.delay(
@@ -322,7 +350,10 @@ export class MockBridgeClient implements BridgeApiClient {
   }
 
   async listExplorerEvents(params: ListExplorerEventsParams) {
-    let items = fixtures.explorerEventsFixture();
+    let items =
+      this.scenario === "robinhood-open"
+        ? fixtures.mixedExplorerEventsFixture()
+        : fixtures.explorerEventsFixture();
     if (params.direction) items = items.filter((e) => e.direction === params.direction);
     if (params.state) items = items.filter((e) => e.to_state === params.state);
     return this.delay(

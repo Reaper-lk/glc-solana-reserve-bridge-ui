@@ -5,6 +5,7 @@ import type {
   TransferLimitsDto,
 } from "./schemas/status";
 import type { BridgeStatsDto } from "./schemas/stats";
+import type { RobinhoodReserveDto } from "./schemas/robinhood";
 import type { ChainsViewDto } from "./schemas/chains";
 import type { ExplorerEventListDto } from "./schemas/explorer";
 import type { ReserveHistoryListDto, ReserveDirectionParam } from "./schemas/reserves";
@@ -84,6 +85,21 @@ export interface BridgeApiClient {
   getReserve(signal?: AbortSignal): Promise<ReserveAvailabilityDto>;
   getHealth(signal?: AbortSignal): Promise<PublicHealthDto>;
   getStats(signal?: AbortSignal): Promise<BridgeStatsDto>;
+  /**
+   * The Robinhood reserve, its custody contract's rolling windows, and its
+   * indexer's liveness (`GET /robinhood/reserve`).
+   *
+   * A SEPARATE endpoint from `getReserve`, mirroring the backend, because
+   * the Robinhood reserve is a third independent pool: it is never summed
+   * with, differenced against or defaulted from the Goldcoin and Solana
+   * figures, and `GET /reserve` deliberately keeps the exact shape every
+   * existing client already reads.
+   *
+   * Call it only when a Robinhood route is actually open. A deployment
+   * that predates these endpoints answers 404, and there is nothing on a
+   * closed route worth a request per poll tick to find that out.
+   */
+  getRobinhoodReserve(signal?: AbortSignal): Promise<RobinhoodReserveDto>;
 
   getQuote(
     request: { direction: Direction; gross_amount: string },

@@ -13,6 +13,7 @@ import {
 import { quoteOutputSchema } from "@/lib/api/schemas/quote";
 import { explorerEventListSchema, explorerEventSchema } from "@/lib/api/schemas/explorer";
 import { reserveHistoryEntrySchema } from "@/lib/api/schemas/reserves";
+import { robinhoodReserveSchema } from "@/lib/api/schemas/robinhood";
 import * as fixtures from "@/lib/api/mock/fixtures";
 
 /**
@@ -48,13 +49,22 @@ describe("fixtures conform to their live-response schemas", () => {
   it("stats", () => {
     expect(bridgeStatsSchema.safeParse(fixtures.statsFixture()).success).toBe(true);
   });
-  it("transfers", () => {
-    for (const transfer of fixtures.transfersFixture()) {
+  it("robinhood reserve, configured and not", () => {
+    for (const open of [true, false]) {
+      expect(
+        robinhoodReserveSchema.safeParse(
+          fixtures.robinhoodReserveFixture(() => new Date(), { open }),
+        ).success,
+      ).toBe(true);
+    }
+  });
+  it("transfers, Solana and Robinhood alike", () => {
+    for (const transfer of fixtures.mixedTransfersFixture()) {
       expect(transferViewSchema.safeParse(transfer).success).toBe(true);
     }
   });
-  it("explorer events", () => {
-    for (const event of fixtures.explorerEventsFixture()) {
+  it("explorer events, Solana and Robinhood alike", () => {
+    for (const event of fixtures.mixedExplorerEventsFixture()) {
       expect(explorerEventSchema.safeParse(event).success).toBe(true);
     }
   });

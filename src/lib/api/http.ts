@@ -23,6 +23,7 @@ import {
   transferLimitsSchema,
 } from "./schemas/status";
 import { bridgeStatsSchema } from "./schemas/stats";
+import { robinhoodReserveSchema } from "./schemas/robinhood";
 import { chainsViewSchema } from "./schemas/chains";
 import { explorerEventListSchema } from "./schemas/explorer";
 import { reserveHistoryListSchema } from "./schemas/reserves";
@@ -87,6 +88,10 @@ export class HttpBridgeClient implements BridgeApiClient {
 
   getStats(signal?: AbortSignal) {
     return this.request("/stats", bridgeStatsSchema, {}, signal);
+  }
+
+  getRobinhoodReserve(signal?: AbortSignal) {
+    return this.request("/robinhood/reserve", robinhoodReserveSchema, {}, signal);
   }
 
   getQuote(

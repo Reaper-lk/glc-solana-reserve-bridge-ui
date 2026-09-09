@@ -13,6 +13,7 @@ export const queryKeys = {
   reserve: () => ["bridge", "reserve"] as const,
   health: () => ["bridge", "health"] as const,
   stats: () => ["bridge", "stats"] as const,
+  robinhoodReserve: () => ["bridge", "robinhood", "reserve"] as const,
   quote: (direction: string, grossAmount: string) =>
     ["bridge", "quote", direction, grossAmount] as const,
   recipientEligibility: (address: string, wallet: string | null) =>
@@ -50,6 +51,12 @@ export const pollIntervals = {
   reserve: 30_000,
   health: 60_000,
   stats: 60_000,
+  /**
+   * The Robinhood reserve, its contract windows and its indexer. Same
+   * cadence as `reserve`: it backs the same kind of capacity/pause
+   * statement, and a stale figure there is wrong in the same way.
+   */
+  robinhoodReserve: 30_000,
   /**
    * The SolToGlc recipient rate-limit check for the address currently in
    * the form. Refetching while the form sits open both catches an address

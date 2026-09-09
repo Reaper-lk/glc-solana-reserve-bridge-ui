@@ -197,3 +197,93 @@ describe("MockBridgeClient — list endpoints paginate through the real envelope
     expect(page.items).toEqual([]);
   });
 });
+
+describe("MockBridgeClient — the Robinhood reserve", () => {
+  it("reports no Robinhood reserve in the default scenario, as production does", async () => {
+    // No deployment carries a `[reserve.robinhood]` section today, so the
+    // real endpoint answers "not_configured" with every figure null.
+    // Answering with zeroes would claim an empty reserve exists.
+    const reserve = await new MockBridgeClient({ latencyMs: 0 }).getRobinhoodReserve();
+
+    expect(reserve.ledger_availability).toBe("not_configured");
+    expect(reserve.available_capacity_atomic).toBeNull();
+    expect(reserve.paused).toBeNull();
+    expect(reserve.onchain.outbound_window).toBeNull();
+    expect(reserve.indexer.configured).toBe(false);
+  });
+
+  it("reports a funded reserve with both contract windows under robinhood-open", async () => {
+    const reserve = await new MockBridgeClient({
+      scenario: "robinhood-open",
+      latencyMs: 0,
+    }).getRobinhoodReserve();
+
+    expect(reserve.ledger_availability).toBe("available");
+    // Ledger figures are canonical 8dp; the contract's windows are
+    // Robinhood's own 18. Both on one response, at their real precision.
+    expect(reserve.available_capacity_atomic).toBe("212000000000000");
+    expect(reserve.onchain.outbound_window?.remaining_atomic).toBe(
+      "61250000000000000000000",
+    );
+    expect(reserve.onchain.inbound_window?.remaining_atomic).toBe(
+      "100000000000000000000000",
+    );
+  });
+
+  it("repeats the same route verdict GET /chains publishes", async () => {
+    const client = new MockBridgeClient({ scenario: "robinhood-open", latencyMs: 0 });
+    const [reserve, chains] = await Promise.all([
+      client.getRobinhoodReserve(),
+      client.getChains(),
+    ]);
+
+    for (const route of reserve.routes) {
+      const fromChains = chains.routes.find((entry) => entry.id === route.id);
+      expect(route.enabled).toBe(fromChains?.enabled);
+      expect(route.implemented).toBe(fromChains?.implemented);
+    }
+  });
+});
+
+describe("MockBridgeClient — mixed Solana and Robinhood data", () => {
+  it("serves Robinhood transfers only in the scenario whose routes are open", async () => {
+    // A `GlcToRhn` transfer alongside a `/chains` response calling that
+    // route unavailable would describe a state the backend cannot be in.
+    const closed = await new MockBridgeClient({ latencyMs: 0 }).listTransfers({});
+    expect(closed.items.some((t) => t.direction === "GlcToRhn")).toBe(false);
+
+    const open = await new MockBridgeClient({
+      scenario: "robinhood-open",
+      latencyMs: 0,
+    }).listTransfers({});
+    expect(open.items.some((t) => t.direction === "GlcToRhn")).toBe(true);
+    expect(open.items.some((t) => t.direction === "RhnToGlc")).toBe(true);
+    // The Solana transfers are still all there, at their original ids.
+    expect(open.items.some((t) => t.id === 1000)).toBe(true);
+  });
+
+  it("keeps the Solana fixture ids stable when Robinhood rows are added", async () => {
+    // Ids there are positional (`1000 + index`) and are addressed
+    // individually by the e2e specs, so Robinhood rows are appended at
+    // 2000 rather than slotted in.
+    const open = new MockBridgeClient({ scenario: "robinhood-open", latencyMs: 0 });
+    await expect(open.getTransfer(1009)).resolves.toMatchObject({
+      state: "Refunded",
+      direction: "SolToGlc",
+    });
+    await expect(open.getTransfer(2000)).resolves.toMatchObject({
+      direction: "GlcToRhn",
+    });
+  });
+
+  it("interleaves both networks' explorer events, filterable by route", async () => {
+    const client = new MockBridgeClient({ scenario: "robinhood-open", latencyMs: 0 });
+    const all = await client.listExplorerEvents({});
+    expect(all.items.some((e) => e.direction === "RhnToGlc")).toBe(true);
+    expect(all.items.some((e) => e.direction === "GlcToSol")).toBe(true);
+
+    const filtered = await client.listExplorerEvents({ direction: "GlcToRhn" });
+    expect(filtered.items.length).toBeGreaterThan(0);
+    expect(filtered.items.every((e) => e.direction === "GlcToRhn")).toBe(true);
+  });
+});

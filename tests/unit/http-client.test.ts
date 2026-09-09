@@ -205,6 +205,25 @@ describe("HttpBridgeClient", () => {
     respondOk(fixtures.statsFixture());
     await expect(client.getStats()).resolves.toHaveProperty("glc_to_sol");
 
+    // `GET /robinhood/reserve` — the third reserve, its custody contract's
+    // rolling windows and its indexer, on a path of its own so a client
+    // that never heard of Robinhood sees no change at all.
+    respondOk(fixtures.robinhoodReserveFixture(() => new Date(), { open: true }));
+    await expect(client.getRobinhoodReserve()).resolves.toMatchObject({
+      ledger_availability: "available",
+    });
+    const [robinhoodUrl] = vi.mocked(fetch).mock.calls.at(-1) ?? [];
+    expect(String(robinhoodUrl)).toBe(`${BASE}/robinhood/reserve`);
+
+    // And the shape a deployment with no `[reserve.robinhood]` section
+    // actually returns: nulls throughout, never zeroes.
+    respondOk(fixtures.robinhoodReserveFixture(() => new Date(), { open: false }));
+    await expect(client.getRobinhoodReserve()).resolves.toMatchObject({
+      ledger_availability: "not_configured",
+      balance_atomic: null,
+      paused: null,
+    });
+
     respondOk({ items: fixtures.transfersFixture(), next_cursor: null, as_of: 0 });
     await expect(
       client.listTransfers({ address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM" }),

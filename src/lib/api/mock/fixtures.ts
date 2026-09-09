@@ -5,6 +5,8 @@ import type {
   TransferLimitsDto,
 } from "../schemas/status";
 import type { BridgeStatsDto } from "../schemas/stats";
+import type { RobinhoodReserveDto } from "../schemas/robinhood";
+import { ROBINHOOD_AVAILABLE, ROBINHOOD_NOT_CONFIGURED } from "../schemas/robinhood";
 import type { ChainsViewDto } from "../schemas/chains";
 import type { ExplorerEventDto } from "../schemas/explorer";
 import type { ReserveHistoryEntryDto } from "../schemas/reserves";
@@ -191,6 +193,133 @@ export function chainsFixture(
       },
     ],
     as_of: Math.floor(now().getTime() / 1000),
+  };
+}
+
+/**
+ * `GET /robinhood/reserve`, in the two states that actually exist.
+ *
+ * # The default is "not configured", and that is not a placeholder
+ *
+ * No production deployment carries a `[reserve.robinhood]` section today,
+ * so the real endpoint answers `ledger_availability: "not_configured"`
+ * with every ledger figure `null`, an unread contract, and an
+ * unconfigured indexer. Mock mode says the same thing rather than
+ * inventing a reserve that does not exist — "absent is not zero" is the
+ * property this fixture has to preserve, not paper over.
+ *
+ * # The open state's units
+ *
+ * The ledger figures are CANONICAL 8-decimal amounts (the backend keeps
+ * this reserve's books in canonical units because its ledger column is an
+ * `INTEGER`); the contract's window figures are Robinhood's native 18.
+ * The two appear on the same route, so the fixture carries both at their
+ * real precision — a mock that used one unit for both would hide exactly
+ * the bug that discipline exists to prevent.
+ *
+ * Every number below is a MOCK value chosen to be obviously
+ * non-production, never a real balance, limit or fee.
+ */
+export interface RobinhoodReserveFixtureOptions {
+  /** Report both Robinhood routes open, as `MockScenario` "robinhood-open" does. */
+  readonly open?: boolean;
+  /** The reserve's own operator pause. */
+  readonly paused?: boolean;
+  /** The contract's outbound (payout) kill switch — the `GlcToRhn` leg. */
+  readonly payoutsPaused?: boolean;
+  /** The contract's inbound (deposit) kill switch — the `RhnToGlc` leg. */
+  readonly depositsPaused?: boolean;
+  /** Simulate an indexer that has halted for operator attention. */
+  readonly indexerHalted?: boolean;
+}
+
+export function robinhoodReserveFixture(
+  now: () => Date,
+  options: RobinhoodReserveFixtureOptions = {},
+): RobinhoodReserveDto {
+  const asOf = Math.floor(now().getTime() / 1000);
+  const routes = chainsFixture(now, {
+    robinhoodOpen: options.open ?? false,
+  }).routes.filter((route) => route.id === "GlcToRhn" || route.id === "RhnToGlc");
+
+  if (!options.open) {
+    // Exactly what the live endpoint returns on a deployment with no
+    // `[reserve.robinhood]` section: nulls, not zeroes.
+    return {
+      ledger_availability: ROBINHOOD_NOT_CONFIGURED,
+      balance_atomic: null,
+      protected_minimum_atomic: null,
+      reserved_liquidity_atomic: null,
+      pending_obligations_atomic: null,
+      available_capacity_atomic: null,
+      accrued_fees_atomic: null,
+      paused: null,
+      onchain: {
+        availability: ROBINHOOD_NOT_CONFIGURED,
+        encumbered_reserve_atomic: null,
+        protected_min_reserve_atomic: null,
+        deposits_paused: null,
+        payouts_paused: null,
+        inbound_window: null,
+        outbound_window: null,
+        window_seconds: null,
+      },
+      routes,
+      indexer: {
+        configured: false,
+        connected: false,
+        lag_blocks: null,
+        last_success_at: null,
+        halted: false,
+      },
+      as_of: asOf,
+    };
+  }
+
+  return {
+    ledger_availability: ROBINHOOD_AVAILABLE,
+    // Canonical 8dp. balance - protected - reserved = available capacity,
+    // computed here rather than asserted, so the fixture cannot drift into
+    // an arithmetic state the backend could never produce.
+    balance_atomic: "217300000000000",
+    protected_minimum_atomic: "5000000000000",
+    reserved_liquidity_atomic: "300000000000",
+    pending_obligations_atomic: "120000000000",
+    available_capacity_atomic: "212000000000000",
+    accrued_fees_atomic: "2120000000000",
+    paused: options.paused ?? false,
+    onchain: {
+      availability: ROBINHOOD_AVAILABLE,
+      // Robinhood 18dp from here down.
+      encumbered_reserve_atomic: "53000000000000000000000",
+      protected_min_reserve_atomic: "50000000000000000000000",
+      deposits_paused: options.depositsPaused ?? false,
+      payouts_paused: options.payoutsPaused ?? false,
+      inbound_window: {
+        limit_atomic: "100000000000000000000000",
+        used_atomic: "0",
+        remaining_atomic: "100000000000000000000000",
+        resets_at: asOf + 3_600,
+        is_current: true,
+      },
+      outbound_window: {
+        limit_atomic: "100000000000000000000000",
+        used_atomic: "38750000000000000000000",
+        remaining_atomic: "61250000000000000000000",
+        resets_at: asOf + 3_600,
+        is_current: true,
+      },
+      window_seconds: 86_400,
+    },
+    routes,
+    indexer: {
+      configured: true,
+      connected: !options.indexerHalted,
+      lag_blocks: options.indexerHalted ? null : 2,
+      last_success_at: asOf - (options.indexerHalted ? 900 : 6),
+      halted: options.indexerHalted ?? false,
+    },
+    as_of: asOf,
   };
 }
 
@@ -429,6 +558,147 @@ export function explorerEventsFixture(): ExplorerEventDto[] {
   return events
     .sort((a, b) => b.at - a.at)
     .map((event, index) => ({ ...event, id: base + index }));
+}
+
+/**
+ * Robinhood transfers, kept SEPARATE from `transfersFixture` on purpose.
+ *
+ * Ids there are positional (`1000 + index`) and the e2e specs address
+ * individual transfers by id, so slotting rows into that list would
+ * renumber every transfer after the insertion point. These start at 2000
+ * and are appended by the mock client only under the `robinhood-open`
+ * scenario, which is also the only scenario where `GET /chains` reports
+ * the routes open — mock data that could not exist in the state it is
+ * served alongside would be a worse fixture than none.
+ *
+ * The set is chosen to exercise what is genuinely different about a
+ * Robinhood route rather than to pad a list:
+ *
+ * - a `GlcToRhn` that settled, so the DESTINATION transaction is an EVM
+ *   hash and the SOURCE is a Goldcoin txid — the case a per-direction
+ *   explorer link would have got backwards;
+ * - an `RhnToGlc` in flight, whose source is an EVM hash and whose
+ *   `required_source_confirmations` is null, because a contract-sourced
+ *   deposit folds straight to `SourceFinalized` with no confirmation ramp;
+ * - an `RhnToGlc` being refunded with `refund: null`, which is the
+ *   backend's deliberate answer for that route (the refund happens on
+ *   Robinhood, from a different table in a different unit) and the case
+ *   the transfer page must explain rather than fill in;
+ * - a `GlcToRhn` still awaiting its deposit.
+ */
+const ROBINHOOD_TX_HASH = `0x${"e".repeat(64)}`;
+const ROBINHOOD_SOURCE_TX_HASH = `0x${"d".repeat(64)}`;
+
+export function robinhoodTransfersFixture(): TransferViewDto[] {
+  const base = NOW_UNIX();
+  const amounts = (gross: bigint) => {
+    const fee = (gross * BigInt(BRIDGE_FEE_BPS)) / 10_000n;
+    return {
+      gross_amount_atomic: gross.toString(),
+      fee_bps: BRIDGE_FEE_BPS,
+      fee_amount_atomic: fee.toString(),
+      net_amount_atomic: (gross - fee).toString(),
+    };
+  };
+
+  return [
+    {
+      id: 2000,
+      direction: "GlcToRhn",
+      state: "Settled",
+      ...amounts(1_200_00000000n),
+      created_at: base - 5_400,
+      source_txid: "f".repeat(64),
+      source_confirmations: 12,
+      required_source_confirmations: 12,
+      destination_txid: ROBINHOOD_TX_HASH,
+      failure_reason: null,
+      refund: null,
+    },
+    {
+      id: 2001,
+      direction: "RhnToGlc",
+      state: "SourceFinalized",
+      ...amounts(850_00000000n),
+      created_at: base - 3_600,
+      source_txid: ROBINHOOD_SOURCE_TX_HASH,
+      source_confirmations: 24,
+      // Contract-sourced: no confirmation ramp to progress through.
+      required_source_confirmations: null,
+      destination_txid: null,
+      failure_reason: null,
+      refund: null,
+    },
+    {
+      id: 2002,
+      direction: "RhnToGlc",
+      state: "RefundPending",
+      ...amounts(410_00000000n),
+      created_at: base - 2_700,
+      source_txid: ROBINHOOD_SOURCE_TX_HASH,
+      source_confirmations: 24,
+      required_source_confirmations: null,
+      destination_txid: null,
+      failure_reason: MANUAL_REVIEW_REASON,
+      // Absent BY DESIGN for this route — see this block's doc.
+      refund: null,
+    },
+    {
+      id: 2003,
+      direction: "GlcToRhn",
+      state: "AwaitingDeposit",
+      ...amounts(300_00000000n),
+      created_at: base - 900,
+      source_txid: null,
+      source_confirmations: 0,
+      required_source_confirmations: 12,
+      destination_txid: null,
+      failure_reason: null,
+      refund: null,
+    },
+  ];
+}
+
+/** Solana and Robinhood transfers in one list, newest first. */
+export function mixedTransfersFixture(): TransferViewDto[] {
+  return [...transfersFixture(), ...robinhoodTransfersFixture()].sort(
+    (a, b) => b.created_at - a.created_at,
+  );
+}
+
+/** The explorer events those Robinhood transfers would have produced. */
+export function robinhoodExplorerEventsFixture(): ExplorerEventDto[] {
+  const events: ExplorerEventDto[] = [];
+  let id = 900_000;
+  for (const transfer of robinhoodTransfersFixture()) {
+    events.push({
+      id: id++,
+      request_id: transfer.id,
+      direction: transfer.direction,
+      from_state: null,
+      to_state: "AwaitingDeposit",
+      at: transfer.created_at,
+      reason: null,
+    });
+    if (transfer.state === "AwaitingDeposit") continue;
+    events.push({
+      id: id++,
+      request_id: transfer.id,
+      direction: transfer.direction,
+      from_state: "AwaitingDeposit",
+      to_state: transfer.state,
+      at: transfer.created_at + 300,
+      reason: transfer.failure_reason,
+    });
+  }
+  return events;
+}
+
+/** Solana and Robinhood events interleaved, newest first. */
+export function mixedExplorerEventsFixture(): ExplorerEventDto[] {
+  return [...explorerEventsFixture(), ...robinhoodExplorerEventsFixture()].sort(
+    (a, b) => b.at - a.at,
+  );
 }
 
 export function reserveHistoryFixture(): ReserveHistoryEntryDto[] {
