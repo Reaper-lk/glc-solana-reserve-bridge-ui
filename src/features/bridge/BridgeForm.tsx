@@ -9,6 +9,7 @@ import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 import {
   bridgeApi,
   recipientRateLimitedError,
+  robinhoodPredepositError,
   sourceWalletRateLimitedError,
 } from "@/lib/api";
 import {
@@ -21,10 +22,12 @@ import {
   isCanonicalRobinhoodAmount,
   isDefinedPair,
   isReportableProblem,
+  isRouteEffectivelyAvailable,
   largestCanonicalRobinhoodAmountAtMost,
   maximumBridgeableAmount,
   CANONICAL_TO_ROBINHOOD_SCALE,
   resolveRoute,
+  robinhoodPredepositVerdict,
   robinhoodRawToCanonicalExact,
   rollingVolumeRemaining,
   routeAvailability,
@@ -34,10 +37,17 @@ import {
   QUOTA_PAUSED_BODY,
   QUOTA_PAUSED_TITLE,
   RECIPIENT_RATE_LIMIT_TITLE,
+  ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
+  ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
+  ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE,
   SOLANA_GLC,
   SOURCE_WALLET_RATE_LIMIT_TITLE,
 } from "@/lib/bridge";
-import type { ChainAdapter, SolanaGovernedRoute } from "@/lib/bridge";
+import type {
+  ChainAdapter,
+  RobinhoodPredepositVerdict,
+  SolanaGovernedRoute,
+} from "@/lib/bridge";
 import {
   atomicRescaleCeil,
   atomicRescaleFloor,
@@ -63,8 +73,10 @@ import {
   useLimits,
   useQuote,
   useReserve,
+  useRhnToGlcRecipientEligibility,
   useSolToGlcRecipientEligibility,
 } from "@/lib/query/hooks";
+import { queryKeys } from "@/lib/query/keys";
 import { useDepositToReserve, useWalletConnection, walletQueryKeys } from "@/lib/solana";
 import { useQueryClient } from "@tanstack/react-query";
 import { BlockerAlert, type Blocker } from "./BlockerAlert";
@@ -254,6 +266,53 @@ export function BridgeForm() {
   );
 
   /**
+   * The RhnToGlc pre-deposit checks.
+   *
+   * # Why this route is gated and the others are not
+   *
+   * Every other route asks the backend for permission before anything
+   * leaves a wallet: the Goldcoin-sourced ones through `POST /transfers`,
+   * which can refuse outright. `RhnToGlc` calls the custody contract's
+   * `deposit` directly, so there is no preflight to refuse — a deposit
+   * that arrives while the Goldcoin reserve is closed, or from a wallet
+   * inside its rolling 24-hour window, is not rejected but FOLDED and
+   * parked in `ManualReview` with the user's GLC already committed.
+   *
+   * So the two published signals that could have prevented it are both
+   * read here, both fail closed, and both are re-read fresh in `submit`
+   * immediately before the wallet is invoked. The backend re-checks
+   * everything authoritatively at fold time and remains the enforcement;
+   * what it cannot do is give the deposit back.
+   *
+   * The query is keyed on route, destination AND wallet, so editing
+   * either input is a cache MISS rather than a stale "eligible" carried
+   * across the edit.
+   */
+  const routeIsRhnToGlc = route === "RhnToGlc";
+  const rhnEligibility = useRhnToGlcRecipientEligibility(
+    recipient.trim(),
+    routeIsRhnToGlc ? evmWallet.address : null,
+    routeIsRhnToGlc && recipientValidation.valid && evmWallet.address !== null,
+  );
+
+  /**
+   * `/chains` positively answered `available: true` AND the eligibility
+   * endpoint positively cleared THESE inputs — or the single reason it
+   * did not. `null` for every other route, which keeps its existing gate
+   * untouched.
+   */
+  const rhnPredeposit: RobinhoodPredepositVerdict | null = routeIsRhnToGlc
+    ? robinhoodPredepositVerdict({
+        routeAvailable: isRouteEffectivelyAvailable(chains.data, "RhnToGlc"),
+        unavailableReason:
+          availability.kind === "unavailable" ? availability.reason : null,
+        eligibility: rhnEligibility.data ?? null,
+        address: recipient.trim(),
+        wallet: evmWallet.address,
+      })
+    : null;
+
+  /**
    * `GET /reserve` carries the Goldcoin and Solana reserves only. The
    * ledger HAS a `RobinhoodReserve`, but no public endpoint exposes its
    * capacity — so a Robinhood destination has no capacity figure and this
@@ -377,6 +436,19 @@ export function BridgeForm() {
       applies: route === "SolToGlc",
       pending: recipientEligibility.isPending,
       data: recipientEligibility.data ?? null,
+    },
+    predeposit: {
+      applies: routeIsRhnToGlc,
+      // A query that has not answered YET is not a permission: it holds
+      // the button rather than releasing it, which is the difference
+      // between this gate and its advisory SolToGlc sibling. A background
+      // REFETCH of an answer that already arrived is deliberately not
+      // "pending" — that would flicker the button off every poll tick,
+      // and the answer being refreshed is still the one this form holds.
+      // Staleness is closed by the fresh re-read in `submit`, not by
+      // disabling the button between polls.
+      pending: rhnEligibility.isPending,
+      verdict: rhnPredeposit,
     },
     quotePending: quote.isPending,
     quoteError: quote.isError,
@@ -589,6 +661,7 @@ export function BridgeForm() {
             blocker={gate.blocker}
             directionLabel={`${source.name} → ${destination.name}`}
             reason={gate.reason ?? ""}
+            detail={gate.detail ?? ""}
           />
         )}
 
@@ -697,6 +770,75 @@ export function BridgeForm() {
           break;
         }
         case "evm-contract": {
+          /*
+           * FINAL pre-deposit re-check, both halves fetched fresh, and
+           * FAIL-CLOSED on every failure.
+           *
+           * Nothing in the cache authorizes this. A route can close and a
+           * rolling window can open between the button enabling and this
+           * click — a different tab, another deposit landing, an operator
+           * closing admission — and the next thing that happens is an
+           * `eth_sendTransaction` whose funds do not come back. So both
+           * signals are re-read here, against the values the form holds
+           * RIGHT NOW, and any answer that is not an unambiguous yes stops
+           * the submit before the wallet is ever opened.
+           *
+           * This is the opposite disposition to the SolToGlc re-check
+           * above, which fails open on a failed read. There, the backend's
+           * own admission check is a real floor under a failure. Here it is
+           * not: the deposit is already irreversible by the time the
+           * backend sees it.
+           */
+          const destinationAddress = recipient.trim();
+          const sourceWallet = evmWallet.address;
+          const refuse = (
+            verdict: Exclude<RobinhoodPredepositVerdict, { kind: "allowed" }>,
+          ): never => {
+            // Pull both cached answers back in line with what was just
+            // read, so the form's own callout agrees with this refusal
+            // rather than still showing an enabled button behind it.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.chains() });
+            void rhnEligibility.refetch();
+            throw robinhoodPredepositError(verdict);
+          };
+          // A wallet that vanished between render and click. The gate
+          // cannot have passed without one, so this is a race, not a
+          // state — and it is still not a reason to send anything.
+          if (!sourceWallet) refuse({ kind: "eligibility-unknown" });
+
+          let freshChains;
+          try {
+            freshChains = await bridgeApi.getChains();
+          } catch {
+            // Unreadable availability is unknown availability.
+            freshChains = undefined;
+          }
+          const freshRoute = routeAvailability(freshChains, "RhnToGlc");
+          let freshEligibility: RecipientEligibilityDto | null = null;
+          try {
+            freshEligibility = await bridgeApi.getRhnToGlcRecipientEligibility(
+              destinationAddress,
+              sourceWallet,
+            );
+          } catch {
+            freshEligibility = null;
+          }
+          const verdict = robinhoodPredepositVerdict({
+            routeAvailable: isRouteEffectivelyAvailable(freshChains, "RhnToGlc"),
+            unavailableReason:
+              freshRoute.kind === "unavailable" || freshRoute.kind === "closed"
+                ? freshRoute.reason
+                : null,
+            eligibility: freshEligibility,
+            // Checked against the CURRENT form values, not the ones the
+            // cached verdict was about: the backend echoes both back
+            // precisely so an answer to a superseded question can be
+            // discarded rather than acted on.
+            address: destinationAddress,
+            wallet: sourceWallet,
+          });
+          if (verdict.kind !== "allowed") refuse(verdict);
+
           const encoded = encodeGoldcoinDestination(recipient);
           if (!encoded.ok) throw new Error(encoded.message);
           const result = await robinhoodDeposit.deposit({
@@ -910,6 +1052,17 @@ function destinationOptions(
         // the form then explains why it cannot be used. Hiding it would
         // leave a user unable to find out.
         return { chain, selectable: true, status: "Coming soon", detail: state.reason };
+      case "unavailable":
+        // Switched on, currently refused by its destination reserve.
+        // Selectable for the same reason as `closed`, and worded
+        // differently because this one reopens without anyone doing
+        // anything.
+        return {
+          chain,
+          selectable: true,
+          status: "Temporarily unavailable",
+          detail: state.reason,
+        };
       case "unimplemented":
         return { chain, selectable: true, status: "Not available", detail: state.reason };
       case "unknown":
@@ -925,6 +1078,13 @@ interface Gate {
   readonly blocker: Blocker | null;
   /** The primary button's label, which states what pressing it would do. */
   readonly cta: string;
+  /**
+   * A second line for the blocker callout — today only the backend's own
+   * "you can try again in about N hours" for the Robinhood rolling
+   * windows. `null` for every blocker whose approved copy is one
+   * sentence, which is all of the pre-existing ones.
+   */
+  readonly detail: string | null;
 }
 
 interface GateInput {
@@ -959,6 +1119,15 @@ interface GateInput {
     pending: boolean;
     data: RecipientEligibilityDto | null;
   };
+  /**
+   * The RhnToGlc pre-deposit gate. `applies` is false for every other
+   * route, which is what keeps their gates byte-for-byte unchanged.
+   */
+  predeposit: {
+    applies: boolean;
+    pending: boolean;
+    verdict: RobinhoodPredepositVerdict | null;
+  };
   quotePending: boolean;
   quoteError: boolean;
 }
@@ -980,6 +1149,7 @@ function computeGate(input: GateInput): Gate {
     reasonShownInline: false,
     blocker: null,
     cta: "Bridge GLC",
+    detail: null,
     ...extra,
   });
 
@@ -1015,7 +1185,30 @@ function computeGate(input: GateInput): Gate {
   if (input.availability.kind !== "open") {
     return blocked(input.availability.reason, {
       cta: "Route unavailable",
-      blocker: "route-closed",
+      // `unavailable` is a route that IS switched on and is being held
+      // shut by a runtime gate on its destination reserve. Saying
+      // "closed" there would send a user looking for a setting somebody
+      // has to change, when in fact it reopens on its own.
+      blocker:
+        input.availability.kind === "unavailable" ? "route-unavailable" : "route-closed",
+    });
+  }
+
+  // 2a. EFFECTIVE availability, for the one route with no backend
+  // preflight in front of an irreversible deposit. `enabled` says the
+  // route gate is open and reads no reserve state at all; `available`
+  // says the destination reserve would actually admit a deposit started
+  // now. A deployment that publishes neither answer gets refused here
+  // rather than falling back to the half of the question it did answer —
+  // an unknown must never render as a yes when the cost of being wrong
+  // is a user's funds already in the custody contract.
+  if (
+    input.predeposit.applies &&
+    input.predeposit.verdict?.kind === "route-unavailable"
+  ) {
+    return blocked(input.predeposit.verdict.reason, {
+      cta: "Route unavailable",
+      blocker: "route-unavailable",
     });
   }
 
@@ -1160,6 +1353,47 @@ function computeGate(input: GateInput): Gate {
     // makes one more fresh attempt right before the wallet opens.
   }
 
+  // 7b. The same two rolling-24h limits for RhnToGlc — and, unlike above,
+  // FAIL CLOSED on a read that did not complete.
+  //
+  // The asymmetry is deliberate and is the whole point of this gate. A
+  // blocked SolToGlc deposit lands in a Solana program the bridge
+  // controls, so failing open there degrades to a slower transfer. A
+  // blocked Robinhood deposit is taken by the custody contract and parked
+  // in ManualReview; failing open there costs a user their GLC for as
+  // long as a human takes to look at it. So pending, failed, absent, and
+  // "about different inputs than the form now holds" are all refusals.
+  if (input.predeposit.applies) {
+    if (input.predeposit.pending) {
+      return blocked("Checking this deposit against the bridge's limits…");
+    }
+    const verdict = input.predeposit.verdict;
+    switch (verdict?.kind) {
+      case "allowed":
+        break;
+      case "source-wallet-rate-limited":
+        return blocked(ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE, {
+          blocker: "robinhood-source-wallet-rate-limited",
+          cta: "Route unavailable",
+          detail: verdict.retryAfter,
+        });
+      case "recipient-rate-limited":
+        return blocked(ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE, {
+          blocker: "robinhood-recipient-rate-limited",
+          cta: "Route unavailable",
+          detail: verdict.retryAfter,
+        });
+      default:
+        // `route-unavailable` was already returned at step 2a; everything
+        // remaining is an answer this form could not use, which is not a
+        // rate limit and must not be described as one.
+        return blocked(ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE, {
+          blocker: "robinhood-eligibility-unknown",
+          cta: "Route unavailable",
+        });
+    }
+  }
+
   // 8. The quote.
   if (input.quotePending) return blocked("Fetching quote…");
   if (input.quoteError) return blocked("Could not fetch a quote for this amount.");
@@ -1170,5 +1404,6 @@ function computeGate(input: GateInput): Gate {
     reasonShownInline: false,
     blocker: null,
     cta: "Bridge GLC",
+    detail: null,
   };
 }

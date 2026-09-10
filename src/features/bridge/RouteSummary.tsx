@@ -147,7 +147,10 @@ function Row({
  * copy for these routes says — support is in development — rather than a
  * promise this UI invented. `unimplemented` is a stronger statement: no
  * settlement machinery exists on either side, so no operator action opens
- * it. The backend's full sentence renders underneath either way.
+ * it. `unavailable` is the weakest of the three: the route is switched on
+ * and a runtime gate on its destination reserve is holding it shut, so it
+ * reopens on its own. The backend's full sentence renders underneath in
+ * every case.
  */
 function statusLabel(availability: RouteAvailability): string {
   switch (availability.kind) {
@@ -155,6 +158,12 @@ function statusLabel(availability: RouteAvailability): string {
       return "Available";
     case "closed":
       return "Coming soon";
+    case "unavailable":
+      // Switched on and currently refused. NOT "Coming soon", which
+      // promises a future release, and not "Not available", which reads
+      // as permanent: this route works and its destination reserve is
+      // simply not admitting right now.
+      return "Temporarily unavailable";
     case "unimplemented":
       return "Not available";
     case "unknown":

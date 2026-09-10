@@ -248,18 +248,41 @@ export class MockBridgeClient implements BridgeApiClient {
     // on-chain, not through this API), so every recipient/wallet reads as
     // eligible — the blocked shape is exercised by unit tests, not by a
     // mock-mode scenario.
-    return this.delay(
-      recipientEligibilitySchema.parse({
-        direction: "SolToGlc",
-        address: address.trim(),
-        wallet: wallet ?? null,
-        eligible: true,
-        blocked_reason: null,
-        retry_after: null,
-        retry_after_seconds: null,
-        window_seconds: 86_400,
-      }),
-    );
+    return this.delay(this.eligibility("SolToGlc", address, wallet));
+  }
+
+  /**
+   * The `RhnToGlc` twin, answering the same shape for the same reason.
+   * Kept on one private builder with its Solana sibling so the two can
+   * never drift into describing the limits differently — on the backend
+   * they are literally one `from_windows`.
+   */
+  async getRhnToGlcRecipientEligibility(address: string, wallet: string | null) {
+    return this.delay(this.eligibility("RhnToGlc", address, wallet));
+  }
+
+  private eligibility(
+    direction: "SolToGlc" | "RhnToGlc",
+    address: string,
+    wallet: string | null,
+  ) {
+    return recipientEligibilitySchema.parse({
+      direction,
+      // Echoed back exactly as the backend does, because a caller racing
+      // form edits discards a verdict whose echo does not match what it
+      // now holds — a mock that echoed something else would make that
+      // check look broken.
+      address: address.trim(),
+      wallet: wallet ?? null,
+      eligible: true,
+      blocked_reason: null,
+      blocked_reasons: [],
+      retry_after: null,
+      retry_after_seconds: null,
+      source_wallet_retry_after: null,
+      recipient_retry_after: null,
+      window_seconds: 86_400,
+    });
   }
 
   /**

@@ -207,6 +207,7 @@ describe("Bridge quote summary", () => {
         destination={descriptorFor("solana")!}
         availability={{
           kind: "open",
+          availabilityKnown: true,
           view: {
             id: "GlcToSol",
             source_chain: "goldcoin",
@@ -214,6 +215,8 @@ describe("Bridge quote summary", () => {
             enabled: true,
             disabled_reason: null,
             implemented: true,
+            available: true,
+            unavailable_reason: null,
           },
         }}
         quote={data}

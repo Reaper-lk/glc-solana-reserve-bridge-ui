@@ -5,7 +5,7 @@ import { unixSecondsSchema } from "./common";
  * `GET /chains` — the chain/route registry, and the ONLY authoritative
  * answer to "can a user start a transfer this way right now".
  *
- * # Why this endpoint is the availability boundary
+ * # Two fields, two different questions
  *
  * `enabled` is the server's own `RouteGate` verdict — the same gate
  * `POST /quote` and `POST /transfers` enforce, evaluated per request and
@@ -14,9 +14,21 @@ import { unixSecondsSchema } from "./common";
  * table, and the chain adapter's capability. For anything touching the
  * Robinhood custody contract there is a fourth gate this service does
  * not control at all — the contract's own `routeEnabled`, read live
- * before every broadcast.
+ * before every broadcast. It reads NO reserve state whatsoever.
  *
- * A UI must render availability from this field and must never re-derive
+ * `available` (backend PR #76) is `enabled` AND every runtime gate on the
+ * route's DESTINATION reserve. It exists because `enabled` alone was read
+ * as permission in production while `GoldcoinReserve`'s admission was
+ * closed, and `RhnToGlc` deposits — which reach the custody contract with
+ * no `POST /transfers` preflight — folded straight into `ManualReview`
+ * with users' funds already committed.
+ *
+ * **A "start a transfer" affordance is gated on `available`.**
+ * `enabled`/`implemented` choose only the WORDING: "Coming soon" for a
+ * route this build cannot serve, "temporarily unavailable" for one that
+ * is switched on and currently closed.
+ *
+ * A UI must render availability from these fields and must never re-derive
  * it from its own configuration. That is what makes enabling a route
  * later a backend-only change: no frontend deploy, no env var, no
  * hardcoded list of "routes we support" to go stale.
@@ -49,7 +61,12 @@ export const routeViewSchema = z.object({
   id: z.string().min(1),
   source_chain: z.string().min(1),
   destination_chain: z.string().min(1),
-  /** The server's verdict. The only availability signal this UI may use. */
+  /**
+   * The server's `RouteGate` verdict: is this route SWITCHED ON in this
+   * deployment? Config + `bridge_routes` + adapter capability, and no
+   * reserve state at all — read `available` below before offering a
+   * transfer.
+   */
   enabled: z.boolean(),
   /**
    * Cause-agnostic end-user copy when `enabled` is false; null when
@@ -65,6 +82,41 @@ export const routeViewSchema = z.object({
    * it is available WITHOUT parsing `disabled_reason`.
    */
   implemented: z.boolean(),
+  /**
+   * **The field a "start a transfer" affordance must be gated on**
+   * (backend PR #76, `RouteView::available`): `enabled` AND every runtime
+   * gate on this route's DESTINATION reserve — paused, admission closed,
+   * the confirmed-liquidity gate and its safety buffer, the mature-UTXO
+   * pool floor, and capacity.
+   *
+   * `enabled` alone is not that answer and never was. It is the
+   * `RouteGate` verdict over config, `bridge_routes` and adapter
+   * capability, and it reads NO reserve state — which is exactly how
+   * `RhnToGlc` came to report `enabled: true` while `GoldcoinReserve`
+   * admission was closed, folding every newly observed Robinhood deposit
+   * straight into `ManualReview`. An `RhnToGlc` deposit reaches the
+   * custody contract with no `POST /transfers` preflight in front of it,
+   * so this published signal is the only thing standing between a user
+   * and an irreversible on-chain deposit the bridge will not settle
+   * normally.
+   *
+   * OPTIONAL on the wire, and deliberately not defaulted to `true`: a
+   * deployment predating PR #76 omits it, and `undefined` therefore means
+   * "this backend does not publish effective availability", which
+   * `routeAvailability` treats as unknown rather than as a yes. It is
+   * amount-independent by construction (it is asked before an amount
+   * exists) and says nothing about the per-recipient/per-source-wallet
+   * rolling-24h windows — `GET /recipients/{sol,rhn}-to-glc/eligibility`
+   * owns those.
+   */
+  available: z.boolean().optional(),
+  /**
+   * Cause-agnostic end-user copy when `available` is `false`; `null` when
+   * available. Rendered verbatim, exactly like `disabled_reason` — the
+   * backend deliberately never names which gate refused, and this UI must
+   * not try to infer one.
+   */
+  unavailable_reason: z.string().nullable().optional(),
 });
 
 export type RouteViewDto = z.infer<typeof routeViewSchema>;

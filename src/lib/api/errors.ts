@@ -1,6 +1,13 @@
 import { type ApiErrorBody } from "./schemas/common";
 import { RECIPIENT_RATE_LIMIT_TITLE } from "@/lib/bridge/recipient-rate-limit";
 import { SOURCE_WALLET_RATE_LIMIT_TITLE } from "@/lib/bridge/source-wallet-rate-limit";
+import {
+  ROBINHOOD_ELIGIBILITY_UNKNOWN_NEXT,
+  ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
+  ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
+  ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE,
+  type RobinhoodPredepositVerdict,
+} from "@/lib/bridge/robinhood-predeposit";
 
 /**
  * The error contract, mapped once into the shape the UI is required to
@@ -31,7 +38,8 @@ export type ApiErrorKind =
   | "solana-transaction"
   | "evm-transaction"
   | "recipient-rate-limited"
-  | "source-wallet-rate-limited";
+  | "source-wallet-rate-limited"
+  | "robinhood-predeposit-refused";
 
 export interface ErrorPresentation {
   readonly what: string;
@@ -204,6 +212,62 @@ export function sourceWalletRateLimitedError(): ApiError {
       funds: "",
       next: "",
     },
+  });
+}
+
+/**
+ * The FINAL pre-deposit re-check for `RhnToGlc` refused, so no EVM
+ * transaction was ever built.
+ *
+ * # Why this route gets its own error at all
+ *
+ * `recipientRateLimitedError`/`sourceWalletRateLimitedError` are one
+ * approved sentence each, with `funds`/`next` deliberately empty and no
+ * retry time — a product decision made for `SolToGlc`, where a blocked
+ * deposit lands in a program the bridge controls and the worst outcome is
+ * a slower transfer. A blocked Robinhood deposit is not slower; it is
+ * folded into `ManualReview` with the user's GLC already in the custody
+ * contract. So this one states plainly that nothing was sent, and — where
+ * the backend published a reopen time — when to come back, because the
+ * alternative is a user retrying into the same refusal all day.
+ *
+ * Built from the same `RobinhoodPredepositVerdict` the form's disabled
+ * button is built from, so the reason a click is refused is always the
+ * reason the button was already giving.
+ */
+export function robinhoodPredepositError(
+  verdict: Exclude<RobinhoodPredepositVerdict, { kind: "allowed" }>,
+): ApiError {
+  const NOTHING_SENT =
+    "No funds have left your wallet — no deposit transaction was created.";
+  const presentation: ErrorPresentation =
+    verdict.kind === "route-unavailable"
+      ? {
+          // The backend's own cause-agnostic sentence, verbatim. This UI
+          // never authors a second explanation of a closed route.
+          what: verdict.reason,
+          funds: NOTHING_SENT,
+          next: "Check the status page for live route availability, or try again later.",
+        }
+      : verdict.kind === "eligibility-unknown"
+        ? {
+            what: ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
+            funds: NOTHING_SENT,
+            next: ROBINHOOD_ELIGIBILITY_UNKNOWN_NEXT,
+          }
+        : {
+            what:
+              verdict.kind === "source-wallet-rate-limited"
+                ? ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE
+                : ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
+            funds: NOTHING_SENT,
+            next: verdict.retryAfter,
+          };
+  return new ApiError({
+    kind: "robinhood-predeposit-refused",
+    message: presentation.what,
+    retryable: false,
+    presentation,
   });
 }
 
