@@ -85,8 +85,9 @@ export async function waitForRouteVerdict() {
  * label outside this set is a bug, not a passing test.
  */
 export function primaryCta(): HTMLElement {
-  // Scoped to the form's own landmark: the app header carries its own
-  // "Connect wallet" control, and an unscoped lookup would match both.
+  // Scoped to the form's own landmark: the FROM panel carries the source
+  // network's own connect buttons, and an unscoped lookup could match one
+  // of those rather than the form's primary action.
   return within(screen.getByRole("region", { name: "Bridge transfer" })).getByRole(
     "button",
     {

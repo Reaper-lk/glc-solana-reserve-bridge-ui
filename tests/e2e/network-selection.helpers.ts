@@ -28,8 +28,9 @@ export async function selectNetwork(
  * fails the suite rather than silently passing.
  */
 export function primaryCta(page: Page) {
-  // Scoped to the form's own landmark: the header carries its own
-  // "Connect wallet" control, and an unscoped lookup would match both.
+  // Scoped to the form's own landmark: the FROM panel carries the source
+  // network's own connect buttons, and an unscoped lookup could match one
+  // of those rather than the form's primary action.
   return page.getByRole("region", { name: "Bridge transfer" }).getByRole("button", {
     name: /^(Bridge GLC|Route unavailable|Connect wallet|Enter destination|Enter an amount|Choose networks)$/,
   });

@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { mockHappyBackend } from "./intercepted-helpers";
+import { selectNetwork, waitForRouteVerdict } from "./network-selection.helpers";
 
 /**
  * Wallet Standard discovery, end to end in a real browser.
@@ -16,6 +17,11 @@ import { mockHappyBackend } from "./intercepted-helpers";
  * other than localhost/127.0.0.1 (docs.phantom.com FAQ), which no
  * app-side test can detect. Real-extension verification is a manual step
  * over https.
+ *
+ * The connect controls live in the bridge form's FROM panel and belong to
+ * the selected source network, so every case below selects Solana first.
+ * Only DETECTED wallets get a button there; how undetected ones are merged
+ * into the list is covered by `tests/unit/solana-adapter-bridge.test.tsx`.
  *
  * Lives in the intercepted project because that server is the one built
  * with NEXT_PUBLIC_SOLANA_RPC_URL set (see playwright.config.ts) — without
@@ -52,37 +58,46 @@ const SYNTHETIC_WALLET_STANDARD_WALLET = `
 })();
 `;
 
-test("a Wallet Standard wallet registered before page load is detected and listed", async ({
+test("a Wallet Standard wallet registered before page load is detected and offered", async ({
   page,
 }) => {
   await mockHappyBackend(page);
   await page.addInitScript(SYNTHETIC_WALLET_STANDARD_WALLET);
   await page.goto("/bridge");
+  await waitForRouteVerdict(page);
+  await selectNetwork(page, "Source network", /Solana/);
 
-  await page.getByRole("button", { name: /connect wallet/i }).click();
-
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  // The synthetic wallet appears as a detected entry…
-  await expect(dialog.getByText("Synthetic Standard Wallet")).toBeVisible();
-  await expect(dialog.getByText("Detected").first()).toBeVisible();
-  // …ahead of the advertised-but-absent wallets, which keep install links.
-  await expect(dialog.getByText("Phantom")).toBeVisible();
-  await expect(dialog.getByText("Not installed").first()).toBeVisible();
+  const panel = page.getByRole("region", { name: "From" });
+  await expect(
+    panel.getByRole("button", { name: /Connect Synthetic Standard Wallet/i }),
+  ).toBeVisible();
 });
 
-test("with no wallet registered, every advertised wallet shows as not installed", async ({
+test("with no wallet registered, the panel says so instead of offering a dead button", async ({
   page,
 }) => {
   await mockHappyBackend(page);
   await page.goto("/bridge");
+  await waitForRouteVerdict(page);
+  await selectNetwork(page, "Source network", /Solana/);
 
-  await page.getByRole("button", { name: /connect wallet/i }).click();
+  const panel = page.getByRole("region", { name: "From" });
+  await expect(panel.getByText(/No Solana wallet was detected/i)).toBeVisible();
+  await expect(panel.getByRole("link", { name: /wallets we support/i })).toBeVisible();
+  await expect(panel.getByRole("button", { name: /^Connect / })).toHaveCount(0);
+});
 
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Phantom")).toBeVisible();
-  await expect(dialog.getByText("Solflare")).toBeVisible();
-  await expect(dialog.getByText("Backpack")).toBeVisible();
-  await expect(dialog.getByText("Detected")).toHaveCount(0);
+test("a Robinhood source offers its own EVM wallets, not Solana's", async ({ page }) => {
+  // The panel's contents follow the source network. Nothing about the
+  // Solana wallet survives the switch.
+  await mockHappyBackend(page);
+  await page.addInitScript(SYNTHETIC_WALLET_STANDARD_WALLET);
+  await page.goto("/bridge");
+  await waitForRouteVerdict(page);
+  await selectNetwork(page, "Source network", /Robinhood Chain/);
+
+  const panel = page.getByRole("region", { name: "From" });
+  await expect(
+    panel.getByRole("button", { name: /Connect Synthetic Standard Wallet/i }),
+  ).toHaveCount(0);
 });

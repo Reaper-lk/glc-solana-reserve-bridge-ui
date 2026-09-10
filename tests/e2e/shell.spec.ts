@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-test.describe("app shell, navigation, and wallet-connect UI", () => {
+test.describe("app shell and navigation", () => {
   test("every primary nav link reaches a real page", async ({ page }) => {
     await page.goto("/");
     for (const [label, path] of [
@@ -21,24 +21,23 @@ test.describe("app shell, navigation, and wallet-connect UI", () => {
     await expect(page.getByRole("link", { name: /skip to main content/i })).toBeFocused();
   });
 
-  test("the wallet-connect control is reachable without signing or broadcasting anything", async ({
+  test("carries no wallet control, in the bar or in the navigation sheet", async ({
     page,
   }) => {
+    // Which wallet a visitor needs depends on the network they are bridging
+    // FROM, so the connect controls live in the bridge form's own FROM
+    // panel. A site-wide control asked every reader — including one on the
+    // FAQ — to connect a wallet for a network they had not chosen.
     await page.goto("/");
+    await expect(page.getByRole("banner").getByText(/connect wallet/i)).toHaveCount(0);
 
-    // Below `md` the header hides the wallet control and it moves inside the
-    // navigation sheet instead — not dropped, just relocated.
     const viewport = page.viewportSize();
     if (viewport && viewport.width < 768) {
       await page.getByRole("button", { name: /Open navigation menu/i }).click();
+      const sheet = page.getByRole("dialog");
+      await expect(sheet.getByRole("link", { name: "Bridge" })).toBeVisible();
+      await expect(sheet.getByText(/connect wallet/i)).toHaveCount(0);
     }
-
-    const connect = page.getByRole("button", { name: /Connect wallet/i });
-    await expect(connect).toBeVisible();
-    // Unconfigured in this deployment (no Solana RPC set) — it must state so
-    // rather than pretend to work.
-    await expect(connect).toBeDisabled();
-    await expect(connect).toHaveAccessibleDescription(/not configured/i);
   });
 
   test("a nonexistent route renders the real not-found page, not a framework default", async ({

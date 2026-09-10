@@ -82,6 +82,10 @@ vi.mock("@/lib/solana", () => ({
   useTokenBalance: () => solana.balance,
   isTokenBalanceAvailable: () => solana.mintConfigured,
   walletQueryKeys: { balances: () => ["solana", "balance"] },
+  // The FROM panel's Solana connect control: desktop, so the wallet list
+  // rather than the deep-link flow, and no error to suppress.
+  needsDeepLink: () => false,
+  isUserRejection: () => false,
 }));
 
 /** Mutable EVM wallet + balance, driven per test. */

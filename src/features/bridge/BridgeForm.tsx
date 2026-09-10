@@ -441,9 +441,9 @@ export function BridgeForm() {
         </p>
       </div>
 
-      {/* Its own landmark: the header carries a "Connect wallet" control of
-          its own, and both tests and assistive tech need to address THIS
-          form's primary action without ambiguity. */}
+      {/* Its own landmark: the FROM panel carries the source network's own
+          connect buttons, and both tests and assistive tech need to address
+          THIS form's primary action without ambiguity. */}
       <section aria-label="Bridge transfer" className="flex flex-col gap-2">
         <NetworkPanel
           label="From"

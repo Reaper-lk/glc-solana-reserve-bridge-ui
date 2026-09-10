@@ -5,7 +5,6 @@ import { Footer } from "./Footer";
 import { BridgeStatusBar } from "./BridgeStatusBar";
 import { ReserveBanner } from "./ReserveBanner";
 import { NetworkAnnouncement } from "./NetworkAnnouncement";
-import { WalletSlot } from "./WalletSlot";
 import { CornerDock } from "./CornerDock";
 import { HelpWidget } from "@/components/help/HelpWidget";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -49,7 +48,7 @@ export function AppShell({
         Skip to main content
       </a>
 
-      <Header walletSlot={<WalletSlot />} />
+      <Header />
 
       {/*
         Grouped in its own landmark, separate from Header's own top-level

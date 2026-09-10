@@ -4,6 +4,7 @@ import { Wallet } from "lucide-react";
 import type { ChainAdapter } from "@/lib/bridge";
 import type { EvmWalletState } from "@/lib/evm";
 import { RobinhoodWalletConnect } from "@/features/wallet/RobinhoodWalletConnect";
+import { SolanaWalletConnect } from "@/features/wallet/SolanaWalletConnect";
 import { ExchangeAddressWarning } from "./ExchangeAddressWarning";
 
 /**
@@ -38,10 +39,12 @@ export function SourceContext({
   if (chainId === "robinhood") {
     return <RobinhoodWalletConnect wallet={evmWallet} />;
   }
-  // Solana's wallet is connected once for the whole site from the header,
-  // and the submit gate states plainly when it is not — a second connect
-  // control here would be a duplicate of it. Goldcoin has no source
-  // wallet to connect at all.
+  if (chainId === "solana") {
+    return <SolanaWalletConnect />;
+  }
+  // Goldcoin has no source wallet to connect at all: the deposit address
+  // is issued by the backend after the request is created, so there is
+  // nothing a browser wallet could do here.
   return null;
 }
 

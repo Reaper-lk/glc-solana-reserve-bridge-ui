@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mockHappyBackend, CORS_HEADERS } from "./intercepted-helpers";
+import { selectNetwork, waitForRouteVerdict } from "./network-selection.helpers";
 
 /**
  * The source-wallet balance and MAX, in a real browser with a connected
@@ -123,18 +124,19 @@ async function mockSolanaRpc(page: Page) {
   });
 }
 
-/** Opens the header wallet dialog and connects the synthetic wallet. */
+/**
+ * Connects the synthetic wallet from the FROM panel, which is the only
+ * place a wallet is offered: the control belongs to the selected source
+ * network, so Solana has to be selected for it to exist at all.
+ */
 async function connectWallet(page: Page) {
-  await page
-    .getByRole("button", { name: /Connect wallet/i })
-    .first()
-    .click();
-  await page.getByRole("button", { name: /Synthetic Standard Wallet/i }).click();
-  // Scoped to the header: the form grows its own "use connected wallet"
-  // shortcut carrying the same address once a Solana destination is picked.
-  await expect(
-    page.getByRole("banner").getByRole("button", { name: /9WzD/ }),
-  ).toBeVisible();
+  // The verdict is both what fills the selector and the signal that the
+  // form has hydrated: a click before then opens nothing.
+  await waitForRouteVerdict(page);
+  await selectNetwork(page, "Source network", /Solana/);
+  const panel = page.getByRole("region", { name: "From" });
+  await panel.getByRole("button", { name: /Connect Synthetic Standard Wallet/i }).click();
+  await expect(panel.getByRole("button", { name: /Disconnect/i })).toBeVisible();
 }
 
 test.describe("source-wallet balance and MAX", () => {
@@ -151,6 +153,9 @@ test.describe("source-wallet balance and MAX", () => {
     // derived from the bridge's own reserve figures.
     await page.goto("/bridge");
     await connectWallet(page);
+
+    // Back to the default source, with the wallet still connected.
+    await selectNetwork(page, "Source network", /Goldcoin/);
 
     await expect(page.getByText(/Balance:/)).toHaveCount(0);
     await expect(page.getByRole("button", { name: "MAX" })).toHaveCount(0);

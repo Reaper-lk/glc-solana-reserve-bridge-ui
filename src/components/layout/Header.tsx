@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { DropdownMenu } from "radix-ui";
-import type { ReactNode } from "react";
 import { BrandMark } from "./BrandMark";
 import { MobileNav } from "./MobileNav";
 import { moreNav, primaryNav } from "./navigation";
@@ -15,12 +14,13 @@ import { cn } from "@/lib/utils/cn";
  * Global header (design spec G1): 64px, sticky, hairline border, active item
  * marked with a 2px gold underline.
  *
- * `walletSlot` is where the connect control lands with the wallet PR. It is
- * left empty rather than filled with a placeholder button, because a control
- * that looks live and does nothing is exactly the first impression the design
- * review warns against.
+ * It carries no wallet control. Which wallet a visitor needs depends on the
+ * network they are bridging FROM, and that is only known inside the bridge
+ * form — a site-wide connect button asked most readers to connect a wallet
+ * for a network they had not chosen. The connect controls now live in the
+ * form's own FROM panel, next to the network that decides them.
  */
-export function Header({ walletSlot }: { walletSlot?: ReactNode }) {
+export function Header() {
   const pathname = usePathname();
 
   return (
@@ -70,16 +70,7 @@ export function Header({ walletSlot }: { walletSlot?: ReactNode }) {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          {/*
-            The wallet control appears from `md` up. At 360px the mark, a
-            connect control and the menu button cannot share a 64px bar
-            without overflowing, and a financial page that scrolls sideways
-            is a defect. Below `md` the same control is reachable inside the
-            navigation sheet instead (passed to MobileNav below), not
-            dropped.
-          */}
-          <div className="hidden md:flex md:items-center">{walletSlot}</div>
-          <MobileNav walletSlot={walletSlot} />
+          <MobileNav />
         </div>
       </div>
     </header>

@@ -11,11 +11,13 @@ import { WalletModal } from "./WalletModal";
 import { WalletBalances } from "./WalletBalances";
 
 /**
- * The header wallet control (design spec G1).
+ * The standalone Solana wallet control (design spec G1), used by the admin
+ * funding page. The bridge form connects contextually instead, through
+ * `SolanaWalletConnect`.
  *
  * Disconnected it is a secondary button; connected it becomes the address with
- * balances and a dropdown. Every state renders at a stable width so the header
- * does not jump as the connection settles.
+ * balances and a dropdown. Every state renders at a stable width so the row it
+ * sits in does not jump as the connection settles.
  *
  * Before hydration it renders a neutral placeholder of the same size: the
  * server cannot know which wallets exist, and asserting a wallet state that
@@ -38,7 +40,7 @@ export function WalletButton() {
         variant="secondary"
         disabled
         disabledReason="Wallet connection is not configured for this deployment."
-        // The header cannot absorb a sentence at 360px without overflowing.
+        // A single row cannot absorb a sentence at 360px without overflowing.
         reasonPlacement="accessible"
       >
         Connect wallet

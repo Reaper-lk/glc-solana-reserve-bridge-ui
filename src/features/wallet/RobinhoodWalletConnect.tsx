@@ -10,11 +10,11 @@ import { robinhoodAddressUrl } from "@/lib/config/links";
 /**
  * The Robinhood Network (EVM) wallet control.
  *
- * Deliberately in the bridge form rather than the header. The header's
- * wallet control is Solana's, connected once for the whole site; a
- * Robinhood wallet is needed for exactly one route and only while that
- * route is selected, so prompting for it site-wide would ask most users to
- * connect a wallet they will never use.
+ * Deliberately in the bridge form rather than the header, as every source
+ * network's control now is: a Robinhood wallet is needed for exactly one
+ * route and only while that route is selected, so prompting for it
+ * site-wide would ask most users to connect a wallet they will never use.
+ * `SolanaWalletConnect` is the same control for a Solana source.
  *
  * Injected wallets only (EIP-6963, with a legacy `window.ethereum`
  * fallback). Nothing here connects on mount: `eth_accounts` restores an
