@@ -1,10 +1,35 @@
-import { createPublicClient, http, type Address } from "viem";
+import {
+  createPublicClient,
+  custom,
+  type Address,
+  type EIP1193Provider,
+  type Hex,
+} from "viem";
 import { ROBINHOOD_DECIMALS } from "@/lib/bridge/robinhood-amount";
 import { erc20Abi } from "./abi";
 import type { RobinhoodDeployment } from "./config";
 
 /**
  * The connected wallet's GLC balance on Robinhood Chain.
+ *
+ * # Read through the wallet, not through the deployment's RPC
+ *
+ * `balanceOf`/`decimals` are dispatched over the CONNECTED wallet's own
+ * EIP-1193 provider. This is the account's own balance, and the wallet is
+ * already the authority for which account is connected and which network
+ * it is on — routing the read anywhere else means the browser opening a
+ * direct connection to `NEXT_PUBLIC_ROBINHOOD_RPC_URL`, which is a
+ * different node, a different set of CORS and rate-limit rules, and a
+ * `connect-src` origin the page has no other reason to talk to. That path
+ * is what produced a permanent "Balance unavailable" beside a wallet that
+ * had connected perfectly well.
+ *
+ * The deployment's RPC is still the right endpoint for the reads that gate
+ * a SIGNATURE (`preflightRobinhoodDeposit`), where the point is precisely
+ * not to trust whichever node the wallet happens to be pointed at. That
+ * distinction is deliberate: a balance shown next to a MAX button is the
+ * user's own figure from the user's own wallet; a limit that decides
+ * whether a transaction is built is not.
  *
  * # Exact, or absent
  *
@@ -23,6 +48,16 @@ import type { RobinhoodDeployment } from "./config";
  * rather than scaling by whatever the contract happened to say. Adopting a
  * surprise value would render a balance that looks plausible and is wrong
  * by a factor of ten to the something.
+ *
+ * # Fail closed on the chain
+ *
+ * The wallet's chain is re-read from the provider immediately before the
+ * contract calls and must equal the deployment's. The hook already refuses
+ * to run while `onExpectedChain` is false, but that is React state read at
+ * render time and a wallet can change networks between then and the call
+ * landing. A `balanceOf` answered by the wrong network is a real number
+ * for a different asset, which is worse than no number — so it is refused
+ * here too, against the provider that is about to answer.
  */
 
 export interface EvmTokenBalance {
@@ -35,12 +70,20 @@ export interface EvmTokenBalance {
 export async function fetchRobinhoodGlcBalance(params: {
   readonly deployment: RobinhoodDeployment;
   readonly account: Address;
+  /** The connected wallet's provider. Never `window.ethereum` read globally. */
+  readonly provider: EIP1193Provider;
 }): Promise<EvmTokenBalance> {
-  const { deployment, account } = params;
-  // The deployment's own RPC, not the wallet's: a wallet may be pointed at
-  // any node, and a balance shown next to a MAX button should come from the
-  // endpoint this deployment was configured with.
-  const client = createPublicClient({ transport: http(deployment.rpcUrl) });
+  const { deployment, account, provider } = params;
+
+  const chainIdHex = (await provider.request({ method: "eth_chainId" })) as Hex;
+  const chainId = Number(BigInt(chainIdHex));
+  if (chainId !== deployment.chainId) {
+    throw new Error(
+      `The wallet is on chain ${chainId}, but this balance is for chain ${deployment.chainId}`,
+    );
+  }
+
+  const client = createPublicClient({ transport: custom(provider) });
 
   const [raw, decimals] = await Promise.all([
     client.readContract({

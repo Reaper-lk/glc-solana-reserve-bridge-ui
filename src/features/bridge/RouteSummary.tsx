@@ -3,7 +3,7 @@
 import type { RouteAvailability } from "@/lib/bridge";
 import type { ChainDescriptor } from "@/lib/bridge";
 import type { QuoteOutputDto } from "@/lib/api/schemas/quote";
-import { formatDisplayDecimal } from "@/lib/format/amount";
+import { formatDisplayDecimalOrRaw as display } from "@/lib/format/amount";
 
 /**
  * The metadata under the form: what this transfer is, whether it can
@@ -159,20 +159,6 @@ function statusLabel(availability: RouteAvailability): string {
       return "Not available";
     case "unknown":
       return "Checking…";
-  }
-}
-
-/**
- * Presentation only, over the backend's own figure. A string this helper
- * cannot read is shown exactly as the backend sent it — an unfamiliar
- * format is still the real number, and hiding it would be worse than not
- * grouping it.
- */
-function display(value: string): string {
-  try {
-    return formatDisplayDecimal(value);
-  } catch {
-    return value;
   }
 }
 

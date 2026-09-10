@@ -163,6 +163,24 @@ export function useQuote(
     enabled: enabled && BigInt(grossAmount) > 0n,
     staleTime: 5_000,
     retry: false,
+    /*
+     * Opted out of the app-wide `placeholderData: previous => previous`
+     * (src/lib/query/provider.tsx).
+     *
+     * That default keeps the last value on screen through a refetch, which
+     * is right for a dashboard figure and wrong for this one. The amount is
+     * part of this query's KEY, so "previous" here is the quote for an
+     * amount the user has already edited away: with it, typing a new amount
+     * left the old fee and "you receive" rendered beside the new figure,
+     * and — because a placeholder resolves as `success`, not `pending` —
+     * `quotePending` stayed false, so the submit gate did not hold while
+     * the real quote was still in flight. A quote is a statement about one
+     * exact amount; it does not survive that amount changing.
+     *
+     * The visible cost is a brief "…" between amounts, which the fee and
+     * receive rows already render. That is the honest state.
+     */
+    placeholderData: () => undefined,
   });
 }
 

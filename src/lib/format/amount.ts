@@ -157,6 +157,31 @@ export function formatDisplayDecimal(value: string): string {
   return formatDisplayAmount(`${whole}${fraction}`, fraction.length);
 }
 
+/**
+ * `formatDisplayDecimal`, but a string it cannot read is returned exactly
+ * as it arrived instead of throwing.
+ *
+ * For backend-authored figures rendered inside a component. `POST /quote`'s
+ * `*_display_amount` fields are free text on the wire, and this app formats
+ * them rather than computing them — so an unfamiliar format is still the
+ * real number, and showing it ungrouped is strictly better than the
+ * alternative. The alternative is not a missing figure: an `AmountFormatError`
+ * thrown from a render lands in the page's error boundary (`app/error.tsx`)
+ * and replaces the whole bridge form with "Something went wrong loading this
+ * page." — taking down a working form over a cosmetic separator.
+ *
+ * Presentation only, and only for values the backend is authoritative for.
+ * Never used for a figure this app computes or submits: those must fail
+ * loudly, which is what the throwing form is for.
+ */
+export function formatDisplayDecimalOrRaw(value: string): string {
+  try {
+    return formatDisplayDecimal(value);
+  } catch {
+    return value;
+  }
+}
+
 function groupDigits(value: string): string {
   return value.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
