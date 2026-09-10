@@ -28,6 +28,7 @@ const getHealth = vi.fn();
 const getReserve = vi.fn();
 const getRobinhoodReserve = vi.fn();
 const getLimits = vi.fn();
+const getStats = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   bridgeApi: {
@@ -37,6 +38,7 @@ vi.mock("@/lib/api", () => ({
     getReserve: (...args: unknown[]) => getReserve(...args),
     getRobinhoodReserve: (...args: unknown[]) => getRobinhoodReserve(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
+    getStats: (...args: unknown[]) => getStats(...args),
   },
 }));
 
@@ -58,6 +60,7 @@ beforeEach(() => {
   getChains.mockResolvedValue(openChains());
   getRobinhoodReserve.mockResolvedValue(openReserve());
   getLimits.mockResolvedValue(fixtures.limitsFixture());
+  getStats.mockResolvedValue(fixtures.statsFixture());
 });
 
 /**
@@ -176,24 +179,33 @@ describe("StatusView with Robinhood routes open", () => {
     expect(glcToRhn.queryByText("Available")).toBeNull();
   });
 
-  it("says a figure is not published rather than showing it as zero", async () => {
+  it("omits an unpublished figure rather than showing it as zero", async () => {
     // A route reported open by `/chains` on a deployment with no
     // `[reserve.robinhood]` section. "0 GLC of capacity" would claim an
     // empty reserve; there is no reserve.
     getRobinhoodReserve.mockResolvedValue(openReserve({ open: false }));
     renderWithQueryClient(<StatusView />);
     const glcToRhn = await card("GLC L1 → GLC on Robinhood");
-    // An unanswered read and an unconfigured reserve fail closed to the
-    // SAME display, which is the point — so wait for the read to land
-    // before asserting, or the test would pass on the placeholder.
+    // An unanswered read and an unconfigured reserve fail closed the SAME
+    // way, which is the point — so wait for the read to land before
+    // asserting, or the test would pass on the loading state.
     await vi.waitFor(() => expect(getRobinhoodReserve).toHaveBeenCalled());
 
     expect(await glcToRhn.findByText("Unknown")).toBeInTheDocument();
     // Capacity, the 24-hour window, and the per-transfer limits — which
-    // `GET /limits` publishes only for the Solana-governed pair. Three
-    // absent figures, three explicit statements that they are absent.
-    expect(glcToRhn.getAllByText("Not published")).toHaveLength(3);
+    // `GET /limits` publishes only for the Solana-governed pair. All three
+    // absent, and absent means no row: a card with three "Not published"
+    // slots reads as unfinished while telling a reader nothing.
+    expect(glcToRhn.queryByText("Destination reserve capacity")).toBeNull();
+    expect(glcToRhn.queryByText(/Remaining 24-hour capacity/)).toBeNull();
+    expect(glcToRhn.queryByText("Per-transfer limits")).toBeNull();
+    expect(glcToRhn.queryByText("Not published")).toBeNull();
     expect(glcToRhn.queryByText(/0\.00 GLC/)).toBeNull();
+    // The state itself is still reported — the badge, and the sentence
+    // saying why there are no figures.
+    expect(
+      glcToRhn.getByText(/publishes no Robinhood reserve/, { exact: false }),
+    ).toBeInTheDocument();
   });
 
   it("fails closed when /robinhood/reserve cannot be read at all", async () => {
@@ -229,12 +241,24 @@ describe("StatusView with Robinhood routes closed", () => {
     // The cards used to be dropped for a closed Robinhood route, which
     // left /status silently missing two of the four routes it exists to
     // report on. A closed route has a state worth stating; what it does
-    // not have is figures, and those read as "Not published" rather than
-    // as zero.
+    // not have is figures.
     renderWithQueryClient(<StatusView />);
     await screen.findByRole("heading", { name: "GLC L1 → GLC on Solana" });
 
-    expect(screen.getAllByText("Destination reserve capacity")).toHaveLength(4);
+    for (const label of [
+      "GLC L1 → GLC on Solana",
+      "GLC on Solana → GLC L1",
+      "GLC L1 → GLC on Robinhood",
+      "GLC on Robinhood → GLC L1",
+    ]) {
+      expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
+    }
+    // Three of the four have a destination capacity to show: the two
+    // Solana-governed routes and `RhnToGlc`, which settles onto the
+    // Goldcoin reserve. `GlcToRhn` would need the Robinhood reserve, and
+    // this deployment has none.
+    expect(screen.getAllByText("Destination reserve capacity")).toHaveLength(3);
+
     const glcToRhn = await card("GLC L1 → GLC on Robinhood");
     expect(glcToRhn.getByText("Unavailable")).toBeInTheDocument();
     expect(glcToRhn.getByText("Enabled (route gate)")).toBeInTheDocument();
@@ -255,8 +279,11 @@ describe("StatusView with Robinhood routes closed", () => {
 
     // `/robinhood/reserve` is not even asked for on this deployment, and
     // borrowing the Goldcoin or Solana figure would be exactly the
-    // cross-reserve mistake the route table exists to prevent.
-    expect(glcToRhn.getAllByText("Not published").length).toBeGreaterThanOrEqual(2);
+    // cross-reserve mistake the route table exists to prevent. Neither
+    // figure is shown, and neither is stubbed with placeholder text.
+    expect(glcToRhn.queryByText("Destination reserve capacity")).toBeNull();
+    expect(glcToRhn.queryByText(/Remaining 24-hour capacity/)).toBeNull();
+    expect(glcToRhn.queryByText("Not published")).toBeNull();
     expect(glcToRhn.queryByText(/0\.00 GLC/)).toBeNull();
   });
 

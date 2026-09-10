@@ -52,14 +52,18 @@ async function cardLabels(): Promise<string[]> {
 }
 
 describe("BridgeOverviewStats", () => {
-  it("names all four executable route families", async () => {
+  it("names every route family whose reserve publishes a counter", async () => {
     renderWithQueryClient(<BridgeOverviewStats />);
     const labels = (await cardLabels()).join(" | ");
 
     expect(labels).toContain("GLC L1 → GLC on Solana");
     expect(labels).toContain("GLC on Solana → GLC L1");
-    expect(labels).toContain("GLC L1 → GLC on Robinhood");
+    // `RhnToGlc` settles onto the Goldcoin reserve, which does publish
+    // one, so the Robinhood-sourced family is named here.
     expect(labels).toContain("GLC on Robinhood → GLC L1");
+    // `GlcToRhn` settles onto the Robinhood reserve, which publishes no
+    // settled-volume counter at all — so there is no card to name it on.
+    expect(labels).not.toContain("GLC L1 → GLC on Robinhood");
   });
 
   it("never presents SolToRhn or RhnToSol as executable", async () => {
@@ -79,7 +83,6 @@ describe("BridgeOverviewStats", () => {
     expect(labels.filter((label) => label.startsWith("Settled into"))).toEqual([
       "Settled into Solana — GLC L1 → GLC on Solana",
       "Settled into Goldcoin — GLC on Solana → GLC L1 · GLC on Robinhood → GLC L1",
-      "Settled into Robinhood Chain — GLC L1 → GLC on Robinhood",
     ]);
   });
 
@@ -120,12 +123,31 @@ describe("BridgeOverviewStats", () => {
     expect(await screen.findAllByText(/5,000\.00/)).toHaveLength(2);
   });
 
-  it("says the Robinhood reserve's settled volume is not published", async () => {
-    // No DTO carries it: `GET /stats` has no `robinhood_reserve` member,
-    // and `GET /robinhood/reserve` publishes capacity and fees but no
-    // cumulative settled-volume counter. A zero here would be invented.
+  it("shows no Robinhood settled-volume card at all", async () => {
+    // No DTO carries the figure: `GET /stats` has no `robinhood_reserve`
+    // member, and `GET /robinhood/reserve` publishes a balance, capacity,
+    // pending obligations and accrued fees but no cumulative
+    // settled-volume counter. A zero would be invented, the rolling-24h
+    // window measures headroom rather than volume, and the placeholder
+    // this replaced ("Not published") left a permanently unfinished slot
+    // in the grid to announce a metric nobody asked after.
     renderWithQueryClient(<BridgeOverviewStats />);
-    expect(await screen.findByText("Not published")).toBeInTheDocument();
+    await screen.findByText(/Settled into Solana/);
+
+    expect(screen.queryByText("Not published")).toBeNull();
+    expect(screen.queryByText(/Settled into Robinhood/)).toBeNull();
+  });
+
+  it("keeps the remaining cards a full grid row", async () => {
+    // Dropping the unpublished figure must not leave a hole where it was.
+    // Two settled cards plus the two counters is four, laid out 2x2 and
+    // then 4x1 rather than in a three-column grid with one orphan.
+    renderWithQueryClient(<BridgeOverviewStats />);
+    await screen.findByText(/Settled into Solana/);
+
+    const grid = document.querySelector("dl");
+    expect(grid).toHaveClass("lg:grid-cols-4");
+    expect(grid?.children).toHaveLength(4);
   });
 
   it("states which families the request counters actually cover", async () => {

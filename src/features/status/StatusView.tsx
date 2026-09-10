@@ -1,6 +1,7 @@
 "use client";
 
 import { useId } from "react";
+import type { ReactNode } from "react";
 import { Activity, HeartPulse } from "lucide-react";
 import { Card, ErrorState, Skeleton, StatusBadge, TokenAmount } from "@/components/ui";
 import {
@@ -10,6 +11,7 @@ import {
   useLimits,
   useReserve,
   useRobinhoodReserve,
+  useStats,
 } from "@/lib/query/hooks";
 import {
   executableRouteStatusBadge,
@@ -41,6 +43,10 @@ export function StatusView() {
   const health = useHealth();
   const reserve = useReserve();
   const limits = useLimits();
+  // Carried for `route_fees` alone — the per-route price table. `/stats`
+  // is polled by the overview cards anyway, so this shares a cache entry
+  // rather than adding a request.
+  const stats = useStats();
   // Fetched only once `/chains` reports this DEPLOYMENT has a Robinhood
   // route at all. `isRouteEnabled`, not `isRouteOpen`: a route that is
   // switched on and momentarily gated shut by its destination reserve
@@ -72,6 +78,7 @@ export function StatusView() {
     reserve: reserve.data,
     robinhood: robinhood.data,
     limits: limits.data,
+    stats: stats.data,
   });
 
   return (
@@ -128,28 +135,14 @@ export function StatusView() {
   );
 }
 
-/** "300" -> "3%", "50" -> "0.5%". Integer arithmetic; never a float rate. */
-function formatBps(bps: number): string {
-  const whole = Math.trunc(bps / 100);
-  const fraction = bps % 100;
-  return fraction === 0 ? `${whole}%` : `${(bps / 100).toFixed(2)}%`;
-}
-
 /**
- * A figure, or the words that say the backend did not publish one.
+ * One published figure.
  *
- * Never a blank, a dash beside a unit, or a zero. On a page whose entire
- * job is to state what the bridge can do right now, "0 GLC of capacity"
- * and "we do not publish that" are opposite claims.
+ * Only ever rendered for a figure that exists. A metric the backend does
+ * not publish is not drawn at all — see {@link RouteCard} for why the row
+ * goes with it rather than being filled with a placeholder.
  */
-function Figure({
-  figure,
-  className,
-}: {
-  figure: RouteFigure | null;
-  className?: string;
-}) {
-  if (!figure) return <span className="text-ink-500">Not published</span>;
+function Figure({ figure, className }: { figure: RouteFigure; className?: string }) {
   return (
     <TokenAmount
       raw={figure.atomic}
@@ -164,17 +157,72 @@ function Figure({
  * One executable route's card: what it is, whether it can be used right
  * now, and the figures that bound it.
  *
- * `Enabled` and `Available` are shown as separate rows on purpose. They
- * answer different questions — the first is the route gate over config,
- * the `bridge_routes` table and adapter capability; the second is that AND
- * every runtime gate on the DESTINATION reserve — and reading the first as
- * permission is exactly what let `RhnToGlc` deposits reach a Goldcoin
- * reserve whose admission was closed. A reader looking at a route that is
- * switched on and still refused can see both facts here rather than
- * inferring one from the other.
+ * # Every row on this card is a published fact
+ *
+ * A figure or a verdict the backend does not publish for this route is not
+ * rendered at all — no placeholder, no dash, no zero, and above all no
+ * neighbouring route's value standing in for it. Three of the four routes
+ * have genuine gaps (`GET /limits` describes only the Solana program's
+ * bounds; a deployment with no Robinhood reserve publishes neither a
+ * capacity nor a window), and a card that prints "Not published" in each
+ * of those slots reads as unfinished while saying nothing a reader can
+ * act on. The badge and `card.note` already carry the state; the row goes.
+ *
+ * The corollary is that cards differ in height, and deliberately so — the
+ * alternative is a uniform grid of placeholders.
  */
 function RouteCard({ card }: { card: ExecutableRouteStatus }) {
   const headingId = useId();
+  const rows: { term: string; value: ReactNode; tabular?: boolean }[] = [];
+
+  // `Enabled` and `Available` answer different questions — the first is
+  // the route gate over config, the `bridge_routes` table and adapter
+  // capability; the second is that AND every runtime gate on the
+  // DESTINATION reserve — and reading the first as permission is exactly
+  // what let `RhnToGlc` deposits reach a Goldcoin reserve whose admission
+  // was closed. Both are shown, and only when the registry actually
+  // answered: with `/chains` unreachable these fields hold this build's
+  // fail-closed defaults, and printing those as the backend's verdict
+  // would be inventing one.
+  if (card.registered) {
+    // Qualified rather than bare "Enabled" / "Available": the badge above
+    // already carries the word "Available", and two things on one card
+    // reading "Available" with different meanings is exactly the
+    // confusion these rows exist to remove.
+    rows.push({ term: "Enabled (route gate)", value: card.enabled ? "Yes" : "No" });
+    // An absent `available` is a backend that never answered the
+    // question, which is not the same as answering no — and the two have
+    // different remedies. The badge already reports the route unknown and
+    // `card.note` says why, so the row is omitted rather than filled in.
+    if (card.available !== undefined) {
+      rows.push({ term: "Available (effective)", value: card.available ? "Yes" : "No" });
+    }
+  }
+
+  // `GET /stats`' `route_fees` states a price per route. Its absence is
+  // reported by leaving the row out — never by showing another route's
+  // rate, which for a Robinhood route would mean the Solana program's.
+  if (card.fee) {
+    rows.push({ term: "Route fee", value: card.fee.display, tabular: true });
+  }
+
+  // `GET /limits` publishes the SOLANA program's `BridgeConfig` only, so
+  // the Robinhood routes have no published per-transfer bounds at all.
+  // That is a real gap in the API, and an omitted row is how it reads
+  // here — a range filled in from Solana's numbers would state a ceiling
+  // neither Robinhood chain enforces.
+  if (card.minimum && card.maximum) {
+    rows.push({
+      term: "Per-transfer limits",
+      value: (
+        <>
+          <Figure figure={card.minimum} /> – <Figure figure={card.maximum} />
+        </>
+      ),
+      tabular: true,
+    });
+  }
+
   return (
     /*
       A labelled group, not a bare div. Every card repeats the same terms —
@@ -204,60 +252,34 @@ function RouteCard({ card }: { card: ExecutableRouteStatus }) {
       )}
       {card.note && <p className="text-body-sm text-ink-500 mt-2">{card.note}</p>}
 
-      <div className="mt-3">
-        <Figure figure={card.capacity} className="text-heading-2" />
-        <p className="text-body-sm text-ink-500 mt-1">Destination reserve capacity</p>
-      </div>
+      {card.capacity && (
+        <div className="mt-3">
+          <Figure figure={card.capacity} className="text-heading-2" />
+          <p className="text-body-sm text-ink-500 mt-1">Destination reserve capacity</p>
+        </div>
+      )}
 
-      <div className="mt-2">
-        <Figure figure={card.window} />
-        <p className="text-body-sm text-ink-500 mt-1">
-          Remaining 24-hour capacity for this direction
-        </p>
-      </div>
+      {card.window && (
+        <div className="mt-2">
+          <Figure figure={card.window} />
+          <p className="text-body-sm text-ink-500 mt-1">
+            Remaining 24-hour capacity for this direction
+          </p>
+        </div>
+      )}
 
-      <dl className="border-ink-100 mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-3">
-        {/* Qualified rather than bare "Enabled" / "Available": the badge
-            above already carries the word "Available", and two things on
-            one card reading "Available" with different meanings is exactly
-            the confusion these rows exist to remove. */}
-        <div>
-          <dt className="text-body-sm text-ink-500">Enabled (route gate)</dt>
-          <dd className="text-body-sm text-ink-900">{card.enabled ? "Yes" : "No"}</dd>
-        </div>
-        <div>
-          <dt className="text-body-sm text-ink-500">Available (effective)</dt>
-          {/* Three states, not two. An absent `available` reads as "Not
-              published" rather than folding into "No": a backend that never
-              answered the question and one that answered no have different
-              remedies, and only the second is a statement about the bridge. */}
-          <dd className="text-body-sm text-ink-900">
-            {card.available === undefined
-              ? "Not published"
-              : card.available
-                ? "Yes"
-                : "No"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-body-sm text-ink-500">Route fee</dt>
-          <dd className="text-body-sm text-ink-900 tabular">
-            {card.feeBps === null ? "Not published" : formatBps(card.feeBps)}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-body-sm text-ink-500">Per-transfer limits</dt>
-          <dd className="text-body-sm text-ink-900 tabular">
-            {card.minimum && card.maximum ? (
-              <>
-                <Figure figure={card.minimum} /> – <Figure figure={card.maximum} />
-              </>
-            ) : (
-              <span className="text-ink-500">Not published</span>
-            )}
-          </dd>
-        </div>
-      </dl>
+      {rows.length > 0 && (
+        <dl className="border-ink-100 mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-3">
+          {rows.map((row) => (
+            <div key={row.term}>
+              <dt className="text-body-sm text-ink-500">{row.term}</dt>
+              <dd className={`text-body-sm text-ink-900 ${row.tabular ? "tabular" : ""}`}>
+                {row.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
     </Card>
   );
 }
