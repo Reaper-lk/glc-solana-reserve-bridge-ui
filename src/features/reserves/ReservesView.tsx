@@ -11,9 +11,15 @@ import {
   StatusBadge,
   TokenAmount,
 } from "@/components/ui";
-import { useReserve, useReserveHistory, useStats } from "@/lib/query/hooks";
+import { useChains, useReserve, useReserveHistory, useStats } from "@/lib/query/hooks";
 import { directionAvailabilityStatus } from "@/lib/status";
-import { GOLDCOIN_GLC, SOLANA_GLC, directions } from "@/lib/bridge";
+import {
+  GOLDCOIN_GLC,
+  SOLANA_GLC,
+  destinationReserveGroups,
+  executableRoutes,
+} from "@/lib/bridge";
+import type { DestinationReserve } from "@/lib/bridge";
 import { cn } from "@/lib/utils/cn";
 import type { ReserveHistoryEntryDto } from "@/lib/api/schemas/reserves";
 import { clampAtomicAtZero, isNegativeAtomic, toBigInt } from "@/lib/api/schemas/common";
@@ -30,6 +36,7 @@ const HISTORY_PAGE_SIZE = 20;
 export function ReservesView() {
   const reserve = useReserve();
   const stats = useStats();
+  const chains = useChains();
 
   if (reserve.isPending || stats.isPending) {
     return (
@@ -42,6 +49,25 @@ export function ReservesView() {
 
   if (reserve.isError) return <ErrorState error={reserve.error} />;
   if (stats.isError) return <ErrorState error={stats.error} />;
+
+  /*
+   * Which executable routes each reserve actually backs, read off
+   * `GET /chains` rather than named in the markup.
+   *
+   * The Goldcoin card used to say it backs "GLC on Solana -> GLC L1"
+   * payouts, full stop. That was true while those were the only two routes
+   * with settlement machinery; `RhnToGlc` settles onto the same pool, so
+   * the sentence had quietly become a half-truth about which transfers a
+   * shortfall here affects. Derived from the registry, a route the backend
+   * opens later is named with no frontend deploy.
+   */
+  const backedBy = (target: DestinationReserve): string | null => {
+    const group = destinationReserveGroups(executableRoutes(chains.data)).find(
+      (entry) => entry.reserve === target,
+    );
+    if (!group) return null;
+    return group.routes.map((route) => route.label).join(" · ");
+  };
 
   // `capacity` is an exact atomic string; compared as a bigint so a value
   // beyond Number.MAX_SAFE_INTEGER is judged on its real magnitude.
@@ -65,9 +91,7 @@ export function ReservesView() {
               )}
             />
           </div>
-          <p className="text-body-sm text-ink-600 mt-1">
-            Backs {directions.GlcToSol.label} payouts.
-          </p>
+          <ReserveBackedBy routes={backedBy("solana")} />
           <div className="mt-4">
             <TokenAmount
               raw={clampAtomicAtZero(reserve.data.solana_available_capacity)}
@@ -95,9 +119,7 @@ export function ReservesView() {
               )}
             />
           </div>
-          <p className="text-body-sm text-ink-600 mt-1">
-            Backs {directions.SolToGlc.label} payouts.
-          </p>
+          <ReserveBackedBy routes={backedBy("goldcoin")} />
           <div className="mt-4">
             <TokenAmount
               raw={clampAtomicAtZero(reserve.data.goldcoin_available_capacity)}
@@ -119,6 +141,16 @@ export function ReservesView() {
       <ReserveHistoryTable />
     </div>
   );
+}
+
+/**
+ * The routes a reserve pays out of, or nothing at all while `/chains` is
+ * still in flight. A guess at "the routes we know about" is exactly what
+ * naming them in the markup already was.
+ */
+function ReserveBackedBy({ routes }: { routes: string | null }) {
+  if (!routes) return null;
+  return <p className="text-body-sm text-ink-600 mt-1">Backs {routes} payouts.</p>;
 }
 
 function ReserveHistoryTable() {

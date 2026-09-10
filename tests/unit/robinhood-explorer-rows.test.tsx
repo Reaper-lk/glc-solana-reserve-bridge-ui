@@ -72,9 +72,10 @@ describe("explorer feed with mixed Solana and Robinhood events", () => {
     const rows = await screen.findAllByText("GLC L1 → GLC on Robinhood");
     const hrefs = rows.map((row) => row.closest("a")?.getAttribute("href"));
 
-    // Both GlcToRhn fixtures, each linking to its own request. The feed is
-    // newest-first, so the ids are asserted as a set rather than in order.
-    expect(new Set(hrefs)).toEqual(new Set(["/bridge/2000", "/bridge/2003"]));
+    // Both GlcToRhn fixtures, each linking to its own request — inside the
+    // explorer's own transfer route rather than the wallet-flow one. The
+    // feed is newest-first, so the ids are asserted as a set, not in order.
+    expect(new Set(hrefs)).toEqual(new Set(["/explorer/tx/2000", "/explorer/tx/2003"]));
   });
 
   it("exposes no counterparty address on any row", async () => {
@@ -159,7 +160,7 @@ describe("TransferDetail for Robinhood routes", () => {
     // `TransferView` has never had one, on any route. The read-only
     // explorer view is the same component for exactly that reason.
     getTransfer.mockResolvedValue(robinhoodTransfer(2001));
-    renderWithQueryClient(<TransferDetail id={2001} readOnly />);
+    renderWithQueryClient(<TransferDetail id={2001} />);
     await screen.findByRole("heading", { name: /GLC on Robinhood → GLC L1/ });
 
     // The source transaction hash is the transfer's own, not a party's.
@@ -167,9 +168,12 @@ describe("TransferDetail for Robinhood routes", () => {
     expect(screen.queryByText(/depositor/i)).toBeNull();
   });
 
-  it("renders no outbound link in the read-only explorer view", async () => {
+  it("renders each transaction as plain text when no template is configured", async () => {
+    // The default test environment configures no explorer templates, and a
+    // link to a guessed host is worse than no link. The hash is still
+    // rendered and still copyable.
     getTransfer.mockResolvedValue(robinhoodTransfer(2000));
-    renderWithQueryClient(<TransferDetail id={2000} readOnly />);
+    renderWithQueryClient(<TransferDetail id={2000} />);
     await screen.findByText("Destination transaction");
 
     expect(screen.queryByRole("link")).toBeNull();

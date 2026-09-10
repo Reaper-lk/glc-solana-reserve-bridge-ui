@@ -27,6 +27,7 @@ const getChains = vi.fn();
 const getHealth = vi.fn();
 const getReserve = vi.fn();
 const getRobinhoodReserve = vi.fn();
+const getLimits = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   bridgeApi: {
@@ -35,6 +36,7 @@ vi.mock("@/lib/api", () => ({
     getHealth: (...args: unknown[]) => getHealth(...args),
     getReserve: (...args: unknown[]) => getReserve(...args),
     getRobinhoodReserve: (...args: unknown[]) => getRobinhoodReserve(...args),
+    getLimits: (...args: unknown[]) => getLimits(...args),
   },
 }));
 
@@ -55,6 +57,7 @@ beforeEach(() => {
   getReserve.mockResolvedValue(fixtures.reserveFixture());
   getChains.mockResolvedValue(openChains());
   getRobinhoodReserve.mockResolvedValue(openReserve());
+  getLimits.mockResolvedValue(fixtures.limitsFixture());
 });
 
 /**
@@ -152,8 +155,11 @@ describe("StatusView with Robinhood routes open", () => {
       glcToRhn.getByText(/Paused on the Robinhood custody contract itself/),
     ).toBeInTheDocument();
     // The kill switch is per leg: the deposit direction is unaffected.
+    // Scoped to the badge: the card also carries an "Available (effective)"
+    // field, which is a different claim from the badge above it.
     const rhnToGlc = await card("GLC on Robinhood → GLC L1");
     expect(rhnToGlc.getByText("Available")).toBeInTheDocument();
+    expect(rhnToGlc.getByText("Available (effective)")).toBeInTheDocument();
   });
 
   it("reports a stalled indexer as degraded rather than available", async () => {
@@ -164,6 +170,9 @@ describe("StatusView with Robinhood routes open", () => {
     const glcToRhn = await card("GLC L1 → GLC on Robinhood");
 
     expect(await glcToRhn.findByText("Degraded")).toBeInTheDocument();
+    // The badge, not the "Available (effective)" field label beneath it —
+    // `/chains` still reports the route available; it is the contract read
+    // and the indexer that could not be confirmed.
     expect(glcToRhn.queryByText("Available")).toBeNull();
   });
 
@@ -180,7 +189,10 @@ describe("StatusView with Robinhood routes open", () => {
     await vi.waitFor(() => expect(getRobinhoodReserve).toHaveBeenCalled());
 
     expect(await glcToRhn.findByText("Unknown")).toBeInTheDocument();
-    expect(glcToRhn.getAllByText("Not published")).toHaveLength(2);
+    // Capacity, the 24-hour window, and the per-transfer limits — which
+    // `GET /limits` publishes only for the Solana-governed pair. Three
+    // absent figures, three explicit statements that they are absent.
+    expect(glcToRhn.getAllByText("Not published")).toHaveLength(3);
     expect(glcToRhn.queryByText(/0\.00 GLC/)).toBeNull();
   });
 
@@ -200,7 +212,7 @@ describe("StatusView with Robinhood routes open", () => {
     renderWithQueryClient(<StatusView />);
     const glcToSol = await card("GLC L1 → GLC on Solana");
 
-    expect(glcToSol.getByText("Available")).toBeInTheDocument();
+    expect(await glcToSol.findByText("Available")).toBeInTheDocument();
     // solana_available_capacity 398000000000000 at the mint's 6 decimals.
     expect(glcToSol.getByText(/398,000,000\.00/)).toBeInTheDocument();
     // glc_to_sol_rolling_volume_remaining 17500000000, also mint-atomic.
@@ -213,17 +225,39 @@ describe("StatusView with Robinhood routes closed", () => {
     getChains.mockResolvedValue(fixtures.chainsFixture(now));
   });
 
-  it("shows only the two Solana cards", async () => {
+  it("still gives every executable route a card, closed or not", async () => {
+    // The cards used to be dropped for a closed Robinhood route, which
+    // left /status silently missing two of the four routes it exists to
+    // report on. A closed route has a state worth stating; what it does
+    // not have is figures, and those read as "Not published" rather than
+    // as zero.
     renderWithQueryClient(<StatusView />);
     await screen.findByRole("heading", { name: "GLC L1 → GLC on Solana" });
 
-    // The Routes card below already lists both Robinhood routes as
-    // unavailable, with the backend's own reason. A second, emptier card
-    // saying the same thing is noise; one full of zeroes would be worse.
-    expect(screen.getAllByText("Destination reserve capacity")).toHaveLength(2);
+    expect(screen.getAllByText("Destination reserve capacity")).toHaveLength(4);
+    const glcToRhn = await card("GLC L1 → GLC on Robinhood");
+    expect(glcToRhn.getByText("Unavailable")).toBeInTheDocument();
+    expect(glcToRhn.getByText("Enabled (route gate)")).toBeInTheDocument();
+  });
+
+  it("shows the backend's own reason on a closed route's card", async () => {
+    renderWithQueryClient(<StatusView />);
+    const rhnToGlc = await card("GLC on Robinhood → GLC L1");
+
     expect(
-      screen.queryByRole("heading", { name: "GLC L1 → GLC on Robinhood", level: 2 }),
-    ).toBeNull();
+      rhnToGlc.getByText(/Robinhood Network support is in development/),
+    ).toBeInTheDocument();
+  });
+
+  it("publishes no capacity or window figure for a closed route", async () => {
+    renderWithQueryClient(<StatusView />);
+    const glcToRhn = await card("GLC L1 → GLC on Robinhood");
+
+    // `/robinhood/reserve` is not even asked for on this deployment, and
+    // borrowing the Goldcoin or Solana figure would be exactly the
+    // cross-reserve mistake the route table exists to prevent.
+    expect(glcToRhn.getAllByText("Not published").length).toBeGreaterThanOrEqual(2);
+    expect(glcToRhn.queryByText(/0\.00 GLC/)).toBeNull();
   });
 
   it("does not ask for the Robinhood reserve at all", async () => {

@@ -63,6 +63,36 @@ export function chainTxUrl(chainId: string, id: string): string | null {
   }
 }
 
+/**
+ * The ADDRESS-explorer link for an address that exists ON a particular
+ * chain — the twin of {@link chainTxUrl}, and separate from it for the
+ * reason the two template families are separate in configuration: an
+ * explorer's transaction path and its address path are different URLs, and
+ * feeding an address to a `/tx/{value}` template produces a link that
+ * loads and shows nothing.
+ *
+ * Resolved by chain id for the same reason as `chainTxUrl`: a `RhnToGlc`
+ * source wallet is a 20-byte EVM address and its Goldcoin destination is a
+ * base58check address, so any branch on "which direction is this" would
+ * eventually send one of them to the other's explorer. Returns `null` when
+ * no template is configured for that chain, which is the existing "render
+ * the address as plain text" path.
+ */
+export function chainAddressUrl(chainId: string, address: string): string | null {
+  switch (chainId) {
+    case "goldcoin":
+      return goldcoinAddressUrl(address);
+    case "solana":
+      return solanaAddressUrl(address);
+    case "robinhood":
+      return robinhoodAddressUrl(address);
+    default:
+      // A network this build has no explorer template for. Plain text is
+      // honest; a link to a guessed host is not.
+      return null;
+  }
+}
+
 /** The host this deployment is served from, for the anti-phishing notice. */
 export function primaryDomain(): string {
   try {

@@ -195,7 +195,26 @@ test.describe("routes on the status page", () => {
 
     await expect(page.getByRole("heading", { name: "Routes" })).toBeVisible();
     await expect(page.getByText("Robinhood Chain → Goldcoin")).toBeVisible();
-    // Only the two reserves the backend actually publishes carry a figure.
-    await expect(page.getByText("Destination reserve capacity")).toHaveCount(2);
+    // A card for each of the four EXECUTABLE routes, closed or not: the
+    // Robinhood pair used to be dropped entirely when the gate was shut,
+    // which left /status silently missing half the routes it exists to
+    // report on.
+    await expect(page.getByText("Destination reserve capacity")).toHaveCount(4);
+    // And a closed route carries no borrowed figure. Mock mode publishes
+    // no Robinhood reserve, so its capacity says so in words.
+    const glcToRhn = page.getByRole("group", { name: "GLC L1 → GLC on Robinhood" });
+    await expect(glcToRhn.getByText("Not published").first()).toBeVisible();
+  });
+
+  test("never shows a Robinhood route as available while the gate is shut", async ({
+    page,
+  }) => {
+    await page.goto("/status");
+
+    const rhnToGlc = page.getByRole("group", { name: "GLC on Robinhood → GLC L1" });
+    // `enabled` is the route gate's verdict and reads no reserve state.
+    // Only `available` may put "Available" on a card.
+    await expect(rhnToGlc.getByText("Enabled (route gate)")).toBeVisible();
+    await expect(rhnToGlc.getByText("Available", { exact: true })).toHaveCount(0);
   });
 });

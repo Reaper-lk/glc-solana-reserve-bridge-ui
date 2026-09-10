@@ -1,57 +1,62 @@
-/**
- * The network announcement strip.
- *
- * A forward-looking product notice and nothing more. It is deliberately a
- * plain constant rather than a feature flag, a remote config or an API
- * response: this banner describes an integration that does not exist yet, so
- * there is no live state it could be derived from and nothing it could
- * legitimately ask the backend about.
- *
- * That separation is the whole point. The global trust strip above it
- * (`BridgeStatusBar`) reports the bridge as it is right now, from the status
- * endpoint; this reports a plan. Wiring the two together would let a future
- * marketing line be affected by — or worse, be mistaken for — the operational
- * state of real money movement.
- *
- * Turning it off is a one-line edit to `enabled` below, and every string it
- * renders lives here rather than in the component.
- *
- * The strip carries one line of copy and no call to action. It deliberately
- * has no `learnMoreHref`: this deployment serves no Robinhood page and no
- * external URL is configured for one, and a disabled control that explains it
- * cannot be used is still a dead control taking up the row. Nothing to open
- * is better said by showing nothing than by showing a button that refuses.
- *
- * # Announcing the launch
- *
- * The routes are OPEN when `GET /chains` says so, and only then — this
- * constant has no bearing on whether anyone can bridge, and flipping it
- * cannot open anything. It is the marketing line, and it is deliberately
- * kept where a person edits it rather than derived from live state, for
- * the reason above: an announcement that reacted to the status endpoint
- * would eventually be mistaken for it.
- *
- * When the backend actually opens `GlcToRhn`/`RhnToGlc`, the whole change
- * is TWO fields below — `status` to `"live"` and `description` to the
- * launched wording. Nothing in `NetworkAnnouncement.tsx` needs touching:
- * the badge's label, icon and styling are all resolved from `status`
- * there. Verify against `/chains` first; announcing a route the gate still
- * refuses is worse than announcing it a day late.
- */
+import type { ChainsViewDto } from "@/lib/api/schemas/chains";
+import { routeAvailability } from "@/lib/bridge/route-availability";
 
 /**
- * What the strip is announcing. `"live"` exists ahead of its use on
- * purpose — the flip must be an edit to a value, not a change to the
- * component that renders it.
+ * The network integration strip.
+ *
+ * # What changed, and why
+ *
+ * This used to be a pure constant announcing a FUTURE integration:
+ * "COMING SOON — Robinhood Network Integration — GLC bridging with
+ * Robinhood Chain launches next week." Every word of that is now stale.
+ * The routes are implemented and shipped; the strip was still promising
+ * them for "next week", which had already passed, and the badge said
+ * "Coming soon" about machinery that exists.
+ *
+ * Deriving it from a constant was the right call while the thing being
+ * announced did not exist — there was no live state it could read. That is
+ * no longer true, and a hand-edited marketing line about a live route is
+ * exactly the thing that goes stale silently. So the strip now reports
+ * what `GET /chains` says about the two Robinhood routes, and nothing
+ * else.
+ *
+ * # It still is not the operational strip
+ *
+ * `BridgeStatusBar` speaks for the bridge as a whole and sits above this.
+ * This one is scoped to a single network's integration and says only
+ * whether its routes can be used right now. It states no reason and makes
+ * no promise about when a closed route opens: the backend publishes a
+ * cause-agnostic sentence per route, and /status renders each one beside
+ * the route it belongs to.
+ *
+ * Turning the strip off is a one-line edit to `enabled` below, and every
+ * string it renders lives here rather than in the component.
  */
-export type NetworkAnnouncementStatus = "coming-soon" | "live";
+
+/** The two routes this strip reports on. */
+const ROBINHOOD_ROUTES = ["GlcToRhn", "RhnToGlc"] as const;
+
+/**
+ * What the strip is reporting, derived from route availability.
+ *
+ * No `"coming-soon"` member: the routes are implemented, so nothing here
+ * may describe them as unbuilt. `"unknown"` is the fail-closed state and
+ * is never rendered as availability.
+ */
+export type NetworkAnnouncementStatus =
+  /** Every route on this network is available right now. */
+  | "available"
+  /** At least one available, at least one not. */
+  | "partial"
+  /** None of this network's routes can be used right now. */
+  | "unavailable"
+  /** `/chains` has not answered. Says so; claims nothing. */
+  | "unknown";
 
 export interface NetworkAnnouncement {
   readonly enabled: boolean;
   readonly network: string;
-  readonly status: NetworkAnnouncementStatus;
   readonly title: string;
-  readonly description: string;
   /**
    * Namespaced, matching `THEME_STORAGE_KEY`: this origin also carries the
    * Solana wallet adapter's own storage keys, and a bare `dismissed` would be
@@ -62,12 +67,8 @@ export interface NetworkAnnouncement {
 
 export const NETWORK_ANNOUNCEMENT: NetworkAnnouncement = {
   enabled: true,
-  // Still "coming-soon": both Robinhood routes ship disabled and the
-  // backend gate has not opened them. See this module's doc for the flip.
-  status: "coming-soon",
-  network: "Robinhood",
-  title: "Robinhood Network Integration",
-  description: "GLC bridging with Robinhood Chain launches next week.",
+  network: "Robinhood Network",
+  title: "Robinhood Network GLC bridge integration",
   storageKey: "glc-bridge-announcement-robinhood",
 };
 
@@ -77,9 +78,47 @@ export const NETWORK_ANNOUNCEMENT: NetworkAnnouncement = {
  * label it has no case for.
  */
 export const ANNOUNCEMENT_STATUS_LABEL: Record<NetworkAnnouncementStatus, string> = {
-  "coming-soon": "Coming soon",
-  live: "Live",
+  available: "Available",
+  partial: "Partially available",
+  unavailable: "Unavailable",
+  unknown: "Checking",
 };
 
-/** The pre-launch label, kept as a named export for existing call sites. */
-export const COMING_SOON_LABEL = ANNOUNCEMENT_STATUS_LABEL["coming-soon"];
+/**
+ * The one line of copy per status.
+ *
+ * Deliberately neutral and free of launch language: no date, no "coming
+ * soon", no "launches". It describes the integration as deployed and then
+ * reports what the backend says about its routes, which is the only claim
+ * this strip is entitled to make.
+ */
+export const ANNOUNCEMENT_STATUS_DESCRIPTION: Record<NetworkAnnouncementStatus, string> =
+  {
+    available:
+      "GLC bridging to and from Robinhood Network is available in both directions right now.",
+    partial: "Some Robinhood Network bridge routes are temporarily unavailable.",
+    unavailable: "Robinhood Network bridge routes are not available right now.",
+    unknown: "Checking Robinhood Network route availability…",
+  };
+
+/**
+ * The strip's status, from `GET /chains` alone.
+ *
+ * A route counts as available only when the backend positively answered
+ * `available: true` — the same fail-closed rule every other consumer of
+ * this endpoint applies. `enabled` is not consulted: a route that is
+ * switched on and held shut by its destination reserve is not one a user
+ * can use, which is the only thing this strip reports.
+ */
+export function networkAnnouncementStatus(
+  chains: ChainsViewDto | undefined,
+): NetworkAnnouncementStatus {
+  if (!chains) return "unknown";
+  const available = ROBINHOOD_ROUTES.filter((route) => {
+    const state = routeAvailability(chains, route);
+    return state.kind === "open" && state.availabilityKnown;
+  }).length;
+  if (available === ROBINHOOD_ROUTES.length) return "available";
+  if (available === 0) return "unavailable";
+  return "partial";
+}

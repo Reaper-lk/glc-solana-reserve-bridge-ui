@@ -1,51 +1,59 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NetworkAnnouncement } from "@/components/layout/NetworkAnnouncement";
 import { BridgeStatusBar } from "@/components/layout/BridgeStatusBar";
 import {
+  ANNOUNCEMENT_STATUS_DESCRIPTION,
   ANNOUNCEMENT_STATUS_LABEL,
-  COMING_SOON_LABEL,
   NETWORK_ANNOUNCEMENT,
+  networkAnnouncementStatus,
   type NetworkAnnouncement as NetworkAnnouncementConfig,
+  type NetworkAnnouncementStatus,
 } from "@/lib/config/announcement";
+import * as fixtures from "@/lib/api/mock/fixtures";
+import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import type { BridgeStatusDto } from "@/lib/api/schemas/status";
 import { renderWithQueryClient } from "./test-utils";
 
 /**
- * The announcement's contract has two halves.
+ * The integration strip's contract.
  *
- * The first is ordinary: it renders what the constant says, it can be turned
- * off, and it can be dismissed for the session.
+ * The strip used to be a pure constant announcing a future integration,
+ * and its tests pinned that isolation: it rendered identically whatever
+ * the bridge was doing. That property was correct while the routes did not
+ * exist and became the defect once they did — the strip went on saying
+ * "COMING SOON … launches next week" about machinery that had shipped.
  *
- * The second is the one that matters. This strip must stay completely
- * isolated from live bridge state — it describes an integration that does not
- * exist yet, so there is nothing about the running bridge it could honestly
- * reflect. That isolation is asserted three ways below: the strip renders
- * identically whatever the status endpoint says, it renders with no query
- * client at all, and its source imports nothing from the api, query, status
- * or solana layers.
+ * So the contract is inverted here, and the cases below are the inversion:
+ * the badge and the line of copy track `GET /chains`, an unanswered read
+ * is `unknown` rather than available, and no launch language survives in
+ * any state the strip can reach.
  */
 
 const config = NETWORK_ANNOUNCEMENT;
 
+const getChains = vi.fn();
+const getStatus = vi.fn();
+
+vi.mock("@/lib/api", () => ({
+  bridgeApi: {
+    getChains: (...args: unknown[]) => getChains(...args),
+    getStatus: (...args: unknown[]) => getStatus(...args),
+  },
+}));
+
+const now = () => new Date();
+
 function status(overrides: Partial<BridgeStatusDto> = {}): BridgeStatusDto {
-  return {
-    goldcoin_paused: false,
-    solana_paused: false,
-    vault_address: "vault",
-    next_solana_obligation_index: 0,
-    glc_to_sol_available: true,
-    sol_to_glc_available: true,
-    glc_to_sol_quota_exhausted: false,
-    sol_to_glc_quota_exhausted: false,
-    glc_to_sol_rolling_volume_remaining: "0",
-    sol_to_glc_rolling_volume_remaining: "0",
-    ...overrides,
-  };
+  return { ...fixtures.statusFixture(now), ...overrides };
 }
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  getChains.mockResolvedValue(fixtures.chainsFixture(now));
+  getStatus.mockResolvedValue(status());
+});
 
 /** The strip is a session-scoped dismissal, so the store must not leak. */
 afterEach(() => {
@@ -54,41 +62,179 @@ afterEach(() => {
 
 const banner = () => screen.getByRole("region", { name: "Network announcement" });
 
+/** Waits for `/chains` to land, so a case never asserts the `unknown` placeholder. */
+async function settled(label: string) {
+  return within(banner()).findByText(label);
+}
+
 describe("rendering", () => {
-  it("renders the coming-soon badge as text, not as colour alone", () => {
-    render(<NetworkAnnouncement />);
-    expect(within(banner()).getAllByText(COMING_SOON_LABEL)[0]).toBeInTheDocument();
+  it("renders the resolved status as text, not as colour alone", async () => {
+    renderWithQueryClient(<NetworkAnnouncement />);
+    // Both Robinhood routes ship closed, so the honest badge is
+    // "Unavailable" — never a promise about when they open.
+    expect(await settled(ANNOUNCEMENT_STATUS_LABEL.unavailable)).toBeInTheDocument();
   });
 
   it("renders the configured title as the section's heading", () => {
-    render(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement />);
     expect(
       screen.getByRole("heading", { name: config.title, level: 2 }),
     ).toBeInTheDocument();
     expect(banner()).toHaveAccessibleName("Network announcement");
   });
 
-  it("renders the configured description as the strip's only line of copy", () => {
-    render(<NetworkAnnouncement />);
-    expect(within(banner()).getByText(config.description)).toBeInTheDocument();
-    // The strip carried a second, quieter line ("More details soon.") beside
-    // the description. It was removed rather than reworded, so nothing should
-    // reintroduce a trailing aside next to the copy.
-    expect(within(banner()).queryByText(/more details soon/i)).toBeNull();
+  it("renders exactly one line of copy, resolved from the status", async () => {
+    renderWithQueryClient(<NetworkAnnouncement />);
+    expect(
+      await settled(ANNOUNCEMENT_STATUS_DESCRIPTION.unavailable),
+    ).toBeInTheDocument();
     expect(within(banner()).getAllByText(/./, { selector: "p" })).toHaveLength(1);
   });
 
   it("renders nothing at all when the config is disabled", () => {
     const disabled: NetworkAnnouncementConfig = { ...config, enabled: false };
-    const { container } = render(<NetworkAnnouncement announcement={disabled} />);
+    const { container } = renderWithQueryClient(
+      <NetworkAnnouncement announcement={disabled} />,
+    );
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByRole("region", { name: "Network announcement" })).toBeNull();
   });
 });
 
+describe("no stale launch language survives", () => {
+  const STALE = [/coming soon/i, /next week/i, /launch/i, /\bsoon\b/i];
+
+  it("says none of it in any state the strip can reach", async () => {
+    for (const chains of [
+      fixtures.chainsFixture(now),
+      fixtures.chainsFixture(now, { robinhoodOpen: true }),
+      fixtures.chainsFixture(now, { robinhoodOpen: true, robinhoodAvailable: false }),
+    ]) {
+      getChains.mockResolvedValue(chains);
+      const view = renderWithQueryClient(<NetworkAnnouncement />);
+      await screen.findByRole("heading", { name: config.title, level: 2 });
+      const text = banner().textContent;
+      for (const pattern of STALE) {
+        expect(text, `"${text}" still carries ${pattern}`).not.toMatch(pattern);
+      }
+      view.unmount();
+    }
+  });
+
+  it("carries no such wording in the config's own strings either", () => {
+    const strings = [
+      config.title,
+      config.network,
+      ...Object.values(ANNOUNCEMENT_STATUS_LABEL),
+      ...Object.values(ANNOUNCEMENT_STATUS_DESCRIPTION),
+    ];
+    for (const value of strings) {
+      for (const pattern of STALE) {
+        expect(value).not.toMatch(pattern);
+      }
+    }
+  });
+});
+
+describe("status derivation from GET /chains", () => {
+  const cases: readonly {
+    readonly name: string;
+    readonly chains: () => ChainsViewDto | undefined;
+    readonly expected: NetworkAnnouncementStatus;
+  }[] = [
+    {
+      name: "both routes available",
+      chains: () => fixtures.chainsFixture(now, { robinhoodOpen: true }),
+      expected: "available",
+    },
+    {
+      name: "both routes closed",
+      chains: () => fixtures.chainsFixture(now),
+      expected: "unavailable",
+    },
+    {
+      name: "enabled but held shut by the destination reserve",
+      chains: () =>
+        fixtures.chainsFixture(now, { robinhoodOpen: true, robinhoodAvailable: false }),
+      expected: "unavailable",
+    },
+    {
+      name: "one available, one not",
+      chains: () => {
+        const chains = fixtures.chainsFixture(now, { robinhoodOpen: true });
+        return {
+          ...chains,
+          routes: chains.routes.map((route) =>
+            route.id === "RhnToGlc"
+              ? { ...route, available: false, unavailable_reason: "closed" }
+              : route,
+          ),
+        };
+      },
+      expected: "partial",
+    },
+    { name: "/chains has not answered", chains: () => undefined, expected: "unknown" },
+  ];
+
+  for (const { name, chains, expected } of cases) {
+    it(`reports ${expected} when ${name}`, () => {
+      expect(networkAnnouncementStatus(chains())).toBe(expected);
+    });
+  }
+
+  it("fails closed when the backend publishes no `available` field", () => {
+    // A deployment predating backend PR #76. `enabled: true` is not an
+    // answer to "can this be used", and the strip must not read it as one.
+    const chains = fixtures.chainsFixture(now, { robinhoodOpen: true });
+    const legacy: ChainsViewDto = {
+      ...chains,
+      routes: chains.routes.map((route) => {
+        const { available: _available, unavailable_reason: _reason, ...rest } = route;
+        return rest;
+      }),
+    };
+    expect(networkAnnouncementStatus(legacy)).toBe("unavailable");
+  });
+
+  it("renders the available badge and copy once the backend opens both routes", async () => {
+    getChains.mockResolvedValue(fixtures.chainsFixture(now, { robinhoodOpen: true }));
+    renderWithQueryClient(<NetworkAnnouncement />);
+
+    expect(await settled(ANNOUNCEMENT_STATUS_LABEL.available)).toBeInTheDocument();
+    expect(
+      within(banner()).getByText(ANNOUNCEMENT_STATUS_DESCRIPTION.available),
+    ).toBeInTheDocument();
+    expect(
+      within(banner()).queryByText(ANNOUNCEMENT_STATUS_LABEL.unavailable),
+    ).toBeNull();
+  });
+
+  it("carries the state in words and an icon, never in colour alone", async () => {
+    getChains.mockResolvedValue(fixtures.chainsFixture(now, { robinhoodOpen: true }));
+    renderWithQueryClient(<NetworkAnnouncement />);
+    const badge = await settled(ANNOUNCEMENT_STATUS_LABEL.available);
+
+    expect(badge.querySelector("svg")).not.toBeNull();
+    expect(badge.className).toContain("success");
+  });
+
+  it("has a label and a line of copy for every status the union can hold", () => {
+    const all: readonly NetworkAnnouncementStatus[] = [
+      "available",
+      "partial",
+      "unavailable",
+      "unknown",
+    ];
+    for (const value of all) {
+      expect(ANNOUNCEMENT_STATUS_LABEL[value]).toBeTruthy();
+      expect(ANNOUNCEMENT_STATUS_DESCRIPTION[value]).toBeTruthy();
+    }
+  });
+});
+
 describe("artwork", () => {
   it("uses the mascot on the left and the Robinhood mark on the right", () => {
-    render(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement />);
     const sources = [...banner().querySelectorAll("img")].map((img) =>
       // next/image rewrites the attribute through its loader in some
       // configurations, so match on the underlying file rather than on an
@@ -103,7 +249,7 @@ describe("artwork", () => {
   });
 
   it("keeps both images decorative, so neither is announced", () => {
-    render(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement />);
     // An empty alt plus aria-hidden: the heading already names the network,
     // and the mascot carries no information the text does not.
     expect(within(banner()).queryAllByRole("img")).toHaveLength(0);
@@ -114,7 +260,7 @@ describe("artwork", () => {
   });
 
   it("sets no width or height class that could distort either image", () => {
-    render(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement />);
     for (const img of banner().querySelectorAll("img")) {
       // Height is driven; width follows the intrinsic ratio.
       expect(img.className).toContain("w-auto");
@@ -124,14 +270,14 @@ describe("artwork", () => {
 
 describe("controls", () => {
   it("offers no call to action — there is no page to open", () => {
-    render(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement />);
     expect(
       within(banner()).queryByRole("button", { name: /learn more/i }),
     ).not.toBeInTheDocument();
   });
 
   it("leaves dismissal as the strip's only control, disabled or otherwise", () => {
-    render(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement />);
 
     // A disabled button is still exposed to assistive technology, so this
     // catches a dead control being left behind as well as a live one.
@@ -142,15 +288,8 @@ describe("controls", () => {
     );
   });
 
-  it("does not reuse the badge's wording, so the two are never confused", () => {
-    render(<NetworkAnnouncement />);
-    expect(
-      within(banner()).queryByRole("button", { name: /coming soon/i }),
-    ).not.toBeInTheDocument();
-  });
-
   it("renders no links whatsoever — a dead route is worse than no link", () => {
-    render(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement />);
     expect(within(banner()).queryAllByRole("link")).toHaveLength(0);
     expect(banner().querySelectorAll("a")).toHaveLength(0);
   });
@@ -159,7 +298,7 @@ describe("controls", () => {
 describe("dismissal", () => {
   it("hides the strip when the labelled close button is pressed", async () => {
     const user = userEvent.setup();
-    render(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement />);
 
     await user.click(
       within(banner()).getByRole("button", {
@@ -172,13 +311,13 @@ describe("dismissal", () => {
 
   it("stays hidden for the rest of the browser session", async () => {
     const user = userEvent.setup();
-    const first = render(<NetworkAnnouncement />);
+    const first = renderWithQueryClient(<NetworkAnnouncement />);
     await user.click(
       screen.getByRole("button", { name: `Dismiss the ${config.network} announcement` }),
     );
     first.unmount();
 
-    render(<NetworkAnnouncement />);
+    renderWithQueryClient(<NetworkAnnouncement />);
     expect(screen.queryByRole("region", { name: "Network announcement" })).toBeNull();
   });
 
@@ -188,7 +327,7 @@ describe("dismissal", () => {
       throw new Error("storage disabled");
     };
     try {
-      render(<NetworkAnnouncement />);
+      renderWithQueryClient(<NetworkAnnouncement />);
       expect(banner()).toBeInTheDocument();
     } finally {
       window.sessionStorage.getItem = original;
@@ -196,14 +335,9 @@ describe("dismissal", () => {
   });
 });
 
-describe("isolation from live bridge state", () => {
-  it("renders with no query client, so it cannot depend on one", () => {
-    // Would throw "No QueryClient set" if any bridge hook were reachable.
-    render(<NetworkAnnouncement />);
-    expect(banner()).toBeInTheDocument();
-  });
-
-  it("leaves the operational bar intact beside it", async () => {
+describe("beside the global trust strip", () => {
+  it("stays a separate landmark, scoped to one network", async () => {
+    getChains.mockResolvedValue(fixtures.chainsFixture(now, { robinhoodOpen: true }));
     renderWithQueryClient(
       <>
         <BridgeStatusBar initialStatus={status()} />
@@ -211,144 +345,32 @@ describe("isolation from live bridge state", () => {
       </>,
     );
 
-    expect(screen.getByText("Operational")).toBeInTheDocument();
-    // Awaited, not synchronous: the route count comes from `GET /chains`,
-    // which — unlike the status snapshot — is not hydrated server-side.
-    expect(await screen.findByText("2 of 6 routes available.")).toBeInTheDocument();
+    // The bridge-wide strip counts every executable route; the integration
+    // strip speaks only for Robinhood's two. Neither is the other.
+    expect(await screen.findByText("4 of 4 routes available.")).toBeInTheDocument();
+    expect(
+      within(banner()).getByText(ANNOUNCEMENT_STATUS_LABEL.available),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View status" })).toHaveAttribute(
       "href",
       "/status",
     );
-    expect(banner()).toBeInTheDocument();
   });
 
-  it("renders identically whether the bridge is operational, degraded or paused", () => {
-    const snapshots: readonly BridgeStatusDto[] = [
-      status(),
-      status({ glc_to_sol_available: false }),
-      status({ goldcoin_paused: true, solana_paused: true }),
-    ];
-
-    const rendered = snapshots.map((snapshot) => {
-      const view = renderWithQueryClient(
-        <>
-          <BridgeStatusBar initialStatus={snapshot} />
-          <NetworkAnnouncement />
-        </>,
-      );
-      // Text rather than markup: `useId` mints a fresh heading id on every
-      // render, so identical output would still differ byte for byte.
-      const text = screen.getByRole("region", {
-        name: "Network announcement",
-      }).textContent;
-      view.unmount();
-      return text;
-    });
-
-    expect(new Set(rendered).size).toBe(1);
-  });
-
-  it("imports nothing from the api, query, status, solana or wallet layers", () => {
-    const source = readFileSync(
-      join(process.cwd(), "src/components/layout/NetworkAnnouncement.tsx"),
-      "utf8",
+  it("does not track the bridge-wide status snapshot", async () => {
+    // A Solana-side pause is not a statement about Robinhood's routes, and
+    // this strip must not repeat it. `/chains` is the only input.
+    getChains.mockResolvedValue(fixtures.chainsFixture(now, { robinhoodOpen: true }));
+    getStatus.mockResolvedValue(fixtures.pausedStatusFixture());
+    renderWithQueryClient(
+      <>
+        <BridgeStatusBar initialStatus={fixtures.pausedStatusFixture()} />
+        <NetworkAnnouncement />
+      </>,
     );
-    const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);
-
-    for (const specifier of imports) {
-      expect(
-        /@\/lib\/(api|query|status|solana)|wallet-adapter|@\/features/.test(
-          specifier ?? "",
-        ),
-        `NetworkAnnouncement must not import ${specifier}`,
-      ).toBe(false);
-    }
-  });
-
-  it("is configured by a constant that pulls in no runtime state", () => {
-    const source = readFileSync(
-      join(process.cwd(), "src/lib/config/announcement.ts"),
-      "utf8",
-    );
-    expect(source).not.toMatch(/^import /m);
-  });
-});
-
-/**
- * Readiness for the launch flip.
- *
- * The routes open when `GET /chains` says so, and this constant has no
- * bearing on that — flipping it opens nothing and closing it closes
- * nothing. What these cases pin is that when the flip does come, it is an
- * edit to a VALUE and not a change to the component: the badge's word, its
- * icon and its outline are all resolved from `announcement.status`, so
- * nothing in `NetworkAnnouncement.tsx` has to be revisited under launch
- * pressure.
- *
- * The shipped value stays `"coming-soon"` and is asserted as such, so this
- * preparation cannot be mistaken for the announcement itself.
- */
-describe("launch readiness", () => {
-  it("still announces the integration as coming soon", () => {
-    // The backend ships both Robinhood routes disabled. Announcing a route
-    // the gate still refuses is worse than announcing it a day late.
-    expect(config.status).toBe("coming-soon");
-    render(<NetworkAnnouncement />);
-    expect(within(banner()).getAllByText(COMING_SOON_LABEL)[0]).toBeInTheDocument();
-    expect(within(banner()).queryByText(ANNOUNCEMENT_STATUS_LABEL.live)).toBeNull();
-  });
-
-  it("renders the launched badge from the status alone, with no other edit", () => {
-    const live: NetworkAnnouncementConfig = {
-      ...config,
-      status: "live",
-      description: "GLC bridging with Robinhood Chain is live.",
-    };
-    render(<NetworkAnnouncement announcement={live} />);
 
     expect(
-      within(banner()).getByText(ANNOUNCEMENT_STATUS_LABEL.live),
+      await within(banner()).findByText(ANNOUNCEMENT_STATUS_LABEL.available),
     ).toBeInTheDocument();
-    expect(within(banner()).queryByText(COMING_SOON_LABEL)).toBeNull();
-    expect(within(banner()).getByText(live.description)).toBeInTheDocument();
-  });
-
-  it("keeps the strip's shape across the flip — same landmark, same one control", () => {
-    // The flip must not quietly reintroduce a call to action or a second
-    // line of copy; the reasons those are absent do not change at launch.
-    const live: NetworkAnnouncementConfig = { ...config, status: "live" };
-    render(<NetworkAnnouncement announcement={live} />);
-
-    expect(banner()).toHaveAccessibleName("Network announcement");
-    expect(within(banner()).getAllByRole("button")).toHaveLength(1);
-    expect(within(banner()).queryAllByRole("link")).toHaveLength(0);
-    expect(within(banner()).getAllByText(/./, { selector: "p" })).toHaveLength(1);
-  });
-
-  it("carries the launched state in words and an icon, never in colour alone", () => {
-    const live: NetworkAnnouncementConfig = { ...config, status: "live" };
-    render(<NetworkAnnouncement announcement={live} />);
-    const badge = within(banner()).getByText(ANNOUNCEMENT_STATUS_LABEL.live);
-
-    // A reader who cannot separate the gold outline from the green one
-    // still reads the word — and the icon changes too.
-    expect(badge.querySelector("svg")).not.toBeNull();
-    expect(badge.className).toContain("success");
-  });
-
-  it("has a label for every status the config can hold", () => {
-    // A status added to the union without a label would render an empty
-    // badge rather than failing to build.
-    for (const status of ["coming-soon", "live"] as const) {
-      expect(ANNOUNCEMENT_STATUS_LABEL[status]).toBeTruthy();
-    }
-  });
-
-  it("still pulls in no runtime state after the flip", () => {
-    // The isolation rule is not relaxed at launch: an announcement that
-    // reacted to the status endpoint would eventually be mistaken for it.
-    const live: NetworkAnnouncementConfig = { ...config, status: "live" };
-    render(<NetworkAnnouncement announcement={live} />);
-    expect(banner()).toBeInTheDocument();
   });
 });

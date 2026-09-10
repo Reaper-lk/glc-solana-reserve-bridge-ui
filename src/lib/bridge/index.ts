@@ -116,6 +116,25 @@ export { destinationReserveGroups, executableRoutes } from "./route-families";
 export type { DestinationReserve, DestinationReserveGroup } from "./route-families";
 
 export {
+  executableRouteStatus,
+  executableRouteStatuses,
+  AVAILABILITY_NOT_PUBLISHED_NOTE,
+} from "./route-status";
+export type {
+  ExecutableRouteStatus,
+  RouteFigure,
+  RouteStatusInput,
+  RouteStatusKind,
+} from "./route-status";
+
+export {
+  systemRouteAvailability,
+  systemRouteMessage,
+  SYSTEM_ROUTE_MESSAGE,
+} from "./system-banner";
+export type { SystemRouteAvailability } from "./system-banner";
+
+export {
   CHAIN_DESCRIPTORS,
   descriptorFor,
   displayDescriptorFor,

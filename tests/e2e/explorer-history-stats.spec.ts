@@ -6,16 +6,18 @@ test.describe("explorer, reserves, and status navigation", () => {
     await page.goto("/explorer");
     await expect(page.getByRole("heading", { name: "Explorer" })).toBeVisible();
     await expect(page.getByText(/settled/i).first()).toBeVisible();
-    // At least one real event row, linking to its own transfer.
-    await expect(page.locator('a[href^="/bridge/"]').first()).toBeVisible();
+    // At least one real event row, linking to its own transfer inside the
+    // explorer's own route rather than the wallet-flow one.
+    await expect(page.locator('a[href^="/explorer/tx/"]').first()).toBeVisible();
   });
 
   test("an explorer event links through to its transfer detail", async ({ page }) => {
     await page.goto("/explorer");
-    const firstEvent = page.locator('a[href^="/bridge/"]').first();
+    const firstEvent = page.locator('a[href^="/explorer/tx/"]').first();
     const href = await firstEvent.getAttribute("href");
     await firstEvent.click();
     await expect(page).toHaveURL(new RegExp(href!.replace(/\//g, "\\/")));
+    await expect(page.getByText("Source transaction").first()).toBeVisible();
   });
 
   test("reserves page shows per-direction capacity and reconciliation history", async ({
@@ -29,11 +31,20 @@ test.describe("explorer, reserves, and status navigation", () => {
     await expect(page.getByText("Reconciliation history")).toBeVisible();
   });
 
-  test("status page shows both directions and system health", async ({ page }) => {
+  test("status page shows every executable route and system health", async ({ page }) => {
     await page.goto("/status");
-    await expect(page.getByText("GLC L1 → GLC on Solana").first()).toBeVisible();
-    await expect(page.getByText("GLC on Solana → GLC L1").first()).toBeVisible();
+    for (const route of [
+      "GLC L1 → GLC on Solana",
+      "GLC on Solana → GLC L1",
+      "GLC L1 → GLC on Robinhood",
+      "GLC on Robinhood → GLC L1",
+    ]) {
+      await expect(page.getByRole("group", { name: route })).toBeVisible();
+    }
     await expect(page.getByText("System health")).toBeVisible();
+    // The two-direction sentence the strip used to print in its worst
+    // state. The bridge has four executable routes across three reserves.
+    await expect(page.getByText(/both sides/i)).toHaveCount(0);
   });
 
   test("activity page states there is nothing to search without an address", async ({
