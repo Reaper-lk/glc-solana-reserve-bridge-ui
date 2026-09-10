@@ -116,6 +116,25 @@ export class HttpBridgeClient implements BridgeApiClient {
     );
   }
 
+  getRhnToGlcRecipientEligibility(
+    address: string,
+    wallet: string | null,
+    signal?: AbortSignal,
+  ) {
+    const query: Record<string, string> = { address };
+    // Omitted rather than sent empty: the backend reads `?wallet=` as
+    // "not evaluated" only when it is absent or blank, and an empty
+    // string is the one spelling of "no wallet" that its EVM address
+    // parser would have to reject.
+    if (wallet) query.wallet = wallet;
+    return this.request(
+      "/recipients/rhn-to-glc/eligibility",
+      recipientEligibilitySchema,
+      query,
+      signal,
+    );
+  }
+
   getTransfer(id: number, signal?: AbortSignal) {
     return this.request(
       `/transfers/${encodeURIComponent(String(id))}`,

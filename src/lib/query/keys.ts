@@ -16,8 +16,23 @@ export const queryKeys = {
   robinhoodReserve: () => ["bridge", "robinhood", "reserve"] as const,
   quote: (direction: string, grossAmount: string) =>
     ["bridge", "quote", direction, grossAmount] as const,
-  recipientEligibility: (address: string, wallet: string | null) =>
-    ["bridge", "recipient-eligibility", address, wallet] as const,
+  /**
+   * The rolling-24h eligibility verdict, keyed by ROUTE, address AND
+   * wallet.
+   *
+   * All three belong in the key. The two inbound routes have separate
+   * endpoints and separate source-wallet windows, so one cache entry for
+   * both would answer a Robinhood question with a Solana verdict. Address
+   * and wallet are in it because a verdict is a statement about exactly
+   * that pair: changing either must produce a cache MISS, never a stale
+   * "eligible" carried across the edit. That is what stops a previously
+   * granted answer from authorizing a deposit whose inputs it never saw.
+   */
+  recipientEligibility: (
+    route: "SolToGlc" | "RhnToGlc",
+    address: string,
+    wallet: string | null,
+  ) => ["bridge", "recipient-eligibility", route, address, wallet] as const,
   transfer: (id: number) => ["bridge", "transfer", id] as const,
   transfers: (params: ListTransfersParams) => ["bridge", "transfers", params] as const,
   explorerEvents: (params: ListExplorerEventsParams) =>
@@ -58,8 +73,8 @@ export const pollIntervals = {
    */
   robinhoodReserve: 30_000,
   /**
-   * The SolToGlc recipient rate-limit check for the address currently in
-   * the form. Refetching while the form sits open both catches an address
+   * The inbound-route recipient rate-limit check for the address currently
+   * in the form. Refetching while the form sits open both catches an address
    * that got paid from elsewhere in the meantime and lets a blocked
    * address unblock on its own once its 24-hour window passes — without
    * the user having to retype anything.

@@ -17,6 +17,8 @@ export {
   type RouteDisplay,
 } from "./direction";
 export {
+  isRouteEffectivelyAvailable,
+  isRouteEnabled,
   isRouteOpen,
   routeAvailability,
   routeAvailabilitySummary,
@@ -52,6 +54,23 @@ export { goldcoinAddressRules } from "./address-rules";
 
 export { RECIPIENT_RATE_LIMIT_TITLE } from "./recipient-rate-limit";
 export { SOURCE_WALLET_RATE_LIMIT_TITLE } from "./source-wallet-rate-limit";
+
+export {
+  formatRetryAfter,
+  formatRetryAt,
+  retryAfterSentence,
+  retryTimeFor,
+  robinhoodPredepositVerdict,
+  verdictMatchesInputs,
+  ROBINHOOD_ELIGIBILITY_UNKNOWN_NEXT,
+  ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
+  ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
+  ROBINHOOD_ROUTE_UNAVAILABLE_FALLBACK,
+  ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE,
+  type RateLimitedBy,
+  type RobinhoodPredepositInput,
+  type RobinhoodPredepositVerdict,
+} from "./robinhood-predeposit";
 
 export {
   isTerminalState,

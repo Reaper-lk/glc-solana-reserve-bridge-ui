@@ -21,7 +21,7 @@ import {
   directionGateState,
   directions,
   displayDescriptorFor,
-  isRouteOpen,
+  isRouteEnabled,
   robinhoodDestinationCapacity,
   robinhoodRouteGateState,
   robinhoodWindowRemaining,
@@ -78,8 +78,13 @@ export function StatusView() {
   // authority says the route is live would be asking the wrong source
   // first — and on a deployment predating the endpoint, asking at all is a
   // 404 per poll tick for a route nobody can use.
+  // `isRouteEnabled`, not `isRouteOpen`: the question here is whether this
+  // DEPLOYMENT has the route (and therefore the endpoint) at all, which is
+  // what avoids a 404 per poll tick. A route that is switched on and
+  // momentarily gated shut by its destination reserve still has both, and
+  // is exactly the state a status page exists to report.
   const robinhoodLive =
-    isRouteOpen(chains.data, "GlcToRhn") || isRouteOpen(chains.data, "RhnToGlc");
+    isRouteEnabled(chains.data, "GlcToRhn") || isRouteEnabled(chains.data, "RhnToGlc");
   const robinhood = useRobinhoodReserve(robinhoodLive);
 
   if (status.isPending || health.isPending || reserve.isPending) {
@@ -154,12 +159,13 @@ export function StatusView() {
      * card saying the same thing would be noise, and one filled with
      * placeholder zeroes would be worse.
      */
-    ...ROBINHOOD_ROUTES.filter((route) => isRouteOpen(chains.data, route)).map((route) =>
-      robinhoodCard(
-        route,
-        robinhood.data,
-        clampAtomicAtZero(reserve.data.goldcoin_available_capacity),
-      ),
+    ...ROBINHOOD_ROUTES.filter((route) => isRouteEnabled(chains.data, route)).map(
+      (route) =>
+        robinhoodCard(
+          route,
+          robinhood.data,
+          clampAtomicAtZero(reserve.data.goldcoin_available_capacity),
+        ),
     ),
   ];
 
@@ -411,10 +417,12 @@ function RouteAvailabilityCard({
                   <p className="text-body-sm text-ink-500">{view.id}</p>
                 </div>
                 <div className="sm:max-w-[60%] sm:text-right">
-                  {/* The four availability kinds have their own status
-                      descriptors: "Not implemented" is neutral rather than
+                  {/* Every availability kind has its own status
+                      descriptor: "Not implemented" is neutral rather than
                       danger, because nothing is wrong and nothing is
-                      waiting to be switched back on. */}
+                      waiting to be switched back on, and "Temporarily
+                      unavailable" is warn rather than danger because the
+                      route is switched on and its reserve will reopen. */}
                   <StatusBadge status={routeAvailabilityStatus[state.kind]} size="sm" />
                   {state.kind !== "open" && (
                     <p className="text-body-sm text-ink-500 mt-1 whitespace-pre-line">

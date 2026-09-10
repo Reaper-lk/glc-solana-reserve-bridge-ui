@@ -202,9 +202,46 @@ export function useSolToGlcRecipientEligibility(
   enabled: boolean,
 ): UseQueryResult<RecipientEligibilityDto> {
   return useQuery({
-    queryKey: queryKeys.recipientEligibility(address, wallet),
+    queryKey: queryKeys.recipientEligibility("SolToGlc", address, wallet),
     queryFn: ({ signal }) =>
       bridgeApi.getSolToGlcRecipientEligibility(address, wallet, signal),
+    enabled: enabled && address.length > 0,
+    refetchInterval: pollIntervals.recipientEligibility,
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
+/**
+ * The `RhnToGlc` twin (`GET /recipients/rhn-to-glc/eligibility`) — the
+ * same two rolling-24h limits, with the source-wallet leg keyed by the
+ * connected EVM address instead of a Solana pubkey.
+ *
+ * # Why this one is not merely a warning
+ *
+ * Its Solana sibling is advisory: a failed read there is skipped, because
+ * `SolToGlc` funds land in a program the bridge controls and the backend
+ * re-checks at admission anyway. `RhnToGlc` has no such floor — the
+ * deposit goes straight to the custody contract and a blocked one is
+ * folded into `ManualReview` with the funds already committed. So the
+ * FORM treats pending, failed and absent alike as "not eligible yet", and
+ * `BridgeForm.submit` re-fetches through `bridgeApi` directly immediately
+ * before the wallet is invoked. Nothing cached here can be the thing that
+ * authorizes a deposit.
+ *
+ * `retry: false` deliberately: a fail-closed check must reach its refusal
+ * promptly rather than sitting in "checking…" through a retry ladder,
+ * and the poll interval below re-attempts it on its own.
+ */
+export function useRhnToGlcRecipientEligibility(
+  address: string,
+  wallet: string | null,
+  enabled: boolean,
+): UseQueryResult<RecipientEligibilityDto> {
+  return useQuery({
+    queryKey: queryKeys.recipientEligibility("RhnToGlc", address, wallet),
+    queryFn: ({ signal }) =>
+      bridgeApi.getRhnToGlcRecipientEligibility(address, wallet, signal),
     enabled: enabled && address.length > 0,
     refetchInterval: pollIntervals.recipientEligibility,
     staleTime: 15_000,

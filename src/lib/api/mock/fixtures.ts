@@ -133,14 +133,37 @@ export const ROUTE_UNAVAILABLE_MESSAGE =
   "This route is not available yet.\nRobinhood Network support is in development and " +
   "cannot be used for transfers.";
 
+/**
+ * The backend's own cause-agnostic copy for a route that is switched on
+ * and still refused by a runtime gate on its destination reserve
+ * (`DIRECTION_UNAVAILABLE_MESSAGE` in api.rs, reused verbatim by
+ * `route_availability`). Deliberately identical to what a 409 carries:
+ * which gate closed is an operator detail this endpoint never discloses.
+ */
+export const DIRECTION_UNAVAILABLE_MESSAGE =
+  "Bridge capacity reached for this direction.";
+
 export function chainsFixture(
   now: () => Date,
-  options: { readonly robinhoodOpen?: boolean } = {},
+  options: {
+    readonly robinhoodOpen?: boolean;
+    /**
+     * The `available` half of backend PR #76, independently of `enabled`.
+     * Defaults to `robinhoodOpen`, so the ordinary fixtures describe a
+     * coherent backend; setting it `false` while `robinhoodOpen` is
+     * `true` reproduces the exact production state that made the two
+     * fields necessary — the route gate open, the Goldcoin reserve's
+     * admission closed.
+     */
+    readonly robinhoodAvailable?: boolean;
+  } = {},
 ): ChainsViewDto {
   // Mock-only. Never a claim that these routes are open in production —
   // it exists so the Robinhood flows can be exercised end to end against
   // a route the real backend keeps closed.
   const robinhoodOpen = options.robinhoodOpen ?? false;
+  const robinhoodAvailable =
+    (options.robinhoodAvailable ?? robinhoodOpen) && robinhoodOpen;
   const robinhood = (id: "GlcToRhn" | "RhnToGlc"): ChainsViewDto["routes"][number] => ({
     id,
     source_chain: id === "GlcToRhn" ? "goldcoin" : "robinhood",
@@ -148,6 +171,12 @@ export function chainsFixture(
     enabled: robinhoodOpen,
     disabled_reason: robinhoodOpen ? null : ROUTE_UNAVAILABLE_MESSAGE,
     implemented: true,
+    available: robinhoodAvailable,
+    unavailable_reason: robinhoodAvailable
+      ? null
+      : robinhoodOpen
+        ? DIRECTION_UNAVAILABLE_MESSAGE
+        : ROUTE_UNAVAILABLE_MESSAGE,
   });
 
   return {
@@ -164,6 +193,8 @@ export function chainsFixture(
         enabled: true,
         disabled_reason: null,
         implemented: true,
+        available: true,
+        unavailable_reason: null,
       },
       {
         id: "SolToGlc",
@@ -172,6 +203,8 @@ export function chainsFixture(
         enabled: true,
         disabled_reason: null,
         implemented: true,
+        available: true,
+        unavailable_reason: null,
       },
       robinhood("GlcToRhn"),
       robinhood("RhnToGlc"),
@@ -182,6 +215,11 @@ export function chainsFixture(
         enabled: false,
         disabled_reason: ROUTE_UNAVAILABLE_MESSAGE,
         implemented: false,
+        // A route with no settlement machinery can admit nothing, and the
+        // backend answers `available: false` for it before it looks at any
+        // reserve at all.
+        available: false,
+        unavailable_reason: ROUTE_UNAVAILABLE_MESSAGE,
       },
       {
         id: "RhnToSol",
@@ -190,6 +228,8 @@ export function chainsFixture(
         enabled: false,
         disabled_reason: ROUTE_UNAVAILABLE_MESSAGE,
         implemented: false,
+        available: false,
+        unavailable_reason: ROUTE_UNAVAILABLE_MESSAGE,
       },
     ],
     as_of: Math.floor(now().getTime() / 1000),

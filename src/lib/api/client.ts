@@ -125,6 +125,32 @@ export interface BridgeApiClient {
     signal?: AbortSignal,
   ): Promise<RecipientEligibilityDto>;
 
+  /**
+   * The `RhnToGlc` twin of `getSolToGlcRecipientEligibility`
+   * (`GET /recipients/rhn-to-glc/eligibility`, backend PR #74): the same
+   * response shape, the same two rolling-24h limits, the same optional
+   * `wallet` leg — spelled as a `0x`-prefixed EVM address here rather
+   * than a base58 Solana pubkey.
+   *
+   * The recipient leg is the SAME window the Solana endpoint reads: one
+   * payout per Goldcoin address per 24 hours across every inbound route.
+   * The wallet leg is the Robinhood-scoped one, keyed by the custody
+   * contract's own recorded depositor, and is never charged against a
+   * Solana wallet's window or vice versa.
+   *
+   * Unlike its Solana twin this is not merely advisory to the caller. A
+   * Robinhood deposit reaches the custody contract with no
+   * `POST /transfers` in front of it, so this call is the last refusal
+   * available before the funds are committed — a failed read disables the
+   * deposit rather than being skipped. The backend still re-checks
+   * authoritatively at fold time and remains the enforcement.
+   */
+  getRhnToGlcRecipientEligibility(
+    address: string,
+    wallet: string | null,
+    signal?: AbortSignal,
+  ): Promise<RecipientEligibilityDto>;
+
   getTransfer(id: number, signal?: AbortSignal): Promise<TransferViewDto>;
   /**
    * Goldcoin-SOURCED routes only (`GlcToSol`, `GlcToRhn`). The backend has

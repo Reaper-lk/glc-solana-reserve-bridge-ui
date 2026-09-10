@@ -186,13 +186,24 @@ export const directionAvailabilityStatus: Record<
  * open because they have no settlement machinery on either side. The two
  * cases are the same colour on screen today and must not be.
  */
-export type RouteAvailabilityStatus = "open" | "closed" | "unimplemented" | "unknown";
+export type RouteAvailabilityStatus =
+  "open" | "closed" | "unavailable" | "unimplemented" | "unknown";
 
 export const routeAvailabilityStatus: Record<RouteAvailabilityStatus, StatusDescriptor> =
   {
     open: { label: "Available", tone: "success", icon: CircleCheck },
     /** Implemented, and refused by the gate. Reopening it is a backend change. */
     closed: { label: "Unavailable", tone: "danger", icon: CircleSlash },
+    /**
+     * Switched ON and still refused right now — `available: false` on a
+     * route whose `enabled` is `true`. A distinct badge from `closed`
+     * because the remedy is distinct: nobody switched this off and nobody
+     * has to switch it back on, so "Unavailable" in the same red as a
+     * gated-off route would tell an operator to go looking for a setting
+     * that is already correct. Warn, not danger: the bridge is working,
+     * this route's destination reserve is simply not admitting right now.
+     */
+    unavailable: { label: "Temporarily unavailable", tone: "warn", icon: Pause },
     /**
      * `implemented: false` — structurally inert in this build. Neutral, not
      * danger: nothing is wrong and nothing is waiting to be switched back on,
