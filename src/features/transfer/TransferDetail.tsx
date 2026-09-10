@@ -43,18 +43,21 @@ const CANONICAL_SYMBOL = "GLC";
  * there is no local state to lose, so this survives a reload, a device
  * switch, or a link opened days later.
  *
- * `readOnly` is used by the public explorer route: it is the same component
- * with nothing hidden, because `TransferView` never carries a recipient
- * address or anything else sensitive to begin with (backend module doc,
- * service/src/api.rs).
+ * The public explorer route (`/explorer/tx/{id}`) renders this same
+ * component, with nothing hidden, because `TransferView` never carries a
+ * recipient address or anything else sensitive to begin with (backend
+ * module doc, service/src/api.rs).
+ *
+ * It used to be handed a `readOnly` flag that suppressed every
+ * chain-explorer link, which left the public explorer — the one surface
+ * whose entire purpose is letting anyone verify a transfer independently —
+ * rendering bare, unlinked hashes. Those links go to public block
+ * explorers, are built from this deployment's own configured templates,
+ * and disclose nothing the page is not already showing. The flag hid
+ * nothing else, so it is gone rather than kept as a prop that claims a
+ * restriction it does not impose.
  */
-export function TransferDetail({
-  id,
-  readOnly = false,
-}: {
-  id: number;
-  readOnly?: boolean;
-}) {
+export function TransferDetail({ id }: { id: number }) {
   const query = useTransfer(id);
 
   if (query.isPending) {
@@ -156,36 +159,28 @@ export function TransferDetail({
           <TxRow
             label="Source transaction"
             txid={transfer.source_txid}
-            href={
-              readOnly
-                ? undefined
-                : (chainTxUrl(sourceChain, transfer.source_txid) ?? undefined)
-            }
+            /* Resolved by the chain the transaction happened ON, never by
+               the direction: a `GlcToRhn` source is a Goldcoin txid while
+               its destination is an EVM hash, and a binary direction check
+               would have sent one of them to the wrong explorer. */
+            href={chainTxUrl(sourceChain, transfer.source_txid) ?? undefined}
           />
         )}
         {transfer.refund?.refund_txid && (
           <TxRow
             label="Refund transaction"
             txid={transfer.refund.refund_txid}
-            href={
-              readOnly
-                ? undefined
-                : // A refund travels back down the SOURCE chain — the one the
-                  // deposit arrived on — which is the opposite of the
-                  // destination transaction below.
-                  (chainTxUrl(sourceChain, transfer.refund.refund_txid) ?? undefined)
-            }
+            // A refund travels back down the SOURCE chain — the one the
+            // deposit arrived on — which is the opposite of the
+            // destination transaction below.
+            href={chainTxUrl(sourceChain, transfer.refund.refund_txid) ?? undefined}
           />
         )}
         {transfer.destination_txid && (
           <TxRow
             label="Destination transaction"
             txid={transfer.destination_txid}
-            href={
-              readOnly
-                ? undefined
-                : (chainTxUrl(destinationChain, transfer.destination_txid) ?? undefined)
-            }
+            href={chainTxUrl(destinationChain, transfer.destination_txid) ?? undefined}
           />
         )}
       </dl>

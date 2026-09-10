@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import type { RequestState } from "@/lib/api/schemas/transfer";
 import { isKnownRequestState } from "@/lib/bridge/state";
+import type { RouteStatusKind } from "@/lib/bridge/route-status";
 
 /**
  * The status vocabulary.
@@ -213,6 +214,38 @@ export const routeAvailabilityStatus: Record<RouteAvailabilityStatus, StatusDesc
     /** `/chains` has not loaded. Fail closed, and say so rather than guessing. */
     unknown: { label: "Unknown", tone: "neutral", icon: CircleHelp },
   };
+
+/* -------------------------------------------------------------------------- */
+/* Executable route status (the /status route cards)                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The badge for one executable route's resolved state
+ * (`@/lib/bridge/route-status`).
+ *
+ * A superset of the two vocabularies above rather than a third one:
+ * `available`/`unavailable`/`closed`/`unimplemented` keep exactly the
+ * wording the Routes list uses for the same `GET /chains` verdicts, while
+ * the cause-naming states are the ones `GET /status` and
+ * `GET /robinhood/reserve` can establish for a route the registry has
+ * already reported available.
+ *
+ * `available` is the only success label here, and `route-status` only ever
+ * produces it from a positive `available: true`. An `enabled` route with no
+ * published availability lands on `unknown` — never on this label.
+ */
+export const executableRouteStatusBadge: Record<RouteStatusKind, StatusDescriptor> = {
+  available: directionAvailabilityStatus.available,
+  unavailable: routeAvailabilityStatus.unavailable,
+  closed: routeAvailabilityStatus.closed,
+  unimplemented: routeAvailabilityStatus.unimplemented,
+  paused: directionAvailabilityStatus.paused,
+  "insufficient-liquidity": directionAvailabilityStatus["insufficient-liquidity"],
+  "quota-exhausted": directionAvailabilityStatus["quota-exhausted"],
+  "quota-paused": directionAvailabilityStatus["quota-paused"],
+  degraded: directionAvailabilityStatus.degraded,
+  unknown: directionAvailabilityStatus.unknown,
+};
 
 /* -------------------------------------------------------------------------- */
 /* Wallet connection                                                           */

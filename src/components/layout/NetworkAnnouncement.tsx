@@ -1,51 +1,67 @@
 "use client";
 
 import Image from "next/image";
-import { CircleCheck, Clock, X, type LucideIcon } from "lucide-react";
+import {
+  CircleCheck,
+  CircleHelp,
+  CircleSlash,
+  Pause,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { useId, useState } from "react";
 import { useIsMounted } from "@/lib/hooks/useIsMounted";
+import { useChains } from "@/lib/query/hooks";
 import {
+  ANNOUNCEMENT_STATUS_DESCRIPTION,
   ANNOUNCEMENT_STATUS_LABEL,
   NETWORK_ANNOUNCEMENT,
+  networkAnnouncementStatus,
   type NetworkAnnouncement as NetworkAnnouncementConfig,
   type NetworkAnnouncementStatus,
 } from "@/lib/config/announcement";
 import { cn } from "@/lib/utils/cn";
 
 /**
- * The network announcement strip.
+ * The network integration strip.
  *
  * Sits directly beneath the global trust strip and reads as a second system
- * strip, which is exactly what it must NOT be mistaken for. Everything it
- * says comes from `NETWORK_ANNOUNCEMENT` — a static constant. It calls no
- * hook that touches the bridge: no status query, no reserve query, no wallet,
- * no API client. A future integration cannot be reported by an endpoint that
- * describes the bridge as it is today, and letting this strip react to live
- * state would eventually let a marketing line contradict, or be mistaken for,
- * the operational truth above it.
+ * strip — which is very nearly what it now is, with one deliberate
+ * difference in scope. `BridgeStatusBar` speaks for the bridge as a whole:
+ * how many of its executable routes are usable. This one is scoped to a
+ * SINGLE network's integration and reports only that network's routes.
  *
- * It is therefore also its own landmark rather than part of AppShell's
- * "Bridge notices" region: a reader navigating by landmark should not find a
- * product announcement filed among notices about money movement.
+ * It used to be derived from a static constant, and that was right while
+ * the thing it announced did not exist — there was no live state to read,
+ * and a marketing line reacting to the status endpoint would eventually
+ * have been mistaken for it. The routes now exist and are shipped, so the
+ * constant had become the failure mode instead: it went on saying "COMING
+ * SOON … launches next week" about machinery that was already built. The
+ * strip therefore reads `GET /chains`, through the same
+ * `routeAvailability` every other consumer uses, and reports the same
+ * verdict rather than a second opinion.
+ *
+ * It is still its own landmark rather than part of AppShell's "Bridge
+ * notices" region: a reader navigating by landmark should find the
+ * bridge-wide notices together, and this is scoped to one network.
  *
  * One consequence worth stating: the state is carried by text and an icon,
- * never by colour. The pre-launch outline is gold — brand accent, and gold is
- * never a status colour in this system (see src/lib/status) — while the
- * strip's green is the same token family the trust strip uses, which is why
- * the state is spelled out in words instead. The launched badge borrows the
- * success token for its outline, but the word and the icon still carry the
- * meaning on their own, so a reader who cannot separate the two outlines
- * loses nothing.
+ * never by colour. The strip's green wash is the same token family the
+ * trust strip uses and stays put whatever the badge says, which is why the
+ * state is spelled out in words — a reader who cannot separate two
+ * outlines loses nothing.
  *
- * Nothing here hardcodes which state is being announced: the badge's label,
- * icon and outline are all looked up from `announcement.status`. Announcing
- * the launch is therefore an edit to `src/lib/config/announcement.ts` alone —
- * see that module's doc — and this file does not change at all.
+ * Nothing here hardcodes which state is being reported: the badge's label,
+ * icon, outline and the line of copy are all looked up from the resolved
+ * status. Adding a status is an edit to `src/lib/config/announcement.ts`
+ * plus one entry in the total `Record` below, which is what stops a new
+ * state from silently falling through to an existing one.
  *
- * The strip offers no call to action. There is no Robinhood page to open, and
- * a disabled button explaining that is still a control the eye and the tab
- * order have to account for. The heading, one line of copy and the dismiss
- * control are the whole row; the only interactive element is the dismiss.
+ * The strip offers no call to action. There is no Robinhood page to open,
+ * and the reason a route is closed belongs beside that route on /status
+ * rather than duplicated here — the backend's sentence is cause-agnostic
+ * and there can be a different one per route. The heading, one line of
+ * copy and the dismiss control are the whole row.
  */
 
 /**
@@ -66,8 +82,10 @@ const STATUS_BADGE: Record<
   NetworkAnnouncementStatus,
   { readonly icon: LucideIcon; readonly className: string }
 > = {
-  "coming-soon": { icon: Clock, className: "border-gold-700 text-gold-700" },
-  live: { icon: CircleCheck, className: "border-success-700 text-success-700" },
+  available: { icon: CircleCheck, className: "border-success-700 text-success-700" },
+  partial: { icon: Pause, className: "border-warn-700 text-warn-700" },
+  unavailable: { icon: CircleSlash, className: "border-ink-400 text-ink-700" },
+  unknown: { icon: CircleHelp, className: "border-ink-300 text-ink-500" },
 };
 
 function readDismissed(storageKey: string): boolean {
@@ -93,6 +111,15 @@ export function NetworkAnnouncement({
   announcement?: NetworkAnnouncementConfig;
 } = {}) {
   const headingId = useId();
+  /*
+   * The one live read this strip makes. `/chains` is the availability
+   * authority for the whole app, and this strip reports the same verdict
+   * it does rather than a second opinion — which is why it calls the same
+   * `routeAvailability` every other consumer does, through
+   * `networkAnnouncementStatus`. A read that has not landed is `unknown`,
+   * never "available".
+   */
+  const chains = useChains();
 
   /*
    * The stored value is read in the initialiser rather than in an effect, so
@@ -124,7 +151,8 @@ export function NetworkAnnouncement({
     ? announcement.title.slice(announcement.network.length).trimStart()
     : null;
 
-  const badge = STATUS_BADGE[announcement.status];
+  const status = networkAnnouncementStatus(chains.data);
+  const badge = STATUS_BADGE[status];
   const BadgeIcon = badge.icon;
 
   return (
@@ -201,7 +229,7 @@ export function NetworkAnnouncement({
               )}
             >
               <BadgeIcon aria-hidden="true" className="size-3" strokeWidth={2} />
-              {ANNOUNCEMENT_STATUS_LABEL[announcement.status]}
+              {ANNOUNCEMENT_STATUS_LABEL[status]}
             </span>
 
             <div className="min-w-0 basis-full md:flex-1 md:basis-auto">
@@ -214,7 +242,9 @@ export function NetworkAnnouncement({
                   </>
                 ) : null}
               </h2>
-              <p className="text-body-sm text-ink-700">{announcement.description}</p>
+              <p className="text-body-sm text-ink-700">
+                {ANNOUNCEMENT_STATUS_DESCRIPTION[status]}
+              </p>
             </div>
 
             {/*

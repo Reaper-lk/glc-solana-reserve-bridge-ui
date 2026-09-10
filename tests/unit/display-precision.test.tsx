@@ -143,8 +143,14 @@ describe("Status stat cards", () => {
     });
     renderWithQueryClient(<StatusView />);
 
-    // Two capacity figures and two remaining-quota figures, all the same value.
-    expect(await screen.findAllByText(new RegExp(REPORTED_DISPLAY))).toHaveLength(4);
+    // Five, not four: /status now carries a card for every executable
+    // route, and `RhnToGlc` settles onto the SAME Goldcoin reserve as
+    // `SolToGlc`, so that one capacity figure legitimately appears on two
+    // cards. Two capacity figures for the Solana pair, two rolling-window
+    // figures, and the Goldcoin capacity again on the RhnToGlc card. The
+    // Robinhood routes' own contract windows are absent here because this
+    // case configures no Robinhood reserve.
+    expect(await screen.findAllByText(new RegExp(REPORTED_DISPLAY))).toHaveLength(5);
     expect(screen.queryByText(/29927559/)).not.toBeInTheDocument();
   });
 });

@@ -16,7 +16,7 @@ export default async function ExplorerTransferPage({
 
   return (
     <Container size="card" className="py-8 md:py-12">
-      <TransferDetail id={id} readOnly />
+      <TransferDetail id={id} />
     </Container>
   );
 }

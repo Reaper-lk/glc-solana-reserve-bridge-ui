@@ -99,12 +99,11 @@ export function AppShell({
       </div>
 
       {/*
-        Its own landmark, outside the notices region above. This strip
-        announces a future integration and is derived from a static constant
-        (src/lib/config/announcement.ts) — it reports nothing about the live
-        bridge, and a reader navigating by landmark should not find it filed
-        among notices about money movement. It sits after ReserveBanner so a
-        liquidity warning is never pushed below a product announcement.
+        Its own landmark, outside the notices region above. The strip is
+        scoped to ONE network's integration and reports that network's route
+        availability from `GET /chains`, where the notices region above
+        speaks for the bridge as a whole. It sits after ReserveBanner so a
+        liquidity warning is never pushed below it.
       */}
       <NetworkAnnouncement />
 

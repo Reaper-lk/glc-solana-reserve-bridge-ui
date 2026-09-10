@@ -201,11 +201,17 @@ describe("TransferDetail — real backend state machine, never a fabricated succ
     expect(await screen.findByText(/could not find that transfer/i)).toBeInTheDocument();
   });
 
-  it("hides nothing extra in readOnly mode since TransferView never carries sensitive fields", async () => {
+  it("renders the same thing on the explorer route as on the bridge route", async () => {
+    // Both routes render this component with the same props. It used to
+    // take a `readOnly` flag whose only effect was to strip every
+    // chain-explorer link, which left the public explorer showing bare
+    // hashes on the one page whose purpose is independent verification —
+    // so the flag is gone, and there is nothing left for the two routes to
+    // differ by.
     const transfer = transferWith({ id: 9, state: "AwaitingDeposit" });
     getTransfer.mockResolvedValue(transfer);
 
-    const { unmount } = renderWithQueryClient(<TransferDetail id={9} readOnly />);
+    const { unmount } = renderWithQueryClient(<TransferDetail id={9} />);
     await waitFor(() =>
       expect(screen.getAllByText(/Awaiting your deposit/i).length).toBeGreaterThan(0),
     );

@@ -7,82 +7,46 @@ import {
   useBridgeStatus,
   useChains,
   useHealth,
+  useLimits,
   useReserve,
   useRobinhoodReserve,
 } from "@/lib/query/hooks";
 import {
-  directionAvailabilityStatus,
+  executableRouteStatusBadge,
   routeAvailabilityStatus,
   systemStatus,
-  type StatusDescriptor,
 } from "@/lib/status";
-import type { DirectionAvailability } from "@/lib/status";
 import {
-  directionGateState,
-  directions,
   displayDescriptorFor,
+  executableRouteStatuses,
   isRouteEnabled,
-  robinhoodDestinationCapacity,
-  robinhoodRouteGateState,
-  robinhoodWindowRemaining,
   routeAvailability,
-  GOLDCOIN_GLC,
-  SOLANA_GLC,
 } from "@/lib/bridge";
-import type {
-  DirectionGateState,
-  RobinhoodFigure,
-  RobinhoodRoute,
-  RobinhoodRouteGateState,
-  SolanaGovernedRoute,
-} from "@/lib/bridge";
+import type { ExecutableRouteStatus, RouteFigure } from "@/lib/bridge";
 import type { ChainsViewDto } from "@/lib/api/schemas/chains";
-import type { RobinhoodReserveDto } from "@/lib/api/schemas/robinhood";
-import { clampAtomicAtZero } from "@/lib/api/schemas/common";
 
 /**
- * One route's card at the top of /status: a badge, the capacity of the
- * reserve it pays out of, and what is left of its rolling 24-hour window.
+ * /status, modelled on the route registry rather than on two directions.
  *
- * Built as data rather than as JSX per route, because the two Robinhood
- * routes answer the same three questions from entirely different endpoints
- * — a third reserve ledger, a custody contract's own kill switches and
- * windows, an indexer's liveness — and the alternative to a common shape
- * is a second copy of the card that could drift from the first.
- *
- * Every optional field is optional for one reason: the backend may
- * genuinely not publish that figure. `null` is rendered as an explicit
- * "not published", never as a zero and never as an empty slot that reads
- * as one.
+ * Every figure on this page is resolved by `@/lib/bridge/route-status`,
+ * which keys each one to the route it belongs to through a total map with
+ * no default branch. This component fetches and renders; it decides
+ * nothing about where a number came from, which is what stops a Robinhood
+ * card from being filled with Solana's reserve or a Goldcoin-settled route
+ * from borrowing the Robinhood ledger's.
  */
-interface RouteStatusCard {
-  readonly key: string;
-  readonly title: string;
-  readonly status: StatusDescriptor;
-  /** The destination reserve's available capacity, at its own decimals. */
-  readonly capacity: RobinhoodFigure | null;
-  /** Headroom left in this route's rolling 24-hour window. */
-  readonly window: RobinhoodFigure | null;
-  /** Said only when it adds something the badge does not. */
-  readonly note?: string;
-}
-
 export function StatusView() {
   const status = useBridgeStatus();
   const chains = useChains();
   const health = useHealth();
   const reserve = useReserve();
-  // Fetched only once `/chains` positively reports a Robinhood route open.
-  // `/chains` stays the single availability authority; this endpoint
-  // repeats its verdict and adds the figures, so asking for it before the
-  // authority says the route is live would be asking the wrong source
-  // first — and on a deployment predating the endpoint, asking at all is a
-  // 404 per poll tick for a route nobody can use.
-  // `isRouteEnabled`, not `isRouteOpen`: the question here is whether this
-  // DEPLOYMENT has the route (and therefore the endpoint) at all, which is
-  // what avoids a 404 per poll tick. A route that is switched on and
-  // momentarily gated shut by its destination reserve still has both, and
-  // is exactly the state a status page exists to report.
+  const limits = useLimits();
+  // Fetched only once `/chains` reports this DEPLOYMENT has a Robinhood
+  // route at all. `isRouteEnabled`, not `isRouteOpen`: a route that is
+  // switched on and momentarily gated shut by its destination reserve
+  // still has the endpoint, and is exactly the state a status page exists
+  // to report. A deployment without the route answers 404 per poll tick,
+  // which is what this avoids.
   const robinhoodLive =
     isRouteEnabled(chains.data, "GlcToRhn") || isRouteEnabled(chains.data, "RhnToGlc");
   const robinhood = useRobinhoodReserve(robinhoodLive);
@@ -100,80 +64,21 @@ export function StatusView() {
   if (health.isError) return <ErrorState error={health.error} />;
   if (reserve.isError) return <ErrorState error={reserve.error} />;
 
-  const data = status.data;
   const h = health.data;
 
-  // Per-direction state from the same derivation the bridge form uses —
-  // quota states are distinguished from an operator pause and from
-  // reserve-capacity constraints, matching the backend's own composition.
-  const GATE_TO_BADGE: Record<DirectionGateState, DirectionAvailability> = {
-    active: "available",
-    "operator-paused": "paused",
-    "capacity-constrained": "insufficient-liquidity",
-    "quota-exhausted": "quota-exhausted",
-    "quota-paused": "quota-paused",
-  };
-  const availability = (direction: SolanaGovernedRoute) =>
-    directionAvailabilityStatus[GATE_TO_BADGE[directionGateState(data, direction)]];
-
-  /*
-   * The two Solana-governed routes, exactly as before: `GET /status`'s own
-   * per-direction fields, `GET /reserve`'s two capacities, and the
-   * mint-atomic (6-decimal) rolling window. Nothing about this pair is
-   * routed through the Robinhood derivation — its endpoint knows nothing
-   * about them, and the whole point of keeping the two derivations apart
-   * is that neither can answer with the other's numbers.
-   */
-  const cards: RouteStatusCard[] = [
-    {
-      key: "GlcToSol",
-      title: directions.GlcToSol.label,
-      status: availability("GlcToSol"),
-      capacity: {
-        atomic: clampAtomicAtZero(reserve.data.solana_available_capacity),
-        decimals: SOLANA_GLC.decimals,
-      },
-      window: {
-        atomic: data.glc_to_sol_rolling_volume_remaining,
-        decimals: SOLANA_GLC.decimals,
-      },
-    },
-    {
-      key: "SolToGlc",
-      title: directions.SolToGlc.label,
-      status: availability("SolToGlc"),
-      capacity: {
-        atomic: clampAtomicAtZero(reserve.data.goldcoin_available_capacity),
-        decimals: GOLDCOIN_GLC.decimals,
-      },
-      window: {
-        atomic: data.sol_to_glc_rolling_volume_remaining,
-        decimals: SOLANA_GLC.decimals,
-      },
-    },
-    /*
-     * A Robinhood route earns a card only once `/chains` reports it open.
-     * Before that there is no live route to describe and no figure the
-     * backend publishes for it — the Routes card below already lists it as
-     * unavailable, with the backend's own reason. Adding a second, emptier
-     * card saying the same thing would be noise, and one filled with
-     * placeholder zeroes would be worse.
-     */
-    ...ROBINHOOD_ROUTES.filter((route) => isRouteEnabled(chains.data, route)).map(
-      (route) =>
-        robinhoodCard(
-          route,
-          robinhood.data,
-          clampAtomicAtZero(reserve.data.goldcoin_available_capacity),
-        ),
-    ),
-  ];
+  const cards = executableRouteStatuses({
+    chains: chains.data,
+    status: status.data,
+    reserve: reserve.data,
+    robinhood: robinhood.data,
+    limits: limits.data,
+  });
 
   return (
     <div className="flex flex-col gap-6">
       <div className="grid gap-4 sm:grid-cols-2">
         {cards.map((card) => (
-          <RouteCard key={card.key} card={card} />
+          <RouteCard key={card.route} card={card} />
         ))}
       </div>
 
@@ -223,132 +128,136 @@ export function StatusView() {
   );
 }
 
-/** The two routes whose figures come from `GET /robinhood/reserve`. */
-const ROBINHOOD_ROUTES: readonly RobinhoodRoute[] = ["GlcToRhn", "RhnToGlc"];
-
-/**
- * The Robinhood gate states, in the shared availability vocabulary.
- *
- * Both pauses map to the same badge on purpose: to a user, "the operator
- * paused this reserve" and "governance flipped the contract's kill switch
- * for this leg" are one fact — transfers are not moving — and the badge
- * says that. WHICH of the two it was is a real distinction, so it is
- * carried in the note beneath rather than dropped.
- */
-const ROBINHOOD_GATE_TO_BADGE: Record<RobinhoodRouteGateState, DirectionAvailability> = {
-  active: "available",
-  "operator-paused": "paused",
-  "contract-paused": "paused",
-  "capacity-constrained": "insufficient-liquidity",
-  "quota-exhausted": "quota-exhausted",
-  degraded: "degraded",
-  unknown: "unknown",
-};
-
-/**
- * The extra sentence a Robinhood card carries, where the badge alone would
- * leave a reader guessing. Deliberately silent for the states the badge
- * already says everything about.
- */
-const ROBINHOOD_GATE_NOTE: Partial<Record<RobinhoodRouteGateState, string>> = {
-  "contract-paused":
-    "Paused on the Robinhood custody contract itself, not by this bridge.",
-  degraded:
-    "The Robinhood custody contract or its indexer could not be read just now, so the figures below may be behind the chain.",
-  unknown:
-    "This deployment publishes no Robinhood reserve, so no capacity or 24-hour figure can be shown for this route.",
-};
-
-/**
- * One Robinhood route's card, assembled from `GET /robinhood/reserve` —
- * and, for `RhnToGlc`, from `GET /reserve`'s Goldcoin capacity, because
- * that is the reserve it actually pays out of.
- *
- * The badge and the capacity figure are derived from the same resolved
- * value, so a card can never show "Available" beside a capacity read from
- * a different source than the one that decided it.
- */
-function robinhoodCard(
-  route: RobinhoodRoute,
-  reserve: RobinhoodReserveDto | undefined,
-  goldcoinCapacityAtomic: string,
-): RouteStatusCard {
-  const capacity = robinhoodDestinationCapacity(route, reserve, goldcoinCapacityAtomic);
-  const gate = robinhoodRouteGateState(route, reserve, capacity?.atomic ?? null);
-  const note = ROBINHOOD_GATE_NOTE[gate];
-  return {
-    key: route,
-    title: directions[route].label,
-    status: directionAvailabilityStatus[ROBINHOOD_GATE_TO_BADGE[gate]],
-    // Capacity is clamped for display only. A negative capacity is a real
-    // diagnostic state the backend reports rather than hides, but "-2 GLC
-    // of headroom" is not a sentence a user can act on: it means none.
-    capacity: capacity
-      ? { atomic: clampAtomicAtZero(capacity.atomic), decimals: capacity.decimals }
-      : null,
-    window: robinhoodWindowRemaining(route, reserve),
-    ...(note ? { note } : {}),
-  };
+/** "300" -> "3%", "50" -> "0.5%". Integer arithmetic; never a float rate. */
+function formatBps(bps: number): string {
+  const whole = Math.trunc(bps / 100);
+  const fraction = bps % 100;
+  return fraction === 0 ? `${whole}%` : `${(bps / 100).toFixed(2)}%`;
 }
 
 /**
- * One route card. Identical in shape for every route; only where its three
- * figures came from differs, and that is resolved before this renders.
+ * A figure, or the words that say the backend did not publish one.
  *
- * A missing figure says so in words. It is never a blank, a dash beside a
- * unit, or a zero — on a page whose entire job is to state what the bridge
- * can do right now, "0 GLC of capacity" and "we do not publish that" are
- * opposite claims.
+ * Never a blank, a dash beside a unit, or a zero. On a page whose entire
+ * job is to state what the bridge can do right now, "0 GLC of capacity"
+ * and "we do not publish that" are opposite claims.
  */
-function RouteCard({ card }: { card: RouteStatusCard }) {
+function Figure({
+  figure,
+  className,
+}: {
+  figure: RouteFigure | null;
+  className?: string;
+}) {
+  if (!figure) return <span className="text-ink-500">Not published</span>;
+  return (
+    <TokenAmount
+      raw={figure.atomic}
+      decimals={figure.decimals}
+      symbol="GLC"
+      {...(className ? { className } : {})}
+    />
+  );
+}
+
+/**
+ * One executable route's card: what it is, whether it can be used right
+ * now, and the figures that bound it.
+ *
+ * `Enabled` and `Available` are shown as separate rows on purpose. They
+ * answer different questions — the first is the route gate over config,
+ * the `bridge_routes` table and adapter capability; the second is that AND
+ * every runtime gate on the DESTINATION reserve — and reading the first as
+ * permission is exactly what let `RhnToGlc` deposits reach a Goldcoin
+ * reserve whose admission was closed. A reader looking at a route that is
+ * switched on and still refused can see both facts here rather than
+ * inferring one from the other.
+ */
+function RouteCard({ card }: { card: ExecutableRouteStatus }) {
   const headingId = useId();
   return (
     /*
-      A labelled group, not a bare div. Every card repeats the same two
-      terms — "Destination reserve capacity", "Remaining 24-hour capacity
-      for this direction" — so with four routes on the page a reader
-      navigating by anything other than sight would meet the phrase four
-      times with nothing tying it to a route. The route's own heading is
-      that tie.
+      A labelled group, not a bare div. Every card repeats the same terms —
+      "Destination reserve capacity", "Remaining 24-hour capacity" — so
+      with four routes on the page a reader navigating by anything other
+      than sight would meet each phrase four times with nothing tying it to
+      a route. The route's own heading is that tie.
     */
     <Card role="group" aria-labelledby={headingId}>
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Activity aria-hidden="true" className="text-ink-400 size-4 shrink-0" />
           <h2 id={headingId} className="text-heading-3">
-            {card.title}
+            {card.label}
           </h2>
         </div>
-        <StatusBadge status={card.status} />
+        <StatusBadge status={executableRouteStatusBadge[card.kind]} />
       </div>
+
+      {/* The backend's own sentence, verbatim. This UI never authors a
+          second explanation of a backend decision and never infers which
+          gate refused — the response deliberately does not say. */}
+      {card.reason && (
+        <p className="text-body-sm text-ink-500 mt-2 whitespace-pre-line">
+          {card.reason}
+        </p>
+      )}
       {card.note && <p className="text-body-sm text-ink-500 mt-2">{card.note}</p>}
+
       <div className="mt-3">
-        {card.capacity ? (
-          <TokenAmount
-            raw={card.capacity.atomic}
-            decimals={card.capacity.decimals}
-            symbol="GLC"
-            className="text-heading-2"
-          />
-        ) : (
-          <p className="text-heading-3 text-ink-500">Not published</p>
-        )}
+        <Figure figure={card.capacity} className="text-heading-2" />
         <p className="text-body-sm text-ink-500 mt-1">Destination reserve capacity</p>
       </div>
+
       <div className="mt-2">
-        {card.window ? (
-          <TokenAmount
-            raw={card.window.atomic}
-            decimals={card.window.decimals}
-            symbol="GLC"
-          />
-        ) : (
-          <p className="text-body-sm text-ink-500">Not published</p>
-        )}
+        <Figure figure={card.window} />
         <p className="text-body-sm text-ink-500 mt-1">
           Remaining 24-hour capacity for this direction
         </p>
       </div>
+
+      <dl className="border-ink-100 mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-3">
+        {/* Qualified rather than bare "Enabled" / "Available": the badge
+            above already carries the word "Available", and two things on
+            one card reading "Available" with different meanings is exactly
+            the confusion these rows exist to remove. */}
+        <div>
+          <dt className="text-body-sm text-ink-500">Enabled (route gate)</dt>
+          <dd className="text-body-sm text-ink-900">{card.enabled ? "Yes" : "No"}</dd>
+        </div>
+        <div>
+          <dt className="text-body-sm text-ink-500">Available (effective)</dt>
+          {/* Three states, not two. An absent `available` reads as "Not
+              published" rather than folding into "No": a backend that never
+              answered the question and one that answered no have different
+              remedies, and only the second is a statement about the bridge. */}
+          <dd className="text-body-sm text-ink-900">
+            {card.available === undefined
+              ? "Not published"
+              : card.available
+                ? "Yes"
+                : "No"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-body-sm text-ink-500">Route fee</dt>
+          <dd className="text-body-sm text-ink-900 tabular">
+            {card.feeBps === null ? "Not published" : formatBps(card.feeBps)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-body-sm text-ink-500">Per-transfer limits</dt>
+          <dd className="text-body-sm text-ink-900 tabular">
+            {card.minimum && card.maximum ? (
+              <>
+                <Figure figure={card.minimum} /> – <Figure figure={card.maximum} />
+              </>
+            ) : (
+              <span className="text-ink-500">Not published</span>
+            )}
+          </dd>
+        </div>
+      </dl>
     </Card>
   );
 }
@@ -377,12 +286,6 @@ function RouteCard({ card }: { card: RouteStatusCard }) {
  * So this card states availability and stops. It does not estimate a
  * capacity, borrow another route's figure, or render an empty placeholder
  * that reads as "zero" — an absent number is shown as absent.
- *
- * (The Robinhood reserve's own capacity, pause flag and contract windows
- * DO have a public endpoint now — `GET /robinhood/reserve` — and they are
- * rendered on that route's card above once `/chains` reports it open. They
- * are deliberately not repeated here: this list answers one question, and
- * mixing figures into it would make a closed route look measurable.)
  */
 function RouteAvailabilityCard({
   chains,

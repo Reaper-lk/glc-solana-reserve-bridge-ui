@@ -16,6 +16,18 @@ import { TransferRow } from "./TransferRow";
  * transaction-id search on this backend, so this view does not offer one.
  * The address lives in the URL so a result set is shareable and survives a
  * reload, matching the connected wallet only as a convenience default.
+ *
+ * # A backend gap, stated rather than papered over
+ *
+ * The address is a base58 SOLANA pubkey and nothing else. The backend
+ * parses `?address=` as a `Pubkey` and its query matches only
+ * `GlcToSol.recipient` / `SolToGlc.requester` (`Ledger::transfers_page`),
+ * so a 20-byte EVM address returns 400 and no Robinhood row is ever
+ * returned even if the bytes were accepted. This view therefore keeps the
+ * Solana-only field and SAYS so, rather than accepting an EVM address into
+ * a search that would silently come back empty and read as "you have no
+ * transfers". Robinhood-scoped activity needs `GET /transfers` to accept
+ * EVM addresses first.
  */
 export function ActivityView() {
   const router = useRouter();
@@ -66,7 +78,7 @@ export function ActivityView() {
         <EmptyState
           icon={History}
           title="No address to search"
-          description="Connect a wallet or paste a Solana address to see its bridge transfers."
+          description="Connect a Solana wallet or paste a Solana address to see its bridge transfers. Searching by a Robinhood Network address is not supported yet — the bridge does not index transfers by EVM address."
         />
       )}
 

@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { StatusBadge } from "@/components/ui";
 import { requestStateDescriptor } from "@/lib/status";
 import { routeDisplay, transitionLabel } from "@/lib/bridge";
+import { routes } from "@/lib/config/links";
 import type { ExplorerEventDto } from "@/lib/api/schemas/explorer";
 
 /**
@@ -23,7 +24,15 @@ export function EventRow({ event }: { event: ExplorerEventDto }) {
 
   return (
     <Link
-      href={`/bridge/${event.request_id}`}
+      /*
+        The explorer's OWN transfer page, not `/bridge/{id}`.
+        `/explorer/tx/{id}` exists, is in the route table, and was
+        previously reachable only by typing it: every row in the public
+        feed pointed at the wallet-flow page instead. Both render the same
+        component; keeping the explorer inside the explorer is what makes
+        the read-only route something a reader can actually arrive at.
+      */
+      href={routes.explorerTx(event.request_id)}
       className="border-ink-100 hover:bg-ink-50 focus-visible:bg-ink-50 flex flex-col gap-1 border-b px-4 py-3 outline-none last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
     >
       <div className="flex flex-col gap-0.5">

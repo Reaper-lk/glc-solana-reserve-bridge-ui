@@ -313,10 +313,16 @@ export function BridgeForm() {
     : null;
 
   /**
-   * `GET /reserve` carries the Goldcoin and Solana reserves only. The
-   * ledger HAS a `RobinhoodReserve`, but no public endpoint exposes its
-   * capacity — so a Robinhood destination has no capacity figure and this
-   * is `null` rather than a stand-in. Nothing is estimated.
+   * `GET /reserve` carries the Goldcoin and Solana reserves only, so a
+   * Robinhood destination gets `null` here rather than a stand-in.
+   *
+   * The Robinhood reserve's capacity IS published now, by its own endpoint
+   * (`GET /robinhood/reserve`, rendered on /status). It is deliberately not
+   * pulled in here: this value feeds the form's liquidity warning, and
+   * fetching a second reserve endpoint on every bridge page load — one that
+   * 404s on any deployment without the route — to warn about a route whose
+   * pre-deposit gate already refuses on `available: false` would buy
+   * nothing. Nothing is estimated either way.
    */
   const destinationReserveCapacity =
     reserve.data && destinationChainId !== "robinhood"
