@@ -4,7 +4,7 @@ import { Dialog } from "radix-ui";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { BrandMark } from "./BrandMark";
 import { moreNav, primaryNav } from "./navigation";
 import { cn } from "@/lib/utils/cn";
@@ -17,11 +17,11 @@ import { cn } from "@/lib/utils/cn";
  * lock, so keyboard and screen-reader behaviour is correct rather than
  * approximated.
  *
- * `walletSlot` renders at the top of the sheet: Header hides the wallet
- * control below `md` because the 64px bar can't fit mark + connect + menu
- * at 360px, so this sheet is the only place a mobile visitor can reach it.
+ * Navigation only. Wallet connection is contextual to the source network
+ * and lives in the bridge form, so there is nothing wallet-shaped to carry
+ * here.
  */
-export function MobileNav({ walletSlot }: { walletSlot?: ReactNode }) {
+export function MobileNav() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
@@ -70,8 +70,6 @@ export function MobileNav({ walletSlot }: { walletSlot?: ReactNode }) {
           <Dialog.Description className="sr-only">
             Site navigation for the Goldcoin bridge
           </Dialog.Description>
-
-          {walletSlot && <div className="border-ink-200 border-b p-4">{walletSlot}</div>}
 
           <nav className="flex-1 overflow-y-auto p-4" aria-label="Main">
             <ul className="space-y-1">
