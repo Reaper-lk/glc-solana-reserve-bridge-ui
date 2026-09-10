@@ -26,6 +26,21 @@ export function middleware(request: NextRequest) {
       process.env.NEXT_PUBLIC_BRIDGE_API_URL,
       process.env.NEXT_PUBLIC_SOLANA_RPC_URL,
       process.env.NEXT_PUBLIC_GOLDCOIN_RPC_URL,
+      /*
+       * The Robinhood deployment's RPC. Not needed for the connected
+       * wallet's balance — that goes over the wallet's own provider, which
+       * is the extension's network call and not the page's — but the
+       * deposit preflight deliberately reads the gates that authorise a
+       * SIGNATURE from this endpoint rather than from whichever node the
+       * wallet is pointed at (src/lib/evm/deposit.ts). Without the origin
+       * here that read is blocked by `connect-src` and the refusal looks
+       * like a chain fault.
+       *
+       * Only the ORIGIN is taken (`connectOriginsFrom` calls `url.origin`),
+       * so a provider key carried in the path or query of the configured
+       * URL never reaches the response header.
+       */
+      process.env.NEXT_PUBLIC_ROBINHOOD_RPC_URL,
     ]),
   });
 

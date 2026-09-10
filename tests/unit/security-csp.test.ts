@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildCsp, connectOriginsFrom, createNonce } from "@/lib/security/csp";
 
 describe("buildCsp", () => {
@@ -85,6 +85,24 @@ describe("buildCsp", () => {
 });
 
 describe("connectOriginsFrom", () => {
+  it("admits the Robinhood deployment's RPC origin", () => {
+    // The deposit preflight reads the gates that authorise a signature from
+    // this endpoint (src/lib/evm/deposit.ts). Without its origin here the
+    // browser blocks that read and the refusal looks like a chain fault.
+    const origins = connectOriginsFrom(["https://rpc.robinhood.example/v2/some-key"]);
+    expect(origins).toContain("https://rpc.robinhood.example");
+  });
+
+  it("keeps a provider key out of the policy", () => {
+    // Only the origin is taken, so a key carried in the path or query of a
+    // configured RPC URL never reaches a response header.
+    const origins = connectOriginsFrom([
+      "https://rpc.example.test/v2/secret-key?k=other",
+    ]);
+    expect(origins.join(" ")).not.toContain("secret-key");
+    expect(origins.join(" ")).not.toContain("other");
+  });
+
   it("always includes 'self'", () => {
     expect(connectOriginsFrom([])).toEqual(["'self'"]);
   });
@@ -120,5 +138,32 @@ describe("createNonce", () => {
 
   it("produces a different value each call", () => {
     expect(createNonce()).not.toBe(createNonce());
+  });
+});
+
+describe("the request policy", () => {
+  it("lets the browser reach every configured chain endpoint", async () => {
+    // Pins the middleware's own candidate list rather than `buildCsp` in
+    // isolation: the defect this guards against was a correctly-built
+    // policy that had simply never been told about Robinhood Network.
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://bridge.example.test");
+    vi.stubEnv("NEXT_PUBLIC_BRIDGE_API_URL", "https://api.example.test");
+    vi.stubEnv("NEXT_PUBLIC_SOLANA_RPC_URL", "https://solana.example.test");
+    vi.stubEnv("NEXT_PUBLIC_GOLDCOIN_RPC_URL", "https://goldcoin.example.test");
+    vi.stubEnv("NEXT_PUBLIC_ROBINHOOD_RPC_URL", "https://robinhood.example.test/v2/key");
+
+    const { middleware } = await import("../../middleware");
+    const { NextRequest } = await import("next/server");
+
+    const response = middleware(new NextRequest("https://bridge.example.test/bridge"));
+    const csp = response.headers.get("Content-Security-Policy") ?? "";
+
+    expect(csp).toContain("https://api.example.test");
+    expect(csp).toContain("https://solana.example.test");
+    expect(csp).toContain("https://goldcoin.example.test");
+    expect(csp).toContain("https://robinhood.example.test");
+    expect(csp).not.toContain("/v2/key");
+
+    vi.unstubAllEnvs();
   });
 });

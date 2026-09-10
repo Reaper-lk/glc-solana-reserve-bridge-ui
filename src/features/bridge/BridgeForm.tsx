@@ -46,7 +46,7 @@ import {
   sourceRawToCanonical,
 } from "@/lib/bridge/canonical";
 import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
-import { formatBaseUnits, formatDisplayDecimal } from "@/lib/format/amount";
+import { formatBaseUnits, formatDisplayDecimalOrRaw } from "@/lib/format/amount";
 import { routes } from "@/lib/config/links";
 import {
   encodeGoldcoinDestination,
@@ -535,7 +535,13 @@ export function BridgeForm() {
             <AmountEstimate
               ariaLabel={`Estimated amount received in ${destinationToken.symbol}`}
               value={
-                quote.data ? formatDisplayDecimal(quote.data.net_display_amount) : null
+                // Only ever the CURRENT amount's quote — `useQuote` holds
+                // no placeholder across key changes, so a failed or
+                // in-flight quote shows nothing rather than the figure
+                // for an amount the user has already edited away.
+                quote.data && !quote.isError
+                  ? formatDisplayDecimalOrRaw(quote.data.net_display_amount)
+                  : null
               }
               symbol={destinationToken.symbol}
               pending={quote.isPending && toBigInt(canonicalGrossAmount) > 0n}
@@ -590,7 +596,10 @@ export function BridgeForm() {
           source={source}
           destination={destination}
           availability={availability}
-          quote={quote.data}
+          // Withheld once the quote has failed. The fee and receive rows
+          // fall back to "—", which is the truthful answer: the figures
+          // this route would settle at are not currently known.
+          quote={quote.isError ? undefined : quote.data}
           quotePending={quote.isPending && toBigInt(canonicalGrossAmount) > 0n}
           {...(quote.data && solanaGovernedRoute === "GlcToSol"
             ? { requiredConfirmations: undefined }

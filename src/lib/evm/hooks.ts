@@ -51,13 +51,18 @@ export interface EvmWalletState {
   /** Asks the wallet to switch to the deployment's chain, adding it if unknown. */
   readonly switchChain: () => Promise<void>;
   /**
-   * The selected EIP-1193 provider, for `useRobinhoodDeposit` alone.
+   * The selected EIP-1193 provider, for the hooks in this module alone —
+   * `useRobinhoodDeposit` and `useRobinhoodGlcBalance`.
    *
    * Deliberately a getter rather than a field so it is never read during
    * render, and deliberately not used anywhere in `src/features` — the
    * provider is the one piece of chain machinery that has to cross from
-   * this hook to the deposit hook, and a getter keeps that crossing
-   * explicit instead of matching wallets up by index and hoping.
+   * this hook to the ones that talk to the chain, and a getter keeps that
+   * crossing explicit instead of matching wallets up by index and hoping.
+   *
+   * This is also why neither of those hooks reaches for `window.ethereum`:
+   * the provider a read must use is the one the user actually selected in
+   * the EIP-6963 picker, which the global injection does not identify.
    */
   readonly getProvider: () => EIP1193Provider | null;
 }
@@ -297,6 +302,11 @@ export const evmWalletQueryKeys = {
    * cache-level half of "never retain a balance from the previous chain";
    * the component half is that a non-Robinhood source reads this hook's
    * result not at all.
+   *
+   * The deployment's RPC URL is deliberately NOT part of the key: the read
+   * goes over the connected wallet's provider (see `./balance`), so that
+   * endpoint no longer decides what comes back and keying on it would
+   * invent a cache miss for a change that cannot alter the answer.
    */
   glcBalance: (
     deployment: RobinhoodDeployment | null,
@@ -309,7 +319,6 @@ export const evmWalletQueryKeys = {
       "glc",
       deployment?.chainId ?? null,
       deployment?.tokenAddress ?? null,
-      deployment?.rpcUrl ?? null,
       chainId,
       account,
     ] as const,
@@ -332,7 +341,7 @@ export const evmWalletQueryKeys = {
 export function useRobinhoodGlcBalance(
   wallet: EvmWalletState,
 ): UseQueryResult<EvmTokenBalance> {
-  const { deployment, address, chainId, onExpectedChain } = wallet;
+  const { deployment, address, chainId, onExpectedChain, getProvider } = wallet;
 
   return useQuery({
     queryKey: evmWalletQueryKeys.glcBalance(deployment, chainId, address),
@@ -342,11 +351,26 @@ export function useRobinhoodGlcBalance(
     // into a long spinner: the form has a correct answer for "we do not
     // know", and it is better than a stale one.
     retry: false,
+    /*
+     * Opted out of the app-wide `placeholderData: previous => previous`
+     * (src/lib/query/provider.tsx). That default is right for a figure that
+     * merely refreshes in place, and wrong here: it would keep the previous
+     * account's or previous chain's balance on screen under a new query
+     * key. A balance that could not be read renders as unavailable, never
+     * as the last one that could.
+     */
+    placeholderData: () => undefined,
     queryFn: async () => {
       if (!deployment || !address) {
         throw new Error("Robinhood Chain is not configured, or no wallet is connected");
       }
-      return fetchRobinhoodGlcBalance({ deployment, account: address });
+      const provider = getProvider();
+      // The wallet went away between the render that enabled this query and
+      // the query running. Reported as a failed read — which the form shows
+      // as "Balance unavailable" — rather than reaching for a global
+      // injection that may belong to a different extension entirely.
+      if (!provider) throw new Error("The connected wallet is no longer available");
+      return fetchRobinhoodGlcBalance({ deployment, account: address, provider });
     },
   });
 }
