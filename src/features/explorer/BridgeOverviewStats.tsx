@@ -64,14 +64,27 @@ function Stat({
  * balance, a protected minimum, reserved liquidity, pending obligations,
  * capacity and accrued fees — but no cumulative settled-volume counter, and
  * `GET /stats` has no `robinhood_reserve` member at all. Nothing in this
- * app may stand in for it. Summing what /stats does publish, or deriving a
- * figure from capacity movement, would produce a number the bridge has
- * never asserted, on the one page whose entire premise is that every figure
- * is one it has.
+ * app may stand in for it. Summing what /stats does publish, deriving a
+ * figure from capacity movement, or reading the rolling-24h window (which
+ * measures headroom remaining, not volume settled) would each produce a
+ * number the bridge has never asserted, on the one page whose entire
+ * premise is that every figure is one it has.
+ *
+ * A reserve that returns `null` gets NO CARD. It previously got one
+ * reading "Not published", which put a permanent unfinished-looking slot
+ * in the grid to report the absence of a metric a reader never asked
+ * after — and invited exactly the "just fill it in from somewhere" fix
+ * this map exists to prevent. When the backend adds the counter, adding it
+ * here brings the card back.
  */
+interface SettledVolume {
+  readonly atomic: string;
+  readonly decimals: number;
+}
+
 const SETTLED_VOLUME: Record<
   DestinationReserve,
-  (stats: BridgeStatsDto) => { atomic: string; decimals: number } | null
+  (stats: BridgeStatsDto) => SettledVolume | null
 > = {
   goldcoin: (stats) => ({
     atomic: stats.goldcoin_reserve.settled_volume_atomic,
@@ -164,30 +177,41 @@ export function BridgeOverviewStats() {
   const sumOver = (field: "in_progress_requests" | "manual_review_requests") =>
     counted.reduce((total, route) => total + DIRECTION_STATS[route]!(stats)[field], 0);
 
+  // Only the reserves `/stats` actually publishes a counter for. The rest
+  // are dropped here rather than rendered as an empty slot.
+  const settled = groups
+    .map((group) => ({ group, volume: SETTLED_VOLUME[group.reserve](stats) }))
+    .filter(
+      (entry): entry is { group: (typeof groups)[number]; volume: SettledVolume } =>
+        entry.volume !== null,
+    );
+
   return (
-    <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-      {groups.map((group) => {
-        const volume = SETTLED_VOLUME[group.reserve](stats);
-        return (
-          <Stat
-            key={group.reserve}
-            label={`Settled into ${displayDescriptorFor(group.reserve).name}`}
-            // Every executable family feeding this reserve, named. With
-            // more than one, the figure above is genuinely their combined
-            // total — `settled_volume_atomic` is a per-reserve counter —
-            // and listing them is what keeps that from reading as one
-            // route's volume.
-            detail={group.routes.map((route) => route.label).join(" · ")}
-            icon={ArrowRightLeft}
-          >
-            {volume ? (
-              <TokenAmount raw={volume.atomic} decimals={volume.decimals} symbol="GLC" />
-            ) : (
-              <span className="text-ink-500">Not published</span>
-            )}
-          </Stat>
-        );
-      })}
+    /*
+      Column count follows the card count, so dropping an unpublished
+      figure leaves a full row rather than a gap where it used to be: four
+      cards land 2×2 and then 4×1, five fill three columns and spill two.
+    */
+    <dl
+      className={`grid grid-cols-2 gap-3 ${
+        settled.length + 2 === 4 ? "lg:grid-cols-4" : "sm:grid-cols-3"
+      }`}
+    >
+      {settled.map(({ group, volume }) => (
+        <Stat
+          key={group.reserve}
+          label={`Settled into ${displayDescriptorFor(group.reserve).name}`}
+          // Every executable family feeding this reserve, named. With
+          // more than one, the figure above is genuinely their combined
+          // total — `settled_volume_atomic` is a per-reserve counter —
+          // and listing them is what keeps that from reading as one
+          // route's volume.
+          detail={group.routes.map((route) => route.label).join(" · ")}
+          icon={ArrowRightLeft}
+        >
+          <TokenAmount raw={volume.atomic} decimals={volume.decimals} symbol="GLC" />
+        </Stat>
+      ))}
       <Stat label="In-flight transfers" detail={countScope} icon={Clock}>
         {sumOver("in_progress_requests")}
       </Stat>

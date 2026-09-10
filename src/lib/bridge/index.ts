@@ -118,10 +118,12 @@ export type { DestinationReserve, DestinationReserveGroup } from "./route-famili
 export {
   executableRouteStatus,
   executableRouteStatuses,
+  formatBps,
   AVAILABILITY_NOT_PUBLISHED_NOTE,
 } from "./route-status";
 export type {
   ExecutableRouteStatus,
+  RouteFee,
   RouteFigure,
   RouteStatusInput,
   RouteStatusKind,

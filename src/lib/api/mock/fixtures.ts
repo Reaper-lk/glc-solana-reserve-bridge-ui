@@ -32,6 +32,19 @@ const NOW_UNIX = () => Math.floor(Date.now() / 1000);
 export const BRIDGE_FEE_BPS = 300;
 
 /**
+ * The Robinhood routes' own rate, deliberately DIFFERENT from
+ * {@link BRIDGE_FEE_BPS}.
+ *
+ * The backend prices routes independently (`BridgeStats::route_fees`) and
+ * documents `bridge_fee_bps` as `GlcToSol`'s rate alone. Giving both
+ * families the same number in the fixtures would make a UI that showed the
+ * Solana rate on a Robinhood card indistinguishable from a correct one, in
+ * mock mode and in every test built on these fixtures. A distinct value is
+ * what makes that substitution visible.
+ */
+export const ROBINHOOD_FEE_BPS = 250;
+
+/**
  * Quota fields are in the on-chain mint's atomic units (6 decimals), the
  * unit the on-chain rolling window records — NOT the canonical 8-decimal
  * unit gross/fee/net figures use. Full pilot window: 100,000 GLC per
@@ -416,6 +429,15 @@ export function statsFixture(): BridgeStatsDto {
     glc_to_sol_rolling_volume_remaining: "17500000000",
     sol_to_glc_rolling_volume_remaining: "100000000000",
     bridge_fee_bps: BRIDGE_FEE_BPS,
+    // `GlcToSol`'s rate under its historical name above; the per-route
+    // table is the authoritative one. `SolToRhn`/`RhnToSol` are absent
+    // because the backend builds this from the EXECUTABLE routes only.
+    route_fees: [
+      { route: "GlcToSol", fee_bps: BRIDGE_FEE_BPS, fee_percent_display: "3%" },
+      { route: "SolToGlc", fee_bps: BRIDGE_FEE_BPS, fee_percent_display: "3%" },
+      { route: "GlcToRhn", fee_bps: ROBINHOOD_FEE_BPS, fee_percent_display: "2.50%" },
+      { route: "RhnToGlc", fee_bps: ROBINHOOD_FEE_BPS, fee_percent_display: "2.50%" },
+    ],
     glc_to_sol: {
       total_requests: 1284,
       in_progress_requests: 6,

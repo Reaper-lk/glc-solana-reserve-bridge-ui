@@ -7,6 +7,7 @@ import type {
   TransferLimitsDto,
 } from "@/lib/api/schemas/status";
 import type { RobinhoodReserveDto } from "@/lib/api/schemas/robinhood";
+import type { BridgeStatsDto } from "@/lib/api/schemas/stats";
 import { directions } from "./direction";
 import { GOLDCOIN_GLC, SOLANA_GLC } from "./chain-registry";
 import {
@@ -74,6 +75,22 @@ export interface RouteFigure {
 }
 
 /**
+ * One route's configured fee, as the backend publishes it for THAT route.
+ *
+ * `display` is the backend's own rendering and is shown verbatim. The
+ * percentage is never re-derived from `bps` here: `GET /stats` formats it
+ * with the same helper the operator tooling uses, so a rate that does not
+ * divide evenly cannot read one way in this UI and another in the CLI.
+ */
+export interface RouteFee {
+  readonly bps: number;
+  /** e.g. `"3%"`. Rendered as given. */
+  readonly display: string;
+  /** The API field this came from, verbatim — same contract as {@link RouteFigure.source}. */
+  readonly source: string;
+}
+
+/**
  * The badge state of one route.
  *
  * `available` is reachable ONLY when `GET /chains` positively answered
@@ -108,6 +125,13 @@ export interface ExecutableRouteStatus {
   /** "GLC L1 → GLC on Robinhood". Never parsed. */
   readonly label: string;
   readonly kind: RouteStatusKind;
+  /**
+   * Whether `GET /chains` published a registry entry for this route at
+   * all. `false` means the registry did not answer, and the three fields
+   * below are this build's fail-closed defaults rather than the backend's
+   * verdicts — a consumer must not render them as published facts.
+   */
+  readonly registered: boolean;
   /** `GET /chains`' `enabled` — the `RouteGate` verdict, reserve state excluded. */
   readonly enabled: boolean;
   /** `GET /chains`' `implemented`. */
@@ -123,8 +147,11 @@ export interface ExecutableRouteStatus {
   readonly capacity: RouteFigure | null;
   /** Headroom left in this route's rolling 24-hour window. */
   readonly window: RouteFigure | null;
-  /** The bridge fee that applies to this route, in bps. */
-  readonly feeBps: number | null;
+  /**
+   * The fee configured for THIS route, or `null` when the backend
+   * publishes no per-route price for it. Never another route's rate.
+   */
+  readonly fee: RouteFee | null;
   /** The route's published minimum, when the backend publishes one for it. */
   readonly minimum: RouteFigure | null;
   /** The route's published per-transfer maximum, likewise. */
@@ -140,6 +167,8 @@ export interface RouteStatusInput {
   readonly reserve: ReserveAvailabilityDto | undefined;
   readonly robinhood: RobinhoodReserveDto | undefined;
   readonly limits: TransferLimitsDto | undefined;
+  /** `GET /stats` — carried for `route_fees`, the per-route price table. */
+  readonly stats: BridgeStatsDto | undefined;
 }
 
 /** The two routes whose figures `GET /status` and `GET /reserve` describe. */
@@ -305,6 +334,69 @@ function solanaLimits(limits: TransferLimitsDto | undefined) {
 }
 
 /**
+ * The fee that applies to ONE route, from the only field that states it
+ * per route.
+ *
+ * # Why `/limits`' `bridge_fee_bps` is not consulted for three of the four
+ *
+ * `GET /limits` passes the SOLANA program's `BridgeConfig` through raw,
+ * and the backend documents the fee beside those limits as `GlcToSol`'s
+ * own: "it is not the rate any Robinhood route charges and must never be
+ * displayed as one" (`TransferLimits::bridge_fee_bps`). `GET /stats`'
+ * `bridge_fee_bps` carries the identical caveat and survives only for wire
+ * compatibility. Four routes are priced independently, so a single field
+ * cannot answer for all of them, and showing `GlcToRhn` the Solana rate is
+ * the display half of a bug the backend already closed in its pricing
+ * path.
+ *
+ * `route_fees` is the table that does answer per route. When it is absent
+ * — a deployment predating it — every route reports no published fee,
+ * EXCEPT `GlcToSol`, which may fall back to `/limits` because that field
+ * is documented as precisely its rate. That is a narrower claim, not a
+ * borrowed one: no other route reads it.
+ */
+const FEE: Record<SettlementRoute, (input: RouteStatusInput) => RouteFee | null> = {
+  GlcToSol: (input) => publishedFee(input, "GlcToSol") ?? glcToSolLegacyFee(input.limits),
+  SolToGlc: (input) => publishedFee(input, "SolToGlc"),
+  GlcToRhn: (input) => publishedFee(input, "GlcToRhn"),
+  RhnToGlc: (input) => publishedFee(input, "RhnToGlc"),
+};
+
+function publishedFee(input: RouteStatusInput, route: SettlementRoute): RouteFee | null {
+  const entry = input.stats?.route_fees?.find((fee) => fee.route === route);
+  return entry
+    ? {
+        bps: entry.fee_bps,
+        display: entry.fee_percent_display,
+        source: `GET /stats · route_fees[${route}].fee_bps`,
+      }
+    : null;
+}
+
+/**
+ * `GlcToSol`'s rate from `GET /limits`, for a backend with no `route_fees`.
+ *
+ * The display string is composed here rather than taken from the response
+ * because this endpoint publishes none — which is itself a reason to
+ * prefer `route_fees` wherever it exists.
+ */
+function glcToSolLegacyFee(limits: TransferLimitsDto | undefined): RouteFee | null {
+  if (!limits) return null;
+  return {
+    bps: limits.bridge_fee_bps,
+    display: formatBps(limits.bridge_fee_bps),
+    source: "GET /limits · bridge_fee_bps",
+  };
+}
+
+/** "300" -> "3%", "50" -> "0.5%". Integer arithmetic; never a float rate. */
+export function formatBps(bps: number): string {
+  const whole = Math.trunc(bps / 100);
+  const fraction = bps % 100;
+  return fraction === 0 ? `${whole}%` : `${(bps / 100).toFixed(2)}%`;
+}
+
+/**
  * The badge a Solana-governed route's `GET /status` gate state maps to.
  * Only ever applied to a route `/chains` already reported available, and
  * only ever as a DOWNGRADE.
@@ -447,13 +539,14 @@ export function executableRouteStatus(
     route,
     label: directions[route].label,
     kind,
+    registered: gate.view !== null,
     enabled: gate.view?.enabled ?? false,
     implemented: gate.view?.implemented ?? false,
     available: gate.view?.available,
     reason: gate.reason,
     capacity,
     window,
-    feeBps: input.limits?.bridge_fee_bps ?? null,
+    fee: FEE[route](input),
     minimum,
     maximum,
     ...(note ? { note } : {}),

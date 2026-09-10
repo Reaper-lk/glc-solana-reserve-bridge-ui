@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import { renderWithQueryClient } from "./test-utils";
 import { StatusView } from "@/features/status/StatusView";
+import { AVAILABILITY_NOT_PUBLISHED_NOTE } from "@/lib/bridge";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import type { ChainsViewDto, RouteViewDto } from "@/lib/api/schemas/chains";
 import type { RobinhoodReserveDto } from "@/lib/api/schemas/robinhood";
@@ -26,6 +27,7 @@ const getHealth = vi.fn();
 const getReserve = vi.fn();
 const getRobinhoodReserve = vi.fn();
 const getLimits = vi.fn();
+const getStats = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   bridgeApi: {
@@ -35,6 +37,7 @@ vi.mock("@/lib/api", () => ({
     getReserve: (...args: unknown[]) => getReserve(...args),
     getRobinhoodReserve: (...args: unknown[]) => getRobinhoodReserve(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
+    getStats: (...args: unknown[]) => getStats(...args),
   },
 }));
 
@@ -111,6 +114,9 @@ beforeEach(() => {
   getChains.mockResolvedValue(chainsWith(ALL));
   getRobinhoodReserve.mockResolvedValue(robinhoodReserve());
   getLimits.mockResolvedValue(fixtures.limitsFixture());
+  // `route_fees` — the per-route price table. The fixture prices the
+  // Robinhood pair differently from the Solana pair on purpose.
+  getStats.mockResolvedValue(fixtures.statsFixture());
 });
 
 async function card(route: keyof typeof CARDS) {
@@ -213,7 +219,7 @@ describe("the four cards show four different sets of figures", () => {
     }
   });
 
-  it("reports the bridge fee and the limits each route actually has", async () => {
+  it("reports the fee and the limits each route actually has", async () => {
     renderWithQueryClient(<StatusView />);
     const glcToSol = await card("GlcToSol");
     expect(glcToSol.getByText("3%")).toBeInTheDocument();
@@ -222,12 +228,25 @@ describe("the four cards show four different sets of figures", () => {
     expect(glcToSol.getByText(/99\.00/)).toBeInTheDocument();
     expect(glcToSol.getByText(/20,000\.00/)).toBeInTheDocument();
 
-    // A Robinhood-legged route gets no per-transfer limits rather than
-    // Solana's — that would be a ceiling neither chain enforces.
+    // Its OWN rate from `route_fees`, not the Solana pair's — the
+    // fixtures price the two families differently precisely so this
+    // distinguishes a correct card from one reading `bridge_fee_bps`.
     const glcToRhn = await card("GlcToRhn");
-    expect(glcToRhn.getByText("Per-transfer limits").parentElement).toHaveTextContent(
-      "Not published",
-    );
+    expect(glcToRhn.getByText("2.50%")).toBeInTheDocument();
+    expect(glcToRhn.queryByText("3%")).toBeNull();
+  });
+
+  it("omits the per-transfer limits row where the backend publishes none", async () => {
+    // `GET /limits` carries the SOLANA program's `BridgeConfig` alone, so
+    // a Robinhood-legged route has no published bounds. The row is absent
+    // rather than filled with Solana's — that would state a ceiling
+    // neither Robinhood chain enforces — and absent rather than a
+    // placeholder, which is what made the card read as unfinished.
+    renderWithQueryClient(<StatusView />);
+    const glcToRhn = await card("GlcToRhn");
+    await glcToRhn.findByText("Route fee");
+    expect(glcToRhn.queryByText("Per-transfer limits")).toBeNull();
+    expect(glcToRhn.queryByText("Not published")).toBeNull();
   });
 });
 
@@ -281,9 +300,15 @@ describe("route.available controls the badge", () => {
     expect(glcToSol.getByText("Enabled (route gate)").parentElement).toHaveTextContent(
       "Yes",
     );
-    expect(glcToSol.getByText("Available (effective)").parentElement).toHaveTextContent(
-      "Not published",
-    );
+    // The question was never answered, so no verdict is shown. Rendering
+    // "No" would be a claim the backend did not make, and rendering "Not
+    // published" put placeholder text where a reader expects a value —
+    // the badge above already reads Unknown, and the note says why.
+    expect(glcToSol.queryByText("Available (effective)")).toBeNull();
+    expect(glcToSol.queryByText("Not published")).toBeNull();
+    expect(
+      glcToSol.getByText(AVAILABILITY_NOT_PUBLISHED_NOTE, { exact: false }),
+    ).toBeInTheDocument();
   });
 
   it("keeps the figures visible on a route the backend has closed", async () => {

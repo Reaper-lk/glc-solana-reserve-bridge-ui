@@ -71,6 +71,7 @@ function input(overrides: Partial<RouteStatusInput> = {}): RouteStatusInput {
     },
     robinhood: robinhoodReserve(),
     limits: fixtures.limitsFixture(),
+    stats: fixtures.statsFixture(),
     ...overrides,
   };
 }
@@ -358,15 +359,51 @@ describe("published limits and fees", () => {
     }
   });
 
-  it("reports the published bridge fee on every route", () => {
-    for (const card of executableRouteStatuses(input())) {
-      expect(card.feeBps).toBe(fixtures.BRIDGE_FEE_BPS);
+  it("prices each route from GET /stats' own per-route table", () => {
+    // `route_fees` is the only field that answers per route. The fixture
+    // gives the Robinhood pair a DIFFERENT rate from the Solana pair, so a
+    // card filled from `bridge_fee_bps` fails here on the number itself
+    // rather than only on its provenance.
+    const byRoute = Object.fromEntries(
+      executableRouteStatuses(input()).map((card) => [card.route, card.fee]),
+    );
+    expect(byRoute.GlcToSol?.bps).toBe(fixtures.BRIDGE_FEE_BPS);
+    expect(byRoute.SolToGlc?.bps).toBe(fixtures.BRIDGE_FEE_BPS);
+    expect(byRoute.GlcToRhn?.bps).toBe(fixtures.ROBINHOOD_FEE_BPS);
+    expect(byRoute.RhnToGlc?.bps).toBe(fixtures.ROBINHOOD_FEE_BPS);
+    for (const route of ["GlcToSol", "GlcToRhn"] as const) {
+      expect(byRoute[route]?.source).toBe(`GET /stats · route_fees[${route}].fee_bps`);
     }
   });
 
-  it("says the fee is not published rather than assuming one", () => {
-    for (const card of executableRouteStatuses(input({ limits: undefined }))) {
-      expect(card.feeBps).toBeNull();
+  it("shows the backend's own percentage rather than re-deriving one", () => {
+    // `fee_percent_display` is formatted by the same helper the operator
+    // CLI uses. Re-deriving it here is how the two come to disagree on a
+    // rate that does not divide evenly.
+    const card = statusOf("GlcToRhn");
+    expect(card.fee?.display).toBe("2.50%");
+  });
+
+  it("never answers a Robinhood route with the Solana program's fee", () => {
+    // `/limits`' `bridge_fee_bps` is documented backend-side as
+    // `GlcToSol`'s rate and "must never be displayed as" a Robinhood one.
+    // With no per-route table published, three of the four routes have no
+    // answer — and report none.
+    const cards = executableRouteStatuses(input({ stats: undefined }));
+    const byRoute = Object.fromEntries(cards.map((card) => [card.route, card.fee]));
+    expect(byRoute.GlcToRhn).toBeNull();
+    expect(byRoute.RhnToGlc).toBeNull();
+    expect(byRoute.SolToGlc).toBeNull();
+    // `GlcToSol` alone may read it, because that is whose rate it is.
+    expect(byRoute.GlcToSol?.bps).toBe(fixtures.BRIDGE_FEE_BPS);
+    expect(byRoute.GlcToSol?.source).toBe("GET /limits · bridge_fee_bps");
+  });
+
+  it("publishes no fee at all when neither endpoint answered", () => {
+    for (const card of executableRouteStatuses(
+      input({ limits: undefined, stats: undefined }),
+    )) {
+      expect(card.fee).toBeNull();
     }
   });
 });

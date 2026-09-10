@@ -199,11 +199,23 @@ test.describe("routes on the status page", () => {
     // Robinhood pair used to be dropped entirely when the gate was shut,
     // which left /status silently missing half the routes it exists to
     // report on.
-    await expect(page.getByText("Destination reserve capacity")).toHaveCount(4);
+    for (const label of [
+      "GLC L1 → GLC on Solana",
+      "GLC on Solana → GLC L1",
+      "GLC L1 → GLC on Robinhood",
+      "GLC on Robinhood → GLC L1",
+    ]) {
+      await expect(page.getByRole("group", { name: label })).toBeVisible();
+    }
     // And a closed route carries no borrowed figure. Mock mode publishes
-    // no Robinhood reserve, so its capacity says so in words.
+    // no Robinhood reserve, so `GlcToRhn` — the only route that would pay
+    // out of it — shows no capacity at all, while the other three do.
+    await expect(page.getByText("Destination reserve capacity")).toHaveCount(3);
     const glcToRhn = page.getByRole("group", { name: "GLC L1 → GLC on Robinhood" });
-    await expect(glcToRhn.getByText("Not published").first()).toBeVisible();
+    await expect(glcToRhn.getByText("Destination reserve capacity")).toHaveCount(0);
+    // Absent, not stubbed: the placeholder that used to sit here read as
+    // an unfinished card rather than as a fact about the deployment.
+    await expect(glcToRhn.getByText("Not published")).toHaveCount(0);
   });
 
   test("never shows a Robinhood route as available while the gate is shut", async ({
