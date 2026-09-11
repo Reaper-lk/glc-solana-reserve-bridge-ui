@@ -88,18 +88,31 @@ test.describe("bridge form — unavailable pairs", () => {
     await expect(primaryCta(page)).toHaveText("Route unavailable");
   });
 
-  test("distinguishes a non-executable pair from a merely closed one", async ({
+  test("reports the built-but-closed cross route as closed, not absent", async ({
     page,
   }) => {
+    // This used to assert "Not available" — the copy for a pair with no
+    // settlement machinery — because `SolToRhn` was `implemented: false`.
+    // Phase H built it, so it is `implemented: true` and shipped shut,
+    // and it must now read as a route an operator can open ("Coming
+    // soon") rather than one that does not exist.
+    //
+    // The stronger "Not available" verdict is not dead: it is what a
+    // backend reporting `implemented: false` still produces. Nothing in
+    // this build reports that any more, so it has no reachable path
+    // through the mock UI and is covered by
+    // `tests/unit/route-availability.test.ts` against a constructed
+    // response instead.
     await page.goto("/bridge");
     await waitForRouteVerdict(page);
 
     await selectNetwork(page, "Source network", /Solana/);
     await selectNetwork(page, "Destination network", /Robinhood Chain/);
 
-    // `implemented: false` — no operator action opens this, so it must not
-    // read as a temporary state.
-    await expect(page.getByText("Not available", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Solana → Robinhood Chain")).toBeVisible();
+    await expect(page.getByText("Coming soon").first()).toBeVisible();
+    await expect(page.getByText("Not available", { exact: true })).toHaveCount(0);
+    // Closed is still closed: nothing about being built opens it.
     await expect(primaryCta(page)).toBeDisabled();
   });
 

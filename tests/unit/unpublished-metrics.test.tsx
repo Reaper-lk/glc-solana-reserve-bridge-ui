@@ -213,6 +213,7 @@ describe("a route the registry never described", () => {
       robinhood: undefined,
       limits: fixtures.limitsFixture(),
       stats: fixtures.statsFixture(),
+      robinhoodLimits: undefined,
     };
     const card = executableRouteStatus("GlcToSol", input);
 

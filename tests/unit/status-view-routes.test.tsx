@@ -26,6 +26,7 @@ const getChains = vi.fn();
 const getHealth = vi.fn();
 const getReserve = vi.fn();
 const getRobinhoodReserve = vi.fn();
+const getRobinhoodLimits = vi.fn();
 const getLimits = vi.fn();
 const getStats = vi.fn();
 
@@ -36,6 +37,7 @@ vi.mock("@/lib/api", () => ({
     getHealth: (...args: unknown[]) => getHealth(...args),
     getReserve: (...args: unknown[]) => getReserve(...args),
     getRobinhoodReserve: (...args: unknown[]) => getRobinhoodReserve(...args),
+    getRobinhoodLimits: (...args: unknown[]) => getRobinhoodLimits(...args),
     getLimits: (...args: unknown[]) => getLimits(...args),
     getStats: (...args: unknown[]) => getStats(...args),
   },
@@ -113,6 +115,9 @@ beforeEach(() => {
   });
   getChains.mockResolvedValue(chainsWith(ALL));
   getRobinhoodReserve.mockResolvedValue(robinhoodReserve());
+  getRobinhoodLimits.mockResolvedValue(
+    fixtures.robinhoodLimitsFixture(now, { open: true }),
+  );
   getLimits.mockResolvedValue(fixtures.limitsFixture());
   // `route_fees` — the per-route price table. The fixture prices the
   // Robinhood pair differently from the Solana pair on purpose.
@@ -146,13 +151,24 @@ describe("all four executable routes get a card", () => {
     ).toBeNull();
   });
 
-  it("still lists both non-implemented routes in the Routes card", async () => {
+  it("still lists the two cross routes, now as built-but-closed", async () => {
+    // They used to report "Not implemented". Phase H built them, so the
+    // Routes card lists them as unavailable — still closed, and still
+    // listed, which is the part that matters: a route the deployment
+    // knows about never silently disappears from this card.
     renderWithQueryClient(<StatusView />);
     await screen.findByRole("heading", { name: "Routes" });
     const list = within(screen.getByRole("list"));
 
-    expect(list.getAllByText("Not implemented")).toHaveLength(2);
-    expect(list.getAllByText("Not available on this deployment.")).toHaveLength(2);
+    // No longer "Not implemented", and no longer the flat "Not available
+    // on this deployment." that verdict carries: a built-but-closed route
+    // shows the BACKEND's own reason, exactly as the other closed routes
+    // already did.
+    expect(list.queryByText("Not implemented")).toBeNull();
+    expect(list.queryByText("Not available on this deployment.")).toBeNull();
+    for (const id of ["SolToRhn", "RhnToSol"]) {
+      expect(list.getByText(id)).toBeInTheDocument();
+    }
     // Neutral, not danger: nothing is wrong and nothing is waiting to be
     // switched back on.
     expect(list.queryByText("Paused")).toBeNull();
@@ -223,10 +239,14 @@ describe("the four cards show four different sets of figures", () => {
     renderWithQueryClient(<StatusView />);
     const glcToSol = await card("GlcToSol");
     expect(glcToSol.getByText("3%")).toBeInTheDocument();
-    // `GET /limits` describes the Solana program's config; 99000000 and
-    // 20000000000 at the mint's 6 decimals.
-    expect(glcToSol.getByText(/99\.00/)).toBeInTheDocument();
+    // The MAXIMUM is the Solana program's `per_transfer_limit`,
+    // 20000000000 at the mint's 6 decimals. The MINIMUM is the published
+    // policy floor — deliberately NOT the program's 99 GLC
+    // `min_transfer_amount`, which is a net-side check and was what this
+    // row used to show.
+    expect(glcToSol.getByText(/100\.00/)).toBeInTheDocument();
     expect(glcToSol.getByText(/20,000\.00/)).toBeInTheDocument();
+    expect(glcToSol.queryByText(/99\.00/)).toBeNull();
 
     // Its OWN rate from `route_fees`, not the Solana pair's — the
     // fixtures price the two families differently precisely so this
@@ -236,17 +256,32 @@ describe("the four cards show four different sets of figures", () => {
     expect(glcToRhn.queryByText("3%")).toBeNull();
   });
 
-  it("omits the per-transfer limits row where the backend publishes none", async () => {
-    // `GET /limits` carries the SOLANA program's `BridgeConfig` alone, so
-    // a Robinhood-legged route has no published bounds. The row is absent
-    // rather than filled with Solana's — that would state a ceiling
-    // neither Robinhood chain enforces — and absent rather than a
-    // placeholder, which is what made the card read as unfinished.
+  it("shows a Robinhood route's per-transfer limits, from the contract", async () => {
+    // This row used to be absent on a Robinhood card: `GET /limits`
+    // carries the Solana program's config alone, and filling the row from
+    // it would state a ceiling neither Robinhood chain enforces. The
+    // figures now come from the places that DO enforce them — the
+    // published policy floor, and `GET /robinhood/limits`' own
+    // `outboundMax`.
+    renderWithQueryClient(<StatusView />);
+    const glcToRhn = await card("GlcToRhn");
+    await glcToRhn.findByText("Per-transfer limits");
+    expect(glcToRhn.getByText(/100\.00/)).toBeInTheDocument();
+    expect(glcToRhn.getByText(/20,000\.00/)).toBeInTheDocument();
+    expect(glcToRhn.queryByText("Not published")).toBeNull();
+  });
+
+  it("omits the limits row entirely when the contract could not be read", async () => {
+    // Absent rather than a placeholder, which is what made the card read
+    // as unfinished — and absent rather than zero, which would say the
+    // route takes nothing.
+    getRobinhoodLimits.mockResolvedValue(
+      fixtures.robinhoodLimitsFixture(() => new Date(), { open: false }),
+    );
     renderWithQueryClient(<StatusView />);
     const glcToRhn = await card("GlcToRhn");
     await glcToRhn.findByText("Route fee");
-    expect(glcToRhn.queryByText("Per-transfer limits")).toBeNull();
-    expect(glcToRhn.queryByText("Not published")).toBeNull();
+    expect(glcToRhn.queryByText(/20,000\.00/)).toBeNull();
   });
 });
 

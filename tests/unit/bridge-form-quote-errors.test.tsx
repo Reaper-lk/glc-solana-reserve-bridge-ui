@@ -222,7 +222,12 @@ describe("quote failure", () => {
     // figure must not still be on screen. 970.00 is the answer for 1000
     // GLC; 2000 GLC is in the box and its own quote is unknown.
     const { serverError } = await import("@/lib/api/errors");
-    getQuote.mockResolvedValueOnce(quoteFor("100000000000", "970.00000000"));
+    // Not `...Once`: typing "1000" passes through "100", which now
+    // CLEARS the 100 GLC source minimum and fires a quote of its own.
+    // A one-shot mock would be consumed by that keystroke and leave
+    // the quote under test unanswered — which is a fact about the
+    // minimum, not about the caching this test is for.
+    getQuote.mockResolvedValue(quoteFor("100000000000", "970.00000000"));
     const user = userEvent.setup();
     renderWithAppQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
@@ -247,7 +252,12 @@ describe("quote failure", () => {
     // across a key change also silently reopened the gate: the form was
     // submittable against a figure computed for a different amount.
     const pending: { resolve?: (value: unknown) => void } = {};
-    getQuote.mockResolvedValueOnce(quoteFor("100000000000", "970.00000000"));
+    // Not `...Once`: typing "1000" passes through "100", which now
+    // CLEARS the 100 GLC source minimum and fires a quote of its own.
+    // A one-shot mock would be consumed by that keystroke and leave
+    // the quote under test unanswered — which is a fact about the
+    // minimum, not about the caching this test is for.
+    getQuote.mockResolvedValue(quoteFor("100000000000", "970.00000000"));
     const user = userEvent.setup();
     renderWithAppQueryClient(<BridgeForm />);
     await waitForRouteVerdict();

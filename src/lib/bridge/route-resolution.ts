@@ -1,5 +1,8 @@
 import type { Route } from "@/lib/api/schemas/common";
 import { routeSchema } from "@/lib/api/schemas/common";
+import type { ChainsViewDto } from "@/lib/api/schemas/chains";
+import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
+import { atomicRescaleCeil } from "./canonical";
 
 /**
  * The ONE place a (source, destination) network pair becomes a backend
@@ -115,4 +118,61 @@ export function destinationsFor(sourceChainId: string): readonly string[] {
 /** Every source network with at least one defined outbound route. */
 export function sourceChainIds(): readonly string[] {
   return Object.keys(ROUTE_TABLE);
+}
+
+/**
+ * The authoritative source-side minimum for one route, in the SOURCE
+ * token's own base units — the figure the bridge form renders as
+ * "Min … GLC".
+ *
+ * # One rule, one place
+ *
+ * `GET /chains` publishes `min_transfer_atomic` per route: the backend's
+ * single policy floor, the same value `POST /transfers` and `POST /quote`
+ * admit against and the same one a fold parks below. Every route carries
+ * it, so this function has no per-route arithmetic and no route-family
+ * branch — which is the point. The per-route derivation it replaced is
+ * what produced "102.061856 GLC".
+ *
+ * # Never adjusted for the fee
+ *
+ * The fee is deducted AFTER the minimum is checked, so a minimum transfer
+ * delivers less than the minimum and that is correct. Grossing this
+ * figure up would publish a floor the backend does not apply and would
+ * refuse amounts it accepts.
+ *
+ * # Units, and why the rounding is UP
+ *
+ * The wire figure is canonical 8dp. A source chain with finer precision
+ * (Robinhood's 18 decimals) widens exactly; one with coarser precision
+ * (the Solana mint's 6) narrows, and narrowing is CEILED — a floor
+ * rounded down would admit an amount the backend refuses, which is the
+ * one direction a minimum must never move.
+ *
+ * # Why it takes two chain ids rather than a resolved route
+ *
+ * Partly a compiler constraint — `BridgeForm` has already handed its
+ * resolved `route` to other functions by the time limits are computed,
+ * after which the React Compiler will not accept it, or anything derived
+ * from it, as a `useMemo` dependency (the same constraint documented on
+ * `robinhoodContractLeg`). But unlike that case this costs nothing and
+ * duplicates nothing: each `RouteView` already carries `source_chain` and
+ * `destination_chain`, so matching on them is reading the backend's own
+ * pairing rather than restating this app's.
+ *
+ * `undefined` when no route joins those two chains, when the backend
+ * predates the field, or while `GET /chains` is still in flight. Never a
+ * fallback: an invented floor is the bug this whole field exists to end.
+ */
+export function routeSourceMinimum(
+  chains: ChainsViewDto | undefined,
+  sourceChainId: string,
+  destinationChainId: string,
+  sourceDecimals: number,
+): string | undefined {
+  const raw = chains?.routes.find(
+    (r) => r.source_chain === sourceChainId && r.destination_chain === destinationChainId,
+  )?.min_transfer_atomic;
+  if (raw === undefined) return undefined;
+  return atomicRescaleCeil(raw, GOLDCOIN_DECIMALS, sourceDecimals);
 }

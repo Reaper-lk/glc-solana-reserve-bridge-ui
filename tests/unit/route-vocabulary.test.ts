@@ -162,9 +162,16 @@ describe("chainsViewSchema", () => {
   it("carries `implemented` separately from `enabled`", () => {
     const parsed = chainsViewSchema.parse(fixtures.chainsFixture(() => new Date()));
     const byId = new Map(parsed.routes.map((route) => [route.id, route]));
-    // Implemented but closed — the machinery exists, the route does not open.
-    expect(byId.get("GlcToRhn")).toMatchObject({ implemented: true, enabled: false });
-    // Neither implemented nor enabled, and no operator action changes that.
-    expect(byId.get("SolToRhn")).toMatchObject({ implemented: false, enabled: false });
+    // Implemented but closed — the machinery exists, the route does not
+    // open. Every route in this build is now in that state bar the two
+    // that predate the registry, which is exactly why the two fields
+    // cannot be collapsed into one: `implemented` says the code exists,
+    // `enabled` says an operator switched it on, and neither implies the
+    // other.
+    for (const id of ["GlcToRhn", "RhnToGlc", "SolToRhn", "RhnToSol"] as const) {
+      expect(byId.get(id)).toMatchObject({ implemented: true, enabled: false });
+    }
+    // And the pair that predates the registry is on by default.
+    expect(byId.get("GlcToSol")).toMatchObject({ implemented: true, enabled: true });
   });
 });

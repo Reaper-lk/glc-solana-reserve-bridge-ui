@@ -38,13 +38,29 @@ describe("routeAvailability", () => {
     }
   });
 
-  it("distinguishes structurally non-executable routes from closed ones", () => {
-    // `SolToRhn`/`RhnToSol` have no settlement machinery at all — no
-    // operator action opens them — which is why "Coming soon" and
-    // "temporarily unavailable" must not read the same.
+  it("reads the implemented-but-shut cross routes as closed, not absent", () => {
+    // `SolToRhn`/`RhnToSol` gained settlement machinery in Phase H and
+    // ship shut, so they are `closed` — an operator action opens them.
     for (const route of ["SolToRhn", "RhnToSol"] as const) {
-      expect(routeAvailability(chains(), route).kind).toBe("unimplemented");
+      expect(routeAvailability(chains(), route).kind).toBe("closed");
     }
+  });
+
+  it("still separates a route that does not exist from one merely shut", () => {
+    // The distinction the `unimplemented` verdict carries — "Not
+    // available" against "Coming soon" — is why `implemented` is its own
+    // field. No route in this build reports it today, so it is exercised
+    // against a backend that does.
+    const base = chains();
+    const inert = {
+      ...base,
+      routes: base.routes.map((r) =>
+        r.id === "SolToRhn" ? { ...r, implemented: false } : r,
+      ),
+    };
+    expect(routeAvailability(inert, "SolToRhn").kind).toBe("unimplemented");
+    // And its neighbour is untouched: one route's shape is not another's.
+    expect(routeAvailability(inert, "RhnToSol").kind).toBe("closed");
   });
 
   it("fails closed when /chains has not loaded", () => {
@@ -61,8 +77,11 @@ describe("routeAvailability", () => {
   it("follows the backend when a route opens, with no frontend change", () => {
     expect(routeAvailability(openChains(), "GlcToRhn").kind).toBe("open");
     expect(routeAvailability(openChains(), "RhnToGlc").kind).toBe("open");
-    // Opening the two implemented routes does NOT open the inert pair.
-    expect(routeAvailability(openChains(), "SolToRhn").kind).toBe("unimplemented");
+    // Opening the two Goldcoin<->Robinhood routes does NOT open the
+    // cross pair: `robinhoodOpen` is about those two alone, and the
+    // cross routes stay shut until their own gates say otherwise.
+    expect(routeAvailability(openChains(), "SolToRhn").kind).toBe("closed");
+    expect(routeAvailability(openChains(), "RhnToSol").kind).toBe("closed");
   });
 });
 
