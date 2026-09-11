@@ -409,7 +409,18 @@ export function robinhoodLimitsFixture(
       outbound_rolling_limit_atomic: null,
       protected_min_reserve_atomic: null,
       rolling_window_seconds: null,
+      // No contract to read, so no window either. Null, not an untouched
+      // window: "nothing consumed" would publish a full remaining figure
+      // for a bridge that is not there.
+      rhn_to_glc_rolling_window: null,
+      glc_to_rhn_rolling_window: null,
+      // `rhn_to_glc_fee_bps` is `bridge_fee_bps` under its modern name —
+      // the backend documents them as the same rate. `glc_to_rhn_fee_bps`
+      // is deliberately a DIFFERENT number, so a minimum computed with
+      // the wrong route's fee is visible rather than coincidentally right.
       bridge_fee_bps: BRIDGE_FEE_BPS,
+      glc_to_rhn_fee_bps: ROBINHOOD_FEE_BPS,
+      rhn_to_glc_fee_bps: BRIDGE_FEE_BPS,
       as_of: asOf,
     };
   }
@@ -424,7 +435,27 @@ export function robinhoodLimitsFixture(
     outbound_rolling_limit_atomic: "100000000000000000000000",
     protected_min_reserve_atomic: "50000000000000000000000",
     rolling_window_seconds: 86_400,
+    // A partly-consumed CURRENT bucket in each direction, with the two
+    // deliberately unequal: a mock whose directions agreed would let a
+    // crossed route mapping look correct on screen. `resets_at` is
+    // derived from `asOf` so the fixture is never stale.
+    rhn_to_glc_rolling_window: {
+      limit_atomic: "100000000000000000000000",
+      used_atomic: "12000000000000000000000",
+      remaining_atomic: "88000000000000000000000",
+      resets_at: asOf + 43_200,
+      is_current: true,
+    },
+    glc_to_rhn_rolling_window: {
+      limit_atomic: "100000000000000000000000",
+      used_atomic: "31000000000000000000000",
+      remaining_atomic: "69000000000000000000000",
+      resets_at: asOf + 43_200,
+      is_current: true,
+    },
     bridge_fee_bps: BRIDGE_FEE_BPS,
+    glc_to_rhn_fee_bps: ROBINHOOD_FEE_BPS,
+    rhn_to_glc_fee_bps: BRIDGE_FEE_BPS,
     as_of: asOf,
   };
 }

@@ -57,7 +57,23 @@ function limitsWith(overrides: Partial<RobinhoodLimitsDto> = {}): RobinhoodLimit
     outbound_rolling_limit_atomic: glc18(100_000n),
     protected_min_reserve_atomic: glc18(50_000n),
     rolling_window_seconds: 86_400,
+    rhn_to_glc_rolling_window: {
+      limit_atomic: glc18(100_000n),
+      used_atomic: glc18(12_000n),
+      remaining_atomic: glc18(88_000n),
+      resets_at: 1_700_043_200,
+      is_current: true,
+    },
+    glc_to_rhn_rolling_window: {
+      limit_atomic: glc18(100_000n),
+      used_atomic: glc18(31_000n),
+      remaining_atomic: glc18(69_000n),
+      resets_at: 1_700_043_200,
+      is_current: true,
+    },
     bridge_fee_bps: 300,
+    glc_to_rhn_fee_bps: 250,
+    rhn_to_glc_fee_bps: 300,
     as_of: 1_700_000_000,
     ...overrides,
   });
