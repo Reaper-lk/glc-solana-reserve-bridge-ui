@@ -23,10 +23,12 @@ import {
   isDefinedPair,
   isReportableProblem,
   isRouteEffectivelyAvailable,
+  isRouteEnabled,
   largestCanonicalRobinhoodAmountAtMost,
   maximumBridgeableAmount,
   CANONICAL_TO_ROBINHOOD_SCALE,
   resolveRoute,
+  robinhoodPerTransferMaximum,
   robinhoodPredepositVerdict,
   robinhoodRawToCanonicalExact,
   rollingVolumeRemaining,
@@ -44,7 +46,9 @@ import {
   SOURCE_WALLET_RATE_LIMIT_TITLE,
 } from "@/lib/bridge";
 import type {
+  AmountBounds,
   ChainAdapter,
+  RobinhoodContractLeg,
   RobinhoodPredepositVerdict,
   SolanaGovernedRoute,
 } from "@/lib/bridge";
@@ -74,6 +78,7 @@ import {
   useQuote,
   useReserve,
   useRhnToGlcRecipientEligibility,
+  useRobinhoodLimits,
   useSolToGlcRecipientEligibility,
 } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
@@ -185,17 +190,82 @@ export function BridgeForm() {
   /**
    * `GET /limits` reports the SOLANA program's `BridgeConfig`. Those
    * bounds govern that program's reserve in that mint's own units — they
-   * are not the Robinhood contract's, and no public endpoint publishes a
-   * Robinhood equivalent (its `inboundMin`/`inboundMax` live on-chain and
-   * are read at deposit preflight). So a Robinhood-legged pair gets no
-   * client-side bound rather than a Solana figure relabelled.
+   * are not the Robinhood contract's, and relabelling them for a
+   * Robinhood-legged pair would publish a ceiling neither chain enforces.
+   * A Robinhood route's own bounds come from `GET /robinhood/limits`
+   * instead (see `robinhoodLimits` below), never from here.
    */
   const limitsGovernRoute =
     sourceChainId !== "robinhood" && destinationChainId !== "robinhood";
 
+  /**
+   * The Robinhood custody contract's own ceilings, for the one route this
+   * form is currently pointed at.
+   *
+   * Gated exactly as the status page gates `useRobinhoodReserve`:
+   * `isRouteEnabled`, not `isRouteEffectivelyAvailable`. A route an
+   * operator has switched on but whose destination reserve has gated it
+   * shut this minute still HAS a per-transfer maximum, and that maximum
+   * is a true statement about it — the reason it cannot be used right now
+   * is carried by the blocker, not by blanking the limit. A deployment
+   * without the route never fires the request at all.
+   */
+  const robinhoodLimits = useRobinhoodLimits(
+    (route === "GlcToRhn" && isRouteEnabled(chains.data, "GlcToRhn")) ||
+      (route === "RhnToGlc" && isRouteEnabled(chains.data, "RhnToGlc")),
+  );
+
+  /**
+   * Which side of the custody contract this pair touches, spelled out
+   * from the two chain ids rather than read off `route`.
+   *
+   * The one value in this component that does not come from the single
+   * route resolution above, and the reason is a compiler one: `route` has
+   * already been handed to `routeAvailability` by this point, after which
+   * the React Compiler can no longer prove it is unmutated and rejects it
+   * — or anything derived from it — as a `useMemo` dependency.
+   * `robinhoodContractLeg` states the same mapping and is pinned against
+   * `resolveRoute` by test, so the two cannot disagree about which pair
+   * is which.
+   */
+  const robinhoodLeg: RobinhoodContractLeg | null =
+    sourceChainId === "robinhood" && destinationChainId === "goldcoin"
+      ? "deposit"
+      : sourceChainId === "goldcoin" && destinationChainId === "robinhood"
+        ? "payout"
+        : null;
+
+  /**
+   * This pair's per-transaction ceiling in the source token's own base
+   * units — `undefined` on a pair the contract does not bound, and while
+   * its limits have not been read.
+   */
+  const robinhoodMaximum = useMemo(
+    () =>
+      robinhoodPerTransferMaximum(
+        robinhoodLeg,
+        robinhoodLimits.data,
+        sourceToken.decimals,
+      ),
+    [robinhoodLeg, robinhoodLimits.data, sourceToken.decimals],
+  );
+
   const amountBounds = useMemo(() => {
     if (!limitsGovernRoute) {
-      return { decimals: sourceToken.decimals, symbol: sourceToken.symbol };
+      // A Robinhood-legged pair. The MAXIMUM is published — it is
+      // `inboundMax`/`outboundMax` as the deployed contract holds them,
+      // converted into this source token's own units — and is absent only
+      // while the read has not landed or the contract could not be
+      // reached. There is deliberately still no MINIMUM here: the
+      // contract's `inboundMin`/`outboundMin` bound a different leg from
+      // the one the user types into on `GlcToRhn`, and a floor derived
+      // from the wrong leg is the "Min 99 GLC" bug again.
+      return {
+        decimals: sourceToken.decimals,
+        symbol: sourceToken.symbol,
+        minimum: undefined,
+        maximum: robinhoodMaximum,
+      };
     }
     if (!limits.data) return null;
     const minimumCanonical = minimumGrossCanonicalForMinTransferAmount(
@@ -217,7 +287,7 @@ export function BridgeForm() {
         sourceToken.decimals,
       ),
     };
-  }, [limits.data, sourceToken, limitsGovernRoute]);
+  }, [limits.data, sourceToken, limitsGovernRoute, robinhoodMaximum]);
 
   const amountValidation = amountBounds
     ? validateAmount(amountInput, amountBounds)
@@ -555,20 +625,21 @@ export function BridgeForm() {
                 maxAmount={maxAmount}
                 onMax={applyMax}
               />
-              {amountBounds?.minimum !== undefined && (
+              {/* Only the bounds this pair actually has. The Solana
+                  governed pairs carry both; a Robinhood pair carries the
+                  custody contract's per-transfer maximum and no minimum
+                  (its `inboundMin`/`outboundMin` bound a different leg
+                  from the one the user types into on `GlcToRhn`, and a
+                  floor taken from the wrong leg is the "Min 99 GLC" bug
+                  again); either can be absent while its read is in
+                  flight. The previous single `minimum !== undefined` gate
+                  hid the whole line in every one of those cases, which is
+                  why a Robinhood route showed no maximum at all. Joined
+                  rather than branched in JSX so the separator cannot
+                  survive the part beside it going away. */}
+              {amountBounds && boundsSummary(amountBounds) !== null && (
                 <p className="text-body-sm text-ink-500">
-                  Min{" "}
-                  {display(
-                    amountBounds.minimum,
-                    amountBounds.decimals,
-                    amountBounds.symbol,
-                  )}{" "}
-                  · Max{" "}
-                  {display(
-                    amountBounds.maximum!,
-                    amountBounds.decimals,
-                    amountBounds.symbol,
-                  )}
+                  {boundsSummary(amountBounds)}
                   {remainingMintRaw !== null && (
                     <span title="Remaining 24-hour bridge capacity for this route. Reopening after exhaustion is a manual operator action, not automatic.">
                       {" · "}
@@ -988,6 +1059,24 @@ function SubmittedPhase({
       </Button>
     </Card>
   );
+}
+
+/**
+ * The "Min … · Max …" line, or `null` when this pair publishes neither.
+ *
+ * Built by joining the parts that exist rather than by branching in JSX,
+ * so a separator can never outlive the bound beside it — the state a
+ * Robinhood pair is permanently in, carrying a maximum and no minimum.
+ */
+function boundsSummary(bounds: AmountBounds): string | null {
+  const parts: string[] = [];
+  if (bounds.minimum !== undefined) {
+    parts.push(`Min ${display(bounds.minimum, bounds.decimals, bounds.symbol)}`);
+  }
+  if (bounds.maximum !== undefined) {
+    parts.push(`Max ${display(bounds.maximum, bounds.decimals, bounds.symbol)}`);
+  }
+  return parts.length === 0 ? null : parts.join(" · ");
 }
 
 function isSettlementRouteName(route: string | null): route is SettlementRoute {

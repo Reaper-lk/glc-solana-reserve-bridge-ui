@@ -14,6 +14,7 @@ export const queryKeys = {
   health: () => ["bridge", "health"] as const,
   stats: () => ["bridge", "stats"] as const,
   robinhoodReserve: () => ["bridge", "robinhood", "reserve"] as const,
+  robinhoodLimits: () => ["bridge", "robinhood", "limits"] as const,
   quote: (direction: string, grossAmount: string) =>
     ["bridge", "quote", direction, grossAmount] as const,
   /**
@@ -72,6 +73,13 @@ export const pollIntervals = {
    * statement, and a stale figure there is wrong in the same way.
    */
   robinhoodReserve: 30_000,
+  /**
+   * The Robinhood custody contract's per-transfer and rolling ceilings.
+   * Same slow cadence as `limits`, and for the same reason: changing one
+   * is a `setLimits` transaction under a 2-of-3 signer quorum, not
+   * something that moves between two form keystrokes.
+   */
+  robinhoodLimits: 300_000,
   /**
    * The inbound-route recipient rate-limit check for the address currently
    * in the form. Refetching while the form sits open both catches an address

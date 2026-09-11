@@ -5,7 +5,7 @@ import type {
   TransferLimitsDto,
 } from "./schemas/status";
 import type { BridgeStatsDto } from "./schemas/stats";
-import type { RobinhoodReserveDto } from "./schemas/robinhood";
+import type { RobinhoodLimitsDto, RobinhoodReserveDto } from "./schemas/robinhood";
 import type { ChainsViewDto } from "./schemas/chains";
 import type { ExplorerEventListDto } from "./schemas/explorer";
 import type { ReserveHistoryListDto, ReserveDirectionParam } from "./schemas/reserves";
@@ -100,6 +100,22 @@ export interface BridgeApiClient {
    * closed route worth a request per poll tick to find that out.
    */
   getRobinhoodReserve(signal?: AbortSignal): Promise<RobinhoodReserveDto>;
+
+  /**
+   * The per-transfer and rolling ceilings the Robinhood custody contract
+   * enforces (`GET /robinhood/limits`).
+   *
+   * A SEPARATE endpoint from `getLimits`, mirroring the backend: that one
+   * reports the Solana program's `BridgeConfig`, which governs Solana
+   * releases and nothing else. Neither answer may stand in for the other,
+   * and this is the only source in the app for a Robinhood route's
+   * per-transaction maximum.
+   *
+   * Call it only when a Robinhood route is actually open, for the same
+   * reason as `getRobinhoodReserve`: a deployment that predates the
+   * endpoint answers 404.
+   */
+  getRobinhoodLimits(signal?: AbortSignal): Promise<RobinhoodLimitsDto>;
 
   getQuote(
     request: { direction: Direction; gross_amount: string },
