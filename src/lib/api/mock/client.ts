@@ -12,7 +12,7 @@ import {
   transferLimitsSchema,
 } from "../schemas/status";
 import { bridgeStatsSchema } from "../schemas/stats";
-import { robinhoodReserveSchema } from "../schemas/robinhood";
+import { robinhoodLimitsSchema, robinhoodReserveSchema } from "../schemas/robinhood";
 import { chainsViewSchema } from "../schemas/chains";
 import { explorerEventListSchema } from "../schemas/explorer";
 import { reserveHistoryListSchema } from "../schemas/reserves";
@@ -156,6 +156,22 @@ export class MockBridgeClient implements BridgeApiClient {
     return this.delay(
       robinhoodReserveSchema.parse(
         fixtures.robinhoodReserveFixture(this.now, {
+          open: this.scenario === "robinhood-open",
+        }),
+      ),
+    );
+  }
+
+  /**
+   * `GET /robinhood/limits`. Gated on the same scenario as
+   * `getRobinhoodReserve`, because the two describe one deployment: a
+   * mock that published contract ceilings for a Robinhood the reserve
+   * endpoint calls unconfigured would be a state no backend can reach.
+   */
+  async getRobinhoodLimits() {
+    return this.delay(
+      robinhoodLimitsSchema.parse(
+        fixtures.robinhoodLimitsFixture(this.now, {
           open: this.scenario === "robinhood-open",
         }),
       ),

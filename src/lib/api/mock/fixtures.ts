@@ -5,7 +5,7 @@ import type {
   TransferLimitsDto,
 } from "../schemas/status";
 import type { BridgeStatsDto } from "../schemas/stats";
-import type { RobinhoodReserveDto } from "../schemas/robinhood";
+import type { RobinhoodLimitsDto, RobinhoodReserveDto } from "../schemas/robinhood";
 import { ROBINHOOD_AVAILABLE, ROBINHOOD_NOT_CONFIGURED } from "../schemas/robinhood";
 import type { ChainsViewDto } from "../schemas/chains";
 import type { ExplorerEventDto } from "../schemas/explorer";
@@ -372,6 +372,59 @@ export function robinhoodReserveFixture(
       last_success_at: asOf - (options.indexerHalted ? 900 : 6),
       halted: options.indexerHalted ?? false,
     },
+    as_of: asOf,
+  };
+}
+
+/**
+ * `GET /robinhood/limits` — the custody contract's own ceilings.
+ *
+ * Real production values (docs/robinhood/mainnet-deployment.md's limits
+ * table), in the unit the endpoint actually carries: Robinhood's native
+ * 18 decimals, NOT the canonical 8. `inboundMax` and `outboundMax` are
+ * EQUAL here because the backend requires them to be — one configured
+ * `[robinhood.policy].per_transfer_limit` must hold in both directions,
+ * and `glc-admin robinhood-preflight` reports any divergence as a
+ * mismatch. A fixture that split them would describe a deployment
+ * preflight refuses to pass.
+ *
+ * Unconfigured answers NULLS, never zeroes: a zero maximum would say
+ * "this route is closed", which is a different claim from "nobody read
+ * the contract". Only `bridge_fee_bps` survives, because it is the
+ * service's own constant and needs no chain read.
+ */
+export function robinhoodLimitsFixture(
+  now: () => Date,
+  options: { readonly open?: boolean } = {},
+): RobinhoodLimitsDto {
+  const asOf = Math.floor(now().getTime() / 1000);
+  if (!options.open) {
+    return {
+      availability: ROBINHOOD_NOT_CONFIGURED,
+      inbound_min_atomic: null,
+      inbound_max_atomic: null,
+      inbound_rolling_limit_atomic: null,
+      outbound_min_atomic: null,
+      outbound_max_atomic: null,
+      outbound_rolling_limit_atomic: null,
+      protected_min_reserve_atomic: null,
+      rolling_window_seconds: null,
+      bridge_fee_bps: BRIDGE_FEE_BPS,
+      as_of: asOf,
+    };
+  }
+  return {
+    availability: ROBINHOOD_AVAILABLE,
+    inbound_min_atomic: "100000000000000000000",
+    // 20,000 GLC at 18dp, both directions.
+    inbound_max_atomic: "20000000000000000000000",
+    inbound_rolling_limit_atomic: "100000000000000000000000",
+    outbound_min_atomic: "100000000000000000000",
+    outbound_max_atomic: "20000000000000000000000",
+    outbound_rolling_limit_atomic: "100000000000000000000000",
+    protected_min_reserve_atomic: "50000000000000000000000",
+    rolling_window_seconds: 86_400,
+    bridge_fee_bps: BRIDGE_FEE_BPS,
     as_of: asOf,
   };
 }

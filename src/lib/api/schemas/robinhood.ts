@@ -149,3 +149,59 @@ export const robinhoodReserveSchema = z.object({
 });
 
 export type RobinhoodReserveDto = z.infer<typeof robinhoodReserveSchema>;
+
+/**
+ * `GET /robinhood/limits` — the per-transfer and rolling ceilings the
+ * deployed `GlcRobinhoodBridge` actually enforces
+ * (`RobinhoodLimitsView` in `service/src/api.rs`).
+ *
+ * # Why this is not `GET /limits`
+ *
+ * `GET /limits` reports the SOLANA program's `BridgeConfig`. Those
+ * figures bound Solana releases in that mint's own 6-decimal units; they
+ * are not enforced on Robinhood, and relabelling them for a Robinhood
+ * route would publish a ceiling neither chain applies. The backend keeps
+ * the two endpoints separate for exactly that reason, and so does this
+ * schema.
+ *
+ * # Unknown is reported as unknown
+ *
+ * Every limit is `null` unless `availability` is `"available"`. The
+ * backend holds no service-side copy to substitute — `[robinhood.
+ * settlement]` carries no min, max or rolling limit — so a null here
+ * means "not read", never "no limit". A consumer that rendered one as
+ * "unlimited" would be inventing a permission the contract never gave.
+ *
+ * # Units
+ *
+ * Robinhood's native 18 decimals, decimal strings — NOT the canonical 8
+ * the ledger figures use. The two differ by an exact factor of 10^10 and
+ * formatting either with the other's decimals is wrong by ten orders of
+ * magnitude.
+ */
+export const robinhoodLimitsSchema = z.object({
+  /** One of the three availability constants above. */
+  availability: z.string().min(1),
+  /** Smallest accepted DEPOSIT — the `RhnToGlc` source leg. */
+  inbound_min_atomic: nonNegativeAtomicAmountSchema.nullable(),
+  /** `limits().inboundMax`: the largest accepted deposit. */
+  inbound_max_atomic: nonNegativeAtomicAmountSchema.nullable(),
+  inbound_rolling_limit_atomic: nonNegativeAtomicAmountSchema.nullable(),
+  /** Smallest PAYOUT — the `GlcToRhn` destination leg. */
+  outbound_min_atomic: nonNegativeAtomicAmountSchema.nullable(),
+  /** `limits().outboundMax`: the largest payout the contract will make. */
+  outbound_max_atomic: nonNegativeAtomicAmountSchema.nullable(),
+  outbound_rolling_limit_atomic: nonNegativeAtomicAmountSchema.nullable(),
+  protected_min_reserve_atomic: nonNegativeAtomicAmountSchema.nullable(),
+  rolling_window_seconds: z.number().int().nonnegative().nullable(),
+  /**
+   * The bridge fee rate in basis points. NOT read from the contract: it
+   * is the service's own fixed protocol constant, the same rate
+   * `GET /limits` reports. Present even when `availability` is not
+   * `"available"`, because it is known without reaching the chain.
+   */
+  bridge_fee_bps: z.number().int().nonnegative(),
+  as_of: unixSecondsSchema,
+});
+
+export type RobinhoodLimitsDto = z.infer<typeof robinhoodLimitsSchema>;

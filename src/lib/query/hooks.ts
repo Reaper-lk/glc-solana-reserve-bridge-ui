@@ -15,7 +15,10 @@ import type {
   TransferLimitsDto,
 } from "@/lib/api/schemas/status";
 import type { BridgeStatsDto } from "@/lib/api/schemas/stats";
-import type { RobinhoodReserveDto } from "@/lib/api/schemas/robinhood";
+import type {
+  RobinhoodLimitsDto,
+  RobinhoodReserveDto,
+} from "@/lib/api/schemas/robinhood";
 import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import type { ExplorerEventListDto } from "@/lib/api/schemas/explorer";
 import type { ReserveHistoryListDto } from "@/lib/api/schemas/reserves";
@@ -135,6 +138,34 @@ export function useRobinhoodReserve(
     queryFn: ({ signal }) => bridgeApi.getRobinhoodReserve(signal),
     enabled,
     refetchInterval: pollIntervals.robinhoodReserve,
+    retry: false,
+  });
+}
+
+/**
+ * The Robinhood custody contract's own per-transfer and rolling ceilings
+ * (`GET /robinhood/limits`).
+ *
+ * # Why this is a second limits query rather than more fields on `useLimits`
+ *
+ * `useLimits` reads `GET /limits`, which is the SOLANA program's
+ * `BridgeConfig`. Those bounds govern Solana releases in that mint's own
+ * units. The backend refuses to copy them onto a Robinhood route and so
+ * does the UI: a Robinhood route's maximum comes from here or it is not
+ * shown at all. The alternative — one merged "limits" object — is exactly
+ * how a Solana ceiling ends up displayed beside a Robinhood amount.
+ *
+ * Caller-gated and `retry: false` for the same two reasons
+ * {@link useRobinhoodReserve} documents: a deployment that predates the
+ * endpoint answers 404, and `/chains` stays the one availability
+ * authority.
+ */
+export function useRobinhoodLimits(enabled: boolean): UseQueryResult<RobinhoodLimitsDto> {
+  return useQuery({
+    queryKey: queryKeys.robinhoodLimits(),
+    queryFn: ({ signal }) => bridgeApi.getRobinhoodLimits(signal),
+    enabled,
+    refetchInterval: pollIntervals.robinhoodLimits,
     retry: false,
   });
 }

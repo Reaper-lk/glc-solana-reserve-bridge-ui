@@ -370,7 +370,15 @@ describe("BridgeForm — GlcToRhn once the backend opens the route", () => {
     await waitFor(() => expect(estimate).toHaveTextContent("970.00"));
   });
 
-  it("shows no Min/Max, because no Robinhood limit is published", async () => {
+  it("drops the Solana Min/Max rather than relabelling it", async () => {
+    // `GET /limits` describes the SOLANA program's `BridgeConfig`, so
+    // neither of its bounds may follow the user onto a Robinhood pair.
+    //
+    // No MAXIMUM appears here either, and for a reason specific to this
+    // fixture rather than to Robinhood: the route is CLOSED in it, so
+    // `GET /robinhood/limits` is never queried. On an open route the
+    // contract's own per-transfer ceiling is shown — see
+    // `bridge-form-robinhood-max.test.tsx`.
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
@@ -378,6 +386,7 @@ describe("BridgeForm — GlcToRhn once the backend opens the route", () => {
     expect(await screen.findByText(/^Min /)).toBeInTheDocument();
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
     await waitFor(() => expect(screen.queryByText(/^Min /)).not.toBeInTheDocument());
+    expect(screen.queryByText(/^Max /)).not.toBeInTheDocument();
   });
 });
 
