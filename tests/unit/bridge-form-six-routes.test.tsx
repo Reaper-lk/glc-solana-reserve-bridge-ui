@@ -138,9 +138,6 @@ const ROUTES = [
   },
 ] as const;
 
-/** The routes this app can construct a source transaction for. */
-const STARTABLE = ["GlcToSol", "SolToGlc", "GlcToRhn", "RhnToGlc"];
-
 function quoteFor(direction: string) {
   return {
     direction,
@@ -428,72 +425,5 @@ describe("availability comes from /chains, per route", () => {
       expect(screen.getByText("Currently unavailable")).toBeInTheDocument(),
     );
     await waitFor(() => expect(primaryCta()).toBeDisabled());
-  });
-});
-
-describe("the two routes this app cannot start", () => {
-  it.each(ROUTES.filter((entry) => !STARTABLE.includes(entry.route)))(
-    "refuses to submit $label, and says it is this app",
-    async (entry) => {
-      // The backend reports these open; what is missing is a
-      // source-transaction payload this build can construct. Guessing one
-      // would commit a user's GLC on-chain with no automatic way back, so
-      // the form refuses and explains whose limitation it is.
-      const user = userEvent.setup();
-      renderWithQueryClient(<BridgeForm />);
-      await waitForRouteVerdict();
-      await choose(user, entry);
-      await waitFor(() => expect(summaryRoute()).toContain(entry.label));
-
-      await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: /Not available in this app/i }),
-        ).toBeDisabled(),
-      );
-      // The module's own sentence, rendered verbatim: it names the route as
-      // live on the bridge and this app as the thing that cannot start it.
-      expect(screen.getAllByText(/cannot start a/i).length).toBeGreaterThan(0);
-      expect(screen.getAllByText(/live on the bridge/i).length).toBeGreaterThan(0);
-      // Never "coming soon" or "in development": the route is built and
-      // settling, and the bridge is not the thing refusing.
-      expect(screen.queryByText(/coming soon/i)).toBeNull();
-      expect(screen.queryByText(/in development/i)).toBeNull();
-    },
-  );
-
-  it.each(ROUTES.filter((entry) => STARTABLE.includes(entry.route)))(
-    "leaves $label submittable",
-    async (entry) => {
-      // The complement, so the refusal above cannot quietly spread: an open
-      // route this build CAN start never shows that CTA.
-      const user = userEvent.setup();
-      renderWithQueryClient(<BridgeForm />);
-      await waitForRouteVerdict();
-      await choose(user, entry);
-      await waitFor(() => expect(summaryRoute()).toContain(entry.label));
-
-      expect(
-        screen.queryByRole("button", { name: /Not available in this app/i }),
-      ).toBeNull();
-    },
-  );
-
-  it("states the backend's own reason when such a route is ALSO closed", async () => {
-    // Ordering. With the route shut backend-side, its sentence is the
-    // operative answer and this app's separate limitation is moot — leading
-    // with ours would explain a refusal nobody had reached yet.
-    getChains.mockResolvedValue(fixtures.chainsFixture(now));
-    const user = userEvent.setup();
-    renderWithQueryClient(<BridgeForm />);
-    await waitForRouteVerdict();
-    await choose(user, ROUTES[5]!); // RhnToSol, shut in the default fixture
-    await waitFor(() => expect(summaryRoute()).toContain("Robinhood Chain → Solana"));
-
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Route unavailable/i })).toBeDisabled(),
-    );
-    expect(
-      screen.getAllByText(/switched off on this deployment/i).length,
-    ).toBeGreaterThan(0);
   });
 });

@@ -158,7 +158,7 @@ describe("buildDepositToReserveInstruction", () => {
       reserveMint: RESERVE_MINT,
       obligationIndex: 7,
       amountAtomic: 123_456n,
-      goldcoinAddress: "GoldcoinAddress123",
+      destination: "GoldcoinAddress123",
     });
 
     expect(instruction.programId.toBase58()).toBe(PROGRAM_ID.toBase58());
@@ -176,7 +176,7 @@ describe("buildDepositToReserveInstruction", () => {
       reserveMint: RESERVE_MINT,
       obligationIndex: 0,
       amountAtomic: 1_000_000n,
-      goldcoinAddress: "abc",
+      destination: "abc",
     });
     const amountBytes = instruction.data.subarray(8, 16);
     expect(
@@ -192,7 +192,7 @@ describe("buildDepositToReserveInstruction", () => {
       reserveMint: RESERVE_MINT,
       obligationIndex: 0,
       amountAtomic: 1n,
-      goldcoinAddress: address,
+      destination: address,
     });
     const lengthBytes = instruction.data.subarray(16, 20);
     const length = new DataView(lengthBytes.buffer, lengthBytes.byteOffset, 4).getUint32(
@@ -205,6 +205,82 @@ describe("buildDepositToReserveInstruction", () => {
     expect(Buffer.from(addressBytes).toString("utf8")).toBe(address);
   });
 
+  it("encodes a Robinhood destination as the same UTF-8 text, 42 bytes", () => {
+    /*
+     * The `SolToRhn` payload. The program has NO route argument — the
+     * backend classifies a Solana deposit by this payload, and
+     * `destination_is_robinhood` is `payload.starts_with(b"0x")` — so these
+     * bytes are what select the route.
+     *
+     * The encoding is the same one the Goldcoin payload uses (the
+     * destination's own text as UTF-8), which is the point: one instruction,
+     * one encoding, and the TEXT decides the route. `parse_robinhood_
+     * destination` reads it back with `str::from_utf8` then
+     * `EvmAddress::from_str`.
+     */
+    const checksummed = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+    const instruction = buildDepositToReserveInstruction({
+      programId: PROGRAM_ID,
+      user: USER,
+      reserveMint: RESERVE_MINT,
+      obligationIndex: 0,
+      amountAtomic: 1n,
+      destination: checksummed,
+    });
+    const lengthBytes = instruction.data.subarray(16, 20);
+    const length = new DataView(lengthBytes.buffer, lengthBytes.byteOffset, 4).getUint32(
+      0,
+      true,
+    );
+    // `0x` plus 40 hex digits, all ASCII, so bytes === characters.
+    expect(length).toBe(42);
+
+    const addressBytes = instruction.data.subarray(20, 20 + length);
+    const text = Buffer.from(addressBytes).toString("utf8");
+    // Byte-for-byte, INCLUDING the case: the service verifies the EIP-55
+    // checksum whenever the body mixes case, so lowercasing this payload
+    // would throw away the only proof its digits survived intact.
+    expect(text).toBe(checksummed);
+    expect(text.startsWith("0x")).toBe(true);
+  });
+
+  it("carries the same account list whichever route the payload selects", () => {
+    // Including the rolling-volume window PDA, which is seeded for the
+    // Deposit DIRECTION and not per route. This is why `SolToRhn` needed no
+    // new instruction: the only thing that differs is the payload.
+    const accountsFor = (destination: string) =>
+      buildDepositToReserveInstruction({
+        programId: PROGRAM_ID,
+        user: USER,
+        reserveMint: RESERVE_MINT,
+        obligationIndex: 3,
+        amountAtomic: 1n,
+        destination,
+      }).keys.map((key) => key.pubkey.toBase58());
+
+    expect(accountsFor("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")).toEqual(
+      accountsFor("mzBc4XEFSdzCDcTxAgf6EZXgsZWpztRhef"),
+    );
+  });
+
+  it("refuses a payload outside the program's 1..64-byte bound", () => {
+    // `MAX_GLC_ADDRESS_LEN`. Throws rather than building an instruction the
+    // program would reject, which is the last of the three places this bound
+    // is enforced before a deposit is signed.
+    for (const destination of ["", "x".repeat(65)]) {
+      expect(() =>
+        buildDepositToReserveInstruction({
+          programId: PROGRAM_ID,
+          user: USER,
+          reserveMint: RESERVE_MINT,
+          obligationIndex: 0,
+          amountAtomic: 1n,
+          destination,
+        }),
+      ).toThrow(/glc_address/);
+    }
+  });
+
   it("lists accounts in the exact order the on-chain instruction expects", () => {
     const instruction = buildDepositToReserveInstruction({
       programId: PROGRAM_ID,
@@ -212,7 +288,7 @@ describe("buildDepositToReserveInstruction", () => {
       reserveMint: RESERVE_MINT,
       obligationIndex: 3,
       amountAtomic: 1n,
-      goldcoinAddress: "a",
+      destination: "a",
     });
 
     expect(instruction.keys).toHaveLength(10);
@@ -237,7 +313,7 @@ describe("buildDepositToReserveInstruction", () => {
         reserveMint: RESERVE_MINT,
         obligationIndex: 0,
         amountAtomic: 1n,
-        goldcoinAddress: "",
+        destination: "",
       }),
     ).toThrow();
   });
@@ -250,7 +326,7 @@ describe("buildDepositToReserveInstruction", () => {
         reserveMint: RESERVE_MINT,
         obligationIndex: 0,
         amountAtomic: 1n,
-        goldcoinAddress: "x".repeat(MAX_GLC_ADDRESS_LEN + 1),
+        destination: "x".repeat(MAX_GLC_ADDRESS_LEN + 1),
       }),
     ).toThrow();
   });

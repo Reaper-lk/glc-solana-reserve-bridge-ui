@@ -79,8 +79,8 @@ export async function waitForRouteVerdict() {
  *
  * Its LABEL is contextual by design — it states what pressing it would do
  * right now ("Enter an amount", "Connect wallet", "Route unavailable",
- * "Not available in this app", "Bridge GLC") rather than staying generic,
- * which is also what makes it useful to a screen reader. Tests therefore cannot look it up by one
+ * "Bridge GLC") rather than staying generic, which is also what makes it
+ * useful to a screen reader. Tests therefore cannot look it up by one
  * fixed name, and this helper both finds it and pins the vocabulary: a
  * label outside this set is a bug, not a passing test.
  */
@@ -91,7 +91,7 @@ export function primaryCta(): HTMLElement {
   return within(screen.getByRole("region", { name: "Bridge transfer" })).getByRole(
     "button",
     {
-      name: /^(Bridge GLC|Route unavailable|Not available in this app|Connect wallet|Enter destination|Enter an amount|Choose networks)$/i,
+      name: /^(Bridge GLC|Route unavailable|Connect wallet|Enter destination|Enter an amount|Choose networks)$/i,
     },
   );
 }

@@ -164,10 +164,11 @@ export {
 export { perTransferCeiling, type PerTransferCeiling } from "./route-limits";
 
 export {
-  isRouteExecutableHere,
-  routeExecutionSupport,
-  type RouteExecutionSupport,
-} from "./route-execution";
+  payloadSelectsRobinhood,
+  solanaDepositDestination,
+  type SolanaDestinationResult,
+  type SolanaSourcedRoute,
+} from "./solana-destination";
 
 export {
   adapterFor,

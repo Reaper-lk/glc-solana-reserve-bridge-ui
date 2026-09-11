@@ -8,23 +8,41 @@ import {
 import { env } from "@/lib/config/env";
 
 /**
- * Builds the Solana -> Goldcoin `deposit_to_reserve` instruction.
+ * Builds the Solana-sourced `deposit_to_reserve` instruction — the source
+ * leg of BOTH `SolToGlc` and `SolToRhn`.
  *
- * There is no backend endpoint for this direction (`service/src/api.rs`
- * module doc, glc-solana-reserve-bridge) — the depositor's own wallet must
- * submit this Anchor instruction directly against the on-chain
- * `glc-reserve-bridge` program. This module builds it from first principles
- * (PDA seeds mirrored from `service/src/solana/accounts.rs`, the
- * account list and Borsh arg layout from `target/idl/glc_reserve_bridge.json`)
- * rather than depending on `@coral-xyz/anchor`, keeping this feature's
- * dependency footprint to what is already in the bundle
- * (`@solana/web3.js`, `@noble/hashes`).
+ * There is no backend endpoint for either (`service/src/api.rs` module doc,
+ * glc-solana-reserve-bridge; `POST /transfers` refuses both by name) — the
+ * depositor's own wallet must submit this Anchor instruction directly
+ * against the on-chain `glc-reserve-bridge` program. This module builds it
+ * from first principles (PDA seeds mirrored from
+ * `service/src/solana/accounts.rs`, the account list and Borsh arg layout
+ * from `target/idl/glc_reserve_bridge.json`) rather than depending on
+ * `@coral-xyz/anchor`, keeping this feature's dependency footprint to what
+ * is already in the bundle (`@solana/web3.js`, `@noble/hashes`).
+ *
+ * # One instruction, two routes, no route argument
+ *
+ * The instruction has NO route discriminator: its only destination field is
+ * the opaque `glc_address`, and the account list (including the rolling
+ * volume window PDA, seeded for the Deposit direction) is identical either
+ * way. The backend classifies the route from the payload instead —
+ * `destination_is_robinhood` in `service/src/solana/indexer.rs` is
+ * `payload.starts_with(b"0x")`, and `0` is not in the base58 alphabet, so
+ * no Goldcoin address can ever begin with `0x`.
+ *
+ * That is why this module takes a `destination` payload rather than a
+ * "Goldcoin address": the bytes decide the route, so naming the parameter
+ * after one route would describe the caller's intent as a property of the
+ * instruction, which it is not. `@/lib/bridge/solana-destination` owns
+ * which text to send for which route.
  *
  * `glc_address` is stored on-chain as raw bytes (max 64,
  * `MAX_GLC_ADDRESS_LEN` in `programs/glc-reserve-bridge/src/constants.rs`)
  * and later hashed for a payout commitment — it is encoded here as the
- * address's own UTF-8 text, which is what a human-readable Goldcoin address
- * requires to survive an off-chain payout step that must parse it back.
+ * destination's own UTF-8 text, which is what both of the service's
+ * payload readers decode back (`decode_p2pkh` for Goldcoin,
+ * `str::from_utf8` then `EvmAddress::from_str` for Robinhood).
  */
 
 export const TOKEN_2022_PROGRAM_ID = new PublicKey(
@@ -179,7 +197,8 @@ export function deriveDepositAccounts(params: {
 /**
  * Builds the raw `deposit_to_reserve` instruction. `amountAtomic` is in the
  * Solana mint's own atomic units (6 decimals for the canonical GLC mint);
- * `goldcoinAddress` is the plain-text Goldcoin payout address.
+ * `destination` is the plain-text payout address on the destination
+ * network, whichever network that is.
  */
 export function buildDepositToReserveInstruction(params: {
   programId: PublicKey;
@@ -187,9 +206,14 @@ export function buildDepositToReserveInstruction(params: {
   reserveMint: PublicKey;
   obligationIndex: number;
   amountAtomic: bigint;
-  goldcoinAddress: string;
+  /**
+   * The opaque `glc_address` payload, as TEXT — a Base58Check Goldcoin
+   * address for `SolToGlc`, a checksummed `0x…` EVM address for `SolToRhn`.
+   * Encoded as its own UTF-8 bytes and never interpreted here.
+   */
+  destination: string;
 }): TransactionInstruction {
-  const { programId, user, reserveMint, obligationIndex, amountAtomic, goldcoinAddress } =
+  const { programId, user, reserveMint, obligationIndex, amountAtomic, destination } =
     params;
   const accounts = deriveDepositAccounts({
     programId,
@@ -198,7 +222,7 @@ export function buildDepositToReserveInstruction(params: {
     obligationIndex,
   });
 
-  const addressBytes = new TextEncoder().encode(goldcoinAddress);
+  const addressBytes = new TextEncoder().encode(destination);
   if (addressBytes.length === 0 || addressBytes.length > MAX_GLC_ADDRESS_LEN) {
     throw new Error(`glc_address must be between 1 and ${MAX_GLC_ADDRESS_LEN} bytes`);
   }

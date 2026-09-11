@@ -437,7 +437,13 @@ describe("BridgeForm — RhnToGlc stays fail-closed without a deployed contract"
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
 
+    // BOTH selectors, because with every Robinhood route open the source
+    // change alone no longer implies this pair: `RhnToSol` is open too, so
+    // the Solana destination already selected is kept rather than falling
+    // through to Goldcoin. Naming the destination is what makes this test
+    // about `RhnToGlc` rather than about the landing rule.
     await selectNetwork(user, "Source network", /Robinhood Chain/);
+    await selectNetwork(user, "Destination network", /Goldcoin/);
 
     expect(screen.getByLabelText("Goldcoin destination address")).toBeInTheDocument();
     expect(screen.getByText(/Sending to an exchange\?/i)).toBeInTheDocument();
@@ -606,12 +612,16 @@ describe("BridgeForm — default destination when the source changes", () => {
     await waitFor(() => expect(landedOn()).toContain("Robinhood Chain → Goldcoin"));
   });
 
-  it("does not pick an OPEN route this app cannot start", async () => {
-    // With Robinhood fully open, `RhnToSol` is open on the backend and
-    // `RhnToGlc` is open AND startable here. Switching the source to
-    // Robinhood while Solana is selected must move to Goldcoin: landing on
-    // the cross route would put someone on a pair that looks available
-    // everywhere else in the UI and cannot be submitted.
+  it("keeps the destination the user chose when the cross route is open", async () => {
+    // The preference is the USER's choice first and the registry's order
+    // second. With every Robinhood route open, switching the source to
+    // Robinhood while Solana is selected lands on `RhnToSol` — the open
+    // pair that was already chosen — rather than snapping to Goldcoin,
+    // which is merely first in the table.
+    //
+    // This case was previously unreachable: the cross routes shipped shut,
+    // and before that this app could not construct their deposits, so the
+    // rule had nothing to demonstrate it on.
     getChains.mockResolvedValue(
       fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true }),
     );
@@ -622,7 +632,7 @@ describe("BridgeForm — default destination when the source changes", () => {
 
     await selectNetwork(user, "Source network", /Robinhood Chain/);
 
-    await waitFor(() => expect(landedOn()).toContain("Robinhood Chain → Goldcoin"));
+    await waitFor(() => expect(landedOn()).toContain("Robinhood Chain → Solana"));
   });
 
   it("still lands somewhere coherent when no destination is open", async () => {

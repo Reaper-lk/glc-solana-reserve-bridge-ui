@@ -17,6 +17,7 @@ import {
   type RobinhoodDepositResult,
   type RobinhoodDepositStep,
 } from "./deposit";
+import type { DepositContractRoute } from "./abi";
 
 /**
  * The React surface of the Robinhood (EVM) wallet.
@@ -247,6 +248,12 @@ export function useEvmWallet(): EvmWalletState {
 }
 
 export interface RobinhoodDepositParams {
+  /**
+   * The inbound route. The contract takes it explicitly and the service
+   * parses `destination` by it, so the two below are only meaningful
+   * together — see `./deposit`'s module doc.
+   */
+  readonly route: DepositContractRoute;
   readonly amountRaw: bigint;
   readonly destination: Hex;
   readonly onStep?: (step: RobinhoodDepositStep) => void;
@@ -271,6 +278,10 @@ export function useRobinhoodDeposit(wallet: EvmWalletState): {
       const result: RobinhoodDepositResult = await depositToRobinhoodReserve({
         provider,
         deployment,
+        // Passed through, never defaulted. The route is what tells the
+        // service which network `destination` names, so a hook that picked
+        // one would be choosing where someone's GLC comes out.
+        route: params.route,
         account: address,
         amountRaw: params.amountRaw,
         destination: params.destination,

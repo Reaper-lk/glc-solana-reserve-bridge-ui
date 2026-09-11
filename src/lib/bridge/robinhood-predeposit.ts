@@ -263,16 +263,38 @@ export type RobinhoodPredepositVerdict =
 
 export interface RobinhoodPredepositInput {
   /**
-   * `isRouteEffectivelyAvailable(chains, "RhnToGlc")` — `/chains`
-   * positively answered `available: true`. An absent field is `false`
-   * here, never a shrug.
+   * `isRouteEffectivelyAvailable(chains, route)` — `/chains` positively
+   * answered `available: true`. An absent field is `false` here, never a
+   * shrug.
    */
   readonly routeAvailable: boolean;
   /** The backend's `unavailable_reason`, when it published one. */
   readonly unavailableReason: string | null;
+  /**
+   * Whether a rolling-window eligibility answer is part of this route's
+   * gate at all.
+   *
+   * `true` for `RhnToGlc`, whose payout lands on Goldcoin and is therefore
+   * subject to the per-recipient and per-source-wallet 24-hour windows
+   * `GET /recipients/rhn-to-glc/eligibility` reports.
+   *
+   * `false` for `RhnToSol`. Those windows are GOLDCOIN-PAYOUT policy —
+   * the backend publishes exactly two eligibility endpoints, both
+   * `*-to-glc`, and Phase H's own notes say the cooldowns "do not apply to
+   * either cross route". There is no endpoint to ask, so requiring an
+   * answer would be a gate nothing could ever satisfy; and inventing one
+   * locally would be this client enforcing a limit the bridge does not
+   * have.
+   *
+   * The AVAILABILITY half is unconditional. It is the part that stands in
+   * front of an irreversible deposit, and it applies to every route whose
+   * funds reach the custody contract with no `POST /transfers` preflight —
+   * which is both of them.
+   */
+  readonly eligibilityApplies: boolean;
   /** The eligibility verdict, or `null` for pending/failed/absent. */
   readonly eligibility: RecipientEligibilityDto | null;
-  /** The trimmed Goldcoin destination the form currently holds. */
+  /** The trimmed destination address the form currently holds. */
   readonly address: string;
   /** The connected EVM wallet the form currently holds. */
   readonly wallet: string | null;
@@ -295,6 +317,11 @@ export function robinhoodPredepositVerdict(
       reason: input.unavailableReason ?? ROBINHOOD_ROUTE_UNAVAILABLE_FALLBACK,
     };
   }
+  // A route with no rolling-window policy is allowed once availability has
+  // positively said yes. This is not a relaxation: there is no second
+  // question for this route, so there is no second answer to withhold, and
+  // the strict availability check above is unchanged.
+  if (!input.eligibilityApplies) return { kind: "allowed" };
   const verdict = input.eligibility;
   if (!verdict) return { kind: "eligibility-unknown" };
   if (!verdictMatchesInputs(verdict, input.address, input.wallet)) {

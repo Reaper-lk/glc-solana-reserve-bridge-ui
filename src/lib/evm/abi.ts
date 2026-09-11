@@ -33,6 +33,39 @@ export const CONTRACT_ROUTE_IDS = {
 } as const;
 
 /**
+ * The two INBOUND routes — the ones `deposit()` accepts.
+ *
+ * `_routeLegs` models `ROUTE_RHN_TO_GLC` and `ROUTE_RHN_TO_SOL` as inbound
+ * and the other two as payouts, and `deposit()` reverts with
+ * `NotADepositRoute` on an outbound id. This table is the UI's copy of that
+ * half of the contract's own model, so the one argument a deposit cannot
+ * recover afterwards is chosen from a closed set rather than passed through
+ * from somewhere else.
+ *
+ * Why the route must be named at all is the contract's own answer, quoted
+ * because it is the whole reason this is not optional: "`destination` is
+ * opaque bytes; a Goldcoin address and a Solana address are both just
+ * bytes, and this contract cannot tell them apart… Leaving the route
+ * implicit would mean the same call created two indistinguishable
+ * obligations whose payouts belong on different networks — the depositor's
+ * funds would be routed by guesswork."
+ */
+export const DEPOSIT_CONTRACT_ROUTE_IDS = {
+  RhnToGlc: CONTRACT_ROUTE_IDS.RhnToGlc,
+  RhnToSol: CONTRACT_ROUTE_IDS.RhnToSol,
+} as const;
+
+/** A route the custody contract will take a deposit for. */
+export type DepositContractRoute = keyof typeof DEPOSIT_CONTRACT_ROUTE_IDS;
+export type DepositContractRouteId =
+  (typeof DEPOSIT_CONTRACT_ROUTE_IDS)[DepositContractRoute];
+
+/** Whether a route name is one the contract accepts a deposit on. */
+export function isDepositContractRoute(route: string): route is DepositContractRoute {
+  return route in DEPOSIT_CONTRACT_ROUTE_IDS;
+}
+
+/**
  * The maximum destination payload the contract accepts
  * (`MAX_DESTINATION_LEN`), mirroring the Solana program's identical bound
  * on its own opaque `glc_address`. A Goldcoin Base58Check address is ~34

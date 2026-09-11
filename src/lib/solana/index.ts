@@ -17,7 +17,7 @@ export {
 } from "./hooks";
 
 export { isWalletConfigured, isMintConfigured } from "./connection";
-export { isValidAddress } from "./balances";
+export { isValidAddress, solanaPubkeyBytes } from "./balances";
 
 export { useDepositToReserve } from "./send";
 export type { DepositParams, DepositResult } from "./send";

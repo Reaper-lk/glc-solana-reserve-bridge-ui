@@ -19,13 +19,19 @@ export {
 
 export {
   CONTRACT_ROUTE_IDS,
+  DEPOSIT_CONTRACT_ROUTE_IDS,
   MAX_DESTINATION_LEN,
   erc20Abi,
   glcRobinhoodBridgeAbi,
+  isDepositContractRoute,
+  type DepositContractRoute,
+  type DepositContractRouteId,
 } from "./abi";
 
 export {
   encodeGoldcoinDestination,
+  encodeSolanaDestination,
+  SOLANA_PUBKEY_BYTES,
   type DestinationProblem,
   type DestinationResult,
   type EncodedDestination,
