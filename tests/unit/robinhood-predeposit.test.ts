@@ -211,7 +211,7 @@ describe("the three availability predicates", () => {
 describe("routeAvailabilitySummary", () => {
   it("does not count a route the backend reports as unavailable", () => {
     const open = fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true });
-    expect(routeAvailabilitySummary(open)).toEqual({ open: 4, total: 6 });
+    expect(routeAvailabilitySummary(open)).toEqual({ open: 6, total: 6 });
     const gated = fixtures.chainsFixture(() => new Date(), {
       robinhoodOpen: true,
       robinhoodAvailable: false,
@@ -428,9 +428,11 @@ describe("retryAfterSentence", () => {
 });
 
 describe("robinhoodPredepositVerdict — every branch fails closed", () => {
+  // `RhnToGlc`'s shape: both halves of the gate apply.
   const ALLOWED = {
     routeAvailable: true,
     unavailableReason: null,
+    eligibilityApplies: true,
     eligibility: verdict(),
     address: "GADDRESS",
     wallet: "0xdd870fa1b7c4700f2bd7f44238821c26f7392148",
@@ -438,6 +440,53 @@ describe("robinhoodPredepositVerdict — every branch fails closed", () => {
 
   it("allows only when availability AND eligibility both answered yes", () => {
     expect(robinhoodPredepositVerdict(ALLOWED)).toEqual({ kind: "allowed" });
+  });
+
+  describe("a route with no rolling-window policy", () => {
+    /*
+     * `RhnToSol`. The backend publishes exactly two eligibility endpoints
+     * and both are `*-to-glc`: the windows are Goldcoin-PAYOUT policy, and
+     * Phase H's own notes say they "do not apply to either cross route".
+     *
+     * So there is no second question to answer for this route — and
+     * requiring one would be a gate no response could ever satisfy, which
+     * is not fail-closed, it is fail-shut.
+     */
+    const NO_ELIGIBILITY = {
+      ...ALLOWED,
+      eligibilityApplies: false,
+      eligibility: null,
+    } as const;
+
+    it("allows on availability alone", () => {
+      expect(robinhoodPredepositVerdict(NO_ELIGIBILITY)).toEqual({ kind: "allowed" });
+    });
+
+    it("still refuses when availability did not positively say yes", () => {
+      // The half that DOES stand in front of the irreversible deposit is
+      // untouched: skipping eligibility must not skip this.
+      expect(
+        robinhoodPredepositVerdict({ ...NO_ELIGIBILITY, routeAvailable: false }),
+      ).toEqual({
+        kind: "route-unavailable",
+        reason: ROBINHOOD_ROUTE_UNAVAILABLE_FALLBACK,
+      });
+    });
+
+    it("ignores an eligibility answer that arrived anyway", () => {
+      // Belt and braces against a caller that passes one by accident: a
+      // blocked verdict about a window this route is not subject to must
+      // not refuse it, and must not be read as being about it either.
+      expect(
+        robinhoodPredepositVerdict({
+          ...NO_ELIGIBILITY,
+          eligibility: verdict({
+            eligible: false,
+            blocked_reason: "recipient_rate_limited",
+          }),
+        }),
+      ).toEqual({ kind: "allowed" });
+    });
   });
 
   it("refuses on availability BEFORE looking at any rate limit", () => {

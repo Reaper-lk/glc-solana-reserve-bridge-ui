@@ -78,11 +78,14 @@ function chainsWith(states: Record<string, RouteState>): ChainsViewDto {
   };
 }
 
+/** Every route the backend names, available. Six, not four. */
 const ALL: Record<string, RouteState> = {
   GlcToSol: "available",
   SolToGlc: "available",
   GlcToRhn: "available",
   RhnToGlc: "available",
+  SolToRhn: "available",
+  RhnToSol: "available",
 };
 
 const bar = () =>
@@ -98,7 +101,7 @@ describe("BridgeStatusBar wording, per banner state", () => {
   it("counts the available routes when every executable route is open", async () => {
     bar();
 
-    expect(await screen.findByText("4 of 4 routes available.")).toBeInTheDocument();
+    expect(await screen.findByText("6 of 6 routes available.")).toBeInTheDocument();
     expect(screen.getByText("Operational")).toBeInTheDocument();
     // No warning at all: there is nothing to warn about.
     expect(screen.queryByText(/unavailable|disabled/i)).toBeNull();
@@ -139,8 +142,10 @@ describe("BridgeStatusBar wording, per banner state", () => {
       chainsWith({
         GlcToSol: "unavailable",
         SolToGlc: "unavailable",
+        SolToRhn: "unavailable",
         GlcToRhn: "disabled",
         RhnToGlc: "disabled",
+        RhnToSol: "disabled",
       }),
     );
     bar();
@@ -221,6 +226,6 @@ describe("what the strip never says", () => {
     getStatus.mockResolvedValue(paused);
     renderWithQueryClient(<BridgeStatusBar initialStatus={paused} />);
 
-    expect(await screen.findByText("4 of 4 routes available.")).toBeInTheDocument();
+    expect(await screen.findByText("6 of 6 routes available.")).toBeInTheDocument();
   });
 });

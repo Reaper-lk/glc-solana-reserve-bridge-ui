@@ -182,10 +182,10 @@ export const directionAvailabilityStatus: Record<
  * `GET /chains` publishes no cause at all: `enabled` is the AND of three
  * independent gates and the route view deliberately never names which one
  * refused. Rendering a closed route as "Paused" would therefore assert an
- * operator action the backend never claimed, and — worse — would say the
- * same thing about `SolToRhn`/`RhnToSol`, which no operator action can
- * open because they have no settlement machinery on either side. The two
- * cases are the same colour on screen today and must not be.
+ * operator action the backend never claimed, and would say the same thing
+ * about a route reporting `implemented: false`, which no operator action
+ * can open because it has no settlement machinery at all. The two cases are
+ * the same colour on screen today and must not be.
  */
 export type RouteAvailabilityStatus =
   "open" | "closed" | "unavailable" | "unimplemented" | "unknown";

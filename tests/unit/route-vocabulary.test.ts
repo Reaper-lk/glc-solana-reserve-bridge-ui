@@ -73,21 +73,30 @@ describe("routeSchema", () => {
 });
 
 describe("settlementRouteSchema", () => {
-  it("covers exactly the four routes with backend settlement machinery", () => {
-    for (const route of ["GlcToSol", "SolToGlc", "GlcToRhn", "RhnToGlc"] as const) {
+  it("covers every route the backend names", () => {
+    // It used to cover four. `SolToRhn`/`RhnToSol` had no `Direction` value
+    // backend-side, so excluding them at the type level stopped any code
+    // path from handing either to an action. The backend has since shipped
+    // settlement machinery for both, and a type that still excluded them
+    // made this app describe a live route as an absent one.
+    for (const route of ALL_ROUTES) {
       expect(settlementRouteSchema.safeParse(route).success).toBe(true);
       expect(isSettlementRoute(route)).toBe(true);
     }
   });
 
-  it("excludes the two structurally non-executable routes", () => {
-    // Excluded at the TYPE level so no code path can hand either to an
-    // action — mirroring the backend, where neither has a `Direction`
-    // value to call a settlement function with.
-    for (const route of ["SolToRhn", "RhnToSol"] as const) {
-      expect(settlementRouteSchema.safeParse(route).success).toBe(false);
-      expect(isSettlementRoute(route)).toBe(false);
-    }
+  it("is the wire vocabulary itself, not a second copy of it", () => {
+    // Written as an alias rather than a second six-member enum: two enums
+    // that have to stay identical are two places for them to stop being.
+    expect([...settlementRouteSchema.options]).toEqual([...routeSchema.options]);
+  });
+
+  it("still narrows a route the backend has never named", () => {
+    // The check is not vacuous just because it accepts all six today.
+    // `/chains` route ids are open strings by design, so a seventh route
+    // must narrow to nothing here rather than be guessed at.
+    expect(isSettlementRoute("GlcToXyz")).toBe(false);
+    expect(isSettlementRoute("")).toBe(false);
   });
 });
 
@@ -120,9 +129,9 @@ describe("explorerEventSchema", () => {
 });
 
 describe("routeDisplay", () => {
-  it("names every route, including the two the UI cannot drive", () => {
-    // A route with no flow still has to be nameable — that is what lets
-    // the UI say clearly that it does not work, instead of omitting it.
+  it("names every route, including the two this app cannot start", () => {
+    // A route this build cannot submit still has to be nameable — that is
+    // what lets the UI say clearly that it cannot, instead of omitting it.
     for (const route of ALL_ROUTES) {
       const display = routeDisplay(route);
       expect(display.label.length).toBeGreaterThan(0);
@@ -145,6 +154,11 @@ describe("happyPathFor", () => {
     expect(happyPathFor("GlcToRhn")).toContain("Confirming");
     expect(happyPathFor("SolToGlc")).not.toContain("Confirming");
     expect(happyPathFor("RhnToGlc")).not.toContain("Confirming");
+    // Neither cross route touches Goldcoin at all, so neither has a
+    // confirmation ramp — and neither needed a new branch to get that
+    // right, because the rule is keyed on the source chain.
+    expect(happyPathFor("SolToRhn")).not.toContain("Confirming");
+    expect(happyPathFor("RhnToSol")).not.toContain("Confirming");
   });
 });
 
@@ -173,5 +187,20 @@ describe("chainsViewSchema", () => {
     }
     // And the pair that predates the registry is on by default.
     expect(byId.get("GlcToSol")).toMatchObject({ implemented: true, enabled: true });
+  });
+
+  it("reports every route as implemented, including the two cross routes", () => {
+    // The fixture used to say `implemented: false` for `SolToRhn`/
+    // `RhnToSol`, which made the app describe shipped machinery as absent
+    // and gave them a "Not implemented" badge no operator could clear.
+    const parsed = chainsViewSchema.parse(fixtures.chainsFixture(() => new Date()));
+    expect(parsed.routes.filter((route) => route.implemented)).toHaveLength(6);
+  });
+
+  it("publishes the same 100 GLC source minimum on all six routes", () => {
+    const parsed = chainsViewSchema.parse(fixtures.chainsFixture(() => new Date()));
+    for (const route of parsed.routes) {
+      expect(route.min_transfer_atomic).toBe(fixtures.SOURCE_MINIMUM_ATOMIC);
+    }
   });
 });

@@ -20,16 +20,19 @@ import { directions, type DirectionDescriptor } from "./direction";
  * A settled-volume statistic is about money that has ALREADY moved, so it
  * belongs to the second question: a route that is temporarily closed still
  * has real history behind it, and hiding its figure the moment an operator
- * pauses it would silently rewrite the bridge's totals. `SolToRhn` and
- * `RhnToSol` are excluded by the same field, permanently and for the right
- * reason — the backend reports `implemented: false` because no `Direction`
- * value exists for either, so no settlement function can ever be called
- * with them and no volume can ever accrue.
+ * pauses it would silently rewrite the bridge's totals.
+ *
+ * This used to exclude `SolToRhn`/`RhnToSol` by that same field — the
+ * backend reported `implemented: false` for both because neither had a
+ * `Direction` value — and it still does, by reading the field rather than
+ * by naming them. The backend now reports both implemented, so both appear
+ * here, which is the whole point of asking the registry instead of keeping
+ * a list.
  *
  * # Unknown is empty, never assumed
  *
  * With `/chains` not loaded this returns nothing. A caller renders a
- * loading state; it must not fall back to "the four routes we know about",
+ * loading state; it must not fall back to "the routes we know about",
  * which would be exactly the hardcoded list this module exists to remove.
  */
 export function executableRoutes(
@@ -60,8 +63,10 @@ export type DestinationReserve = DirectionDescriptor["destinationReserve"];
  * RESERVE (`reserve_ledger.settled_liquidity_total`), never per route, so
  * once more than one executable route pays out of the same pool their
  * volumes are genuinely indistinguishable in the published figure. With
- * Robinhood live, `SolToGlc` and `RhnToGlc` both settle onto the Goldcoin
- * reserve and share one counter.
+ * Robinhood live every reserve is shared: `SolToGlc` and `RhnToGlc` both
+ * settle onto the Goldcoin reserve, `GlcToSol` and `RhnToSol` onto the
+ * Solana one, `GlcToRhn` and `SolToRhn` onto the Robinhood one — three
+ * counters for six routes.
  *
  * Attributing that shared counter to either route family alone would
  * publish a number the bridge never claimed — and would silently double

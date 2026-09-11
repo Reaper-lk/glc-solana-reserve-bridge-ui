@@ -80,9 +80,16 @@ function limitsWith(overrides: Partial<RobinhoodLimitsDto> = {}): RobinhoodLimit
 }
 
 describe("robinhoodContractLeg — and its agreement with resolveRoute", () => {
-  it("maps the two Goldcoin<->Robinhood pairs to the legs that bound them", () => {
+  it("maps every pair with Robinhood as SOURCE to the deposit leg", () => {
+    // Into the contract, bounded by `inboundMax` and charged against the
+    // inbound window — whichever reserve eventually pays the route out.
     expect(robinhoodContractLeg("robinhood", "goldcoin")).toBe("deposit");
+    expect(robinhoodContractLeg("robinhood", "solana")).toBe("deposit");
+  });
+
+  it("maps every pair with Robinhood as DESTINATION to the payout leg", () => {
     expect(robinhoodContractLeg("goldcoin", "robinhood")).toBe("payout");
+    expect(robinhoodContractLeg("solana", "robinhood")).toBe("payout");
   });
 
   it("claims no leg for a pair that touches the contract on neither side", () => {
@@ -90,9 +97,10 @@ describe("robinhoodContractLeg — and its agreement with resolveRoute", () => {
     expect(robinhoodContractLeg("solana", "goldcoin")).toBeNull();
   });
 
-  it("claims no leg for the Solana<->Robinhood pairs, which have no settlement", () => {
-    expect(robinhoodContractLeg("solana", "robinhood")).toBeNull();
-    expect(robinhoodContractLeg("robinhood", "solana")).toBeNull();
+  it("claims no leg for a same-network pair", () => {
+    // There is no self-route to bound, and Robinhood on both sides must not
+    // read as a deposit just because the source matches.
+    expect(robinhoodContractLeg("robinhood", "robinhood")).toBeNull();
   });
 
   /**
@@ -109,11 +117,19 @@ describe("robinhoodContractLeg — and its agreement with resolveRoute", () => {
   it("agrees with resolveRoute on every pair the form can reach", () => {
     const ids = CHAIN_DESCRIPTORS.map((chain) => chain.id);
     expect(ids.length).toBeGreaterThan(2);
+    /** The leg each route touches, stated independently of the function under test. */
+    const LEG_BY_ROUTE: Record<string, "deposit" | "payout" | null> = {
+      GlcToSol: null,
+      SolToGlc: null,
+      RhnToGlc: "deposit",
+      RhnToSol: "deposit",
+      GlcToRhn: "payout",
+      SolToRhn: "payout",
+    };
     for (const source of ids) {
       for (const destination of ids) {
         const route = routeForPair(source, destination);
-        const expected =
-          route === "RhnToGlc" ? "deposit" : route === "GlcToRhn" ? "payout" : null;
+        const expected = route === null ? null : LEG_BY_ROUTE[route];
         expect(robinhoodContractLeg(source, destination)).toBe(expected);
       }
     }

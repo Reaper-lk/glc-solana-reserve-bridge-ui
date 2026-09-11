@@ -257,13 +257,20 @@ function SettlementAmounts({ transfer }: { transfer: TransferViewDto }) {
  */
 function RefundAmounts({ transfer }: { transfer: TransferViewDto }) {
   const refund = transfer.refund;
-  // `TransferView.refund` is deliberately absent for `RhnToGlc`: that
-  // deposit refunds on the Robinhood side, from a different table in a
-  // different unit, and the backend reports no refund view at all rather
-  // than mislabelling it as one of the other two (`BridgeApi::refund_view`).
-  // Absent-by-design and absent-because-old-backend look identical here, so
-  // the one we can identify gets a real explanation.
-  const robinhoodSourced = transfer.direction === "RhnToGlc";
+  // `TransferView.refund` is deliberately absent for a Robinhood-SOURCED
+  // transfer: that deposit refunds on the Robinhood side, from a different
+  // table in a different unit, and the backend reports no refund view at all
+  // rather than mislabelling it as one of the other two
+  // (`BridgeApi::refund_view`). Absent-by-design and
+  // absent-because-old-backend look identical here, so the one we can
+  // identify gets a real explanation.
+  //
+  // Read off the route's SOURCE CHAIN rather than matched against
+  // `RhnToGlc`. `RhnToSol` refunds from the same contract for the same
+  // reason, and a name check would have left it with the bare "Not
+  // available on this page" and no explanation — the exact gap this
+  // paragraph exists to close.
+  const robinhoodSourced = routeDisplay(transfer.direction).from.chain.id === "robinhood";
   const requested = transfer.gross_amount_atomic;
   const deposited = refund?.observed_amount_atomic ?? null;
 

@@ -22,12 +22,14 @@ import {
   type SolanaGovernedRoute,
 } from "./direction-state";
 import {
-  robinhoodDestinationCapacity,
+  robinhoodReserveCapacity,
   robinhoodRouteGateState,
   robinhoodWindowRemaining,
   type RobinhoodRoute,
   type RobinhoodRouteGateState,
 } from "./robinhood-route-state";
+import { robinhoodContractLeg } from "./robinhood-limits";
+import { perTransferCeiling } from "./route-limits";
 import { routeAvailability, type RouteAvailability } from "./route-availability";
 import { executableRoutes } from "./route-families";
 
@@ -35,23 +37,25 @@ import { executableRoutes } from "./route-families";
  * Everything the status page states about ONE executable route, resolved
  * from the endpoint that actually owns each figure.
  *
- * # Why this is a table and not four hand-written cards
+ * # Why this is a table and not six hand-written cards
  *
  * The status page used to be modelled as a two-direction Solana bridge:
  * two blocks reading `GET /status` and `GET /reserve`, whose every field
- * is named `glc_to_sol_*` / `sol_to_glc_*` / `*_available_capacity`. Four
+ * is named `glc_to_sol_*` / `sol_to_glc_*` / `*_available_capacity`. Six
  * executable routes now settle onto THREE independent reserve pools, in
- * three different units, and two of them are bounded by a custody
+ * three different units, and four of them are bounded by a custody
  * contract's own rolling windows rather than by a Solana PDA. Written as
  * prose, the ways to answer a route with another route's number outnumber
  * the ways to answer it correctly.
  *
  * So every figure below is looked up through a TOTAL map keyed by the
  * route — one entry per route, no default branch, no fallback to a
- * neighbouring route's value. Adding a fifth route is a compile error
+ * neighbouring route's value. Adding a seventh route is a compile error
  * until someone states where its capacity and its window come from, which
  * is the property that makes "do not reuse one reserve value for multiple
- * routes" structural rather than a review note.
+ * routes" structural rather than a review note. It is also what surfaced
+ * every figure the two cross routes needed when they were widened in:
+ * nothing could be left to a default because there is no default.
  *
  * # Absent is never zero
  *
@@ -166,7 +170,7 @@ export interface ExecutableRouteStatus {
   readonly note?: string;
 }
 
-/** The inputs the four routes are resolved from. One endpoint per member. */
+/** The inputs every route is resolved from. One endpoint per member. */
 export interface RouteStatusInput {
   readonly chains: ChainsViewDto | undefined;
   readonly status: BridgeStatusDto | undefined;
@@ -177,7 +181,7 @@ export interface RouteStatusInput {
   readonly stats: BridgeStatsDto | undefined;
   /**
    * `GET /robinhood/limits` — the custody contract's own per-transfer
-   * ceilings, for the two Robinhood routes' maxima.
+   * ceilings, for the routes whose deposit it bounds.
    *
    * `undefined` on a deployment without the endpoint, or while the read
    * is in flight, which leaves those maxima absent rather than filled in
@@ -196,8 +200,14 @@ function isSolanaGoverned(route: SettlementRoute): route is SolanaGovernedRoute 
   return route in SOLANA_GOVERNED;
 }
 
+/** Every route with the Robinhood custody contract on one side. */
 function isRobinhoodRoute(route: SettlementRoute): route is RobinhoodRoute {
-  return route === "GlcToRhn" || route === "RhnToGlc";
+  return (
+    route === "GlcToRhn" ||
+    route === "RhnToGlc" ||
+    route === "SolToRhn" ||
+    route === "RhnToSol"
+  );
 }
 
 /**
@@ -208,43 +218,39 @@ function isRobinhoodRoute(route: SettlementRoute): route is RobinhoodRoute {
  * pools in two different units, where answering the wrong one is a
  * plausible-looking figure rather than a visible failure.
  *
- * - `GlcToSol` pays out of the SOLANA reserve, published by `GET /reserve`
+ * Grouped by the reserve `Direction::destination_reserve()` names:
+ *
+ * - SOLANA reserve — `GlcToSol` and `RhnToSol`. Published by `GET /reserve`
  *   in the Token-2022 mint's 6-decimal units.
- * - `SolToGlc` and `RhnToGlc` both pay out of the GOLDCOIN reserve — the
- *   same physical pool, so the same figure, at Goldcoin's protocol-fixed 8
- *   decimals. That is a shared SOURCE, not a reused one: `Direction::
- *   destination_reserve()` names `GoldcoinReserve` for both.
- * - `GlcToRhn` pays out of the ROBINHOOD reserve, published by
+ * - GOLDCOIN reserve — `SolToGlc` and `RhnToGlc`. Goldcoin's
+ *   protocol-fixed 8 decimals.
+ * - ROBINHOOD reserve — `GlcToRhn` and `SolToRhn`. Published by
  *   `GET /robinhood/reserve` in CANONICAL 8-decimal units (its ledger
  *   column is an `INTEGER` and cannot hold Robinhood's native 18).
+ *
+ * Two routes sharing a figure is a shared SOURCE, not a reused one: they
+ * genuinely pay out of the same physical pool, so the same number is the
+ * correct answer for both.
  */
 const CAPACITY: Record<SettlementRoute, (input: RouteStatusInput) => RouteFigure | null> =
   {
-    GlcToSol: ({ reserve }) =>
-      reserve
-        ? {
-            atomic: clampAtomicAtZero(reserve.solana_available_capacity),
-            decimals: SOLANA_GLC.decimals,
-            source: "GET /reserve · solana_available_capacity",
-          }
-        : null,
+    GlcToSol: ({ reserve }) => solanaCapacity(reserve),
+    RhnToSol: ({ reserve }) => solanaCapacity(reserve),
     SolToGlc: ({ reserve }) => goldcoinCapacity(reserve),
     RhnToGlc: ({ reserve }) => goldcoinCapacity(reserve),
-    GlcToRhn: ({ robinhood, reserve }) => {
-      const figure = robinhoodDestinationCapacity(
-        "GlcToRhn",
-        robinhood,
-        goldcoinCapacity(reserve)?.atomic ?? null,
-      );
-      return figure
-        ? {
-            atomic: clampAtomicAtZero(figure.atomic),
-            decimals: figure.decimals,
-            source: "GET /robinhood/reserve · available_capacity_atomic",
-          }
-        : null;
-    },
+    GlcToRhn: ({ robinhood }) => robinhoodCapacity(robinhood),
+    SolToRhn: ({ robinhood }) => robinhoodCapacity(robinhood),
   };
+
+function solanaCapacity(reserve: ReserveAvailabilityDto | undefined): RouteFigure | null {
+  return reserve
+    ? {
+        atomic: clampAtomicAtZero(reserve.solana_available_capacity),
+        decimals: SOLANA_GLC.decimals,
+        source: "GET /reserve · solana_available_capacity",
+      }
+    : null;
+}
 
 function goldcoinCapacity(
   reserve: ReserveAvailabilityDto | undefined,
@@ -259,15 +265,45 @@ function goldcoinCapacity(
 }
 
 /**
+ * The Robinhood reserve's capacity, for the two routes that settle onto it.
+ *
+ * Clamped at zero like the other two: the backend can publish a negative
+ * capacity when a protected minimum is breached, and "-40 GLC of capacity"
+ * is not a fact a user can act on — "0" is, and the badge beside it already
+ * says the route is capacity-constrained.
+ */
+function robinhoodCapacity(
+  robinhood: RobinhoodReserveDto | undefined,
+): RouteFigure | null {
+  const figure = robinhoodReserveCapacity(robinhood);
+  return figure
+    ? {
+        atomic: clampAtomicAtZero(figure.atomic),
+        decimals: figure.decimals,
+        source: "GET /robinhood/reserve · available_capacity_atomic",
+      }
+    : null;
+}
+
+/**
  * The rolling 24-hour headroom that bounds this route, per route.
  *
- * The Solana pair is bounded by a Solana PDA and reported by `GET /status`
- * in MINT-atomic (6-decimal) units. The Robinhood pair is bounded by the
- * custody contract's own two buckets, reported in ROBINHOOD's native 18 —
- * outbound for the payout leg (`GlcToRhn`), inbound for the deposit leg
- * (`RhnToGlc`). Crossing either pair with the other's figure would state a
- * limit that neither chain enforces, which is precisely why the two
- * derivations live in separate modules and meet only here.
+ * The two Solana-governed routes are bounded by a Solana PDA and reported
+ * by `GET /status` in MINT-atomic (6-decimal) units — and by name, which is
+ * why only those two can read it: `/status` publishes
+ * `glc_to_sol_rolling_volume_remaining` and `sol_to_glc_…` and nothing for
+ * any other route.
+ *
+ * The four Robinhood-legged routes are bounded by the custody contract's
+ * own two buckets, reported in ROBINHOOD's native 18 — the outbound one for
+ * a route paid out onto Robinhood (`GlcToRhn`, `SolToRhn`), the inbound one
+ * for a route deposited on Robinhood (`RhnToGlc`, `RhnToSol`). Routes on
+ * the same leg read the same figure because the contract holds one
+ * accumulator per leg and charges every route on it against that one.
+ *
+ * Crossing the two families would state a limit that neither chain
+ * enforces, which is precisely why the two derivations live in separate
+ * modules and meet only here.
  */
 const WINDOW: Record<SettlementRoute, (input: RouteStatusInput) => RouteFigure | null> = {
   GlcToSol: ({ status }) =>
@@ -287,7 +323,9 @@ const WINDOW: Record<SettlementRoute, (input: RouteStatusInput) => RouteFigure |
         }
       : null,
   GlcToRhn: ({ robinhood }) => robinhoodWindow("GlcToRhn", robinhood, "outbound_window"),
+  SolToRhn: ({ robinhood }) => robinhoodWindow("SolToRhn", robinhood, "outbound_window"),
   RhnToGlc: ({ robinhood }) => robinhoodWindow("RhnToGlc", robinhood, "inbound_window"),
+  RhnToSol: ({ robinhood }) => robinhoodWindow("RhnToSol", robinhood, "inbound_window"),
 };
 
 function robinhoodWindow(
@@ -306,18 +344,23 @@ function robinhoodWindow(
 }
 
 /**
- * The per-transfer bounds `GET /limits` publishes, per route.
+ * The per-transfer bounds for one route.
+ *
+ * # The MAXIMUM is the ceiling the SOURCE chain enforces
  *
  * `TransferLimits` carries the on-chain `BridgeConfig` values raw, and
- * those are the SOLANA program's — the on-chain checks compare them
- * against mint-atomic (6-decimal) amounts
- * (`limits.rs::enforce_transfer_amount`). They govern the two
- * Solana-governed routes and nothing else, which is the same rule the
- * bridge form already applies when it decides what MAX may be bounded by.
+ * those are the SOLANA program's — the on-chain checks compare them against
+ * mint-atomic (6-decimal) amounts (`limits.rs::enforce_transfer_amount`).
+ * The Robinhood routes take theirs from the contract that actually reverts
+ * above it, `GET /robinhood/limits`, and never from the Solana pair's
+ * numbers.
  *
- * So the Robinhood routes take their MAXIMUM from the contract that
- * actually enforces it, `GET /robinhood/limits`, and never from the
- * Solana pair's numbers.
+ * Which of the two applies to a given route is not decided here: it is
+ * `perTransferCeiling` in `./route-limits`, the same table the bridge form
+ * reads, so the ceiling this page PRINTS and the ceiling the form ENFORCES
+ * cannot disagree. For the two cross routes, where both chains publish a
+ * ceiling in different units, that table picks the source-side one and
+ * documents why no combined figure is shown.
  *
  * # The MINIMUM is not from either
  *
@@ -335,23 +378,49 @@ const LIMITS: Record<
     maximum: RouteFigure | null;
   }
 > = {
-  GlcToSol: (input) => ({
-    minimum: policyMinimum(input),
-    maximum: solanaMaximum(input.limits),
-  }),
-  SolToGlc: (input) => ({
-    minimum: policyMinimum(input),
-    maximum: solanaMaximum(input.limits),
-  }),
-  GlcToRhn: (input) => ({
-    minimum: policyMinimum(input),
-    maximum: robinhoodMaximum(input, "outbound_max_atomic"),
-  }),
-  RhnToGlc: (input) => ({
-    minimum: policyMinimum(input),
-    maximum: robinhoodMaximum(input, "inbound_max_atomic"),
-  }),
+  GlcToSol: (input) => bounds("GlcToSol", input),
+  SolToGlc: (input) => bounds("SolToGlc", input),
+  GlcToRhn: (input) => bounds("GlcToRhn", input),
+  RhnToGlc: (input) => bounds("RhnToGlc", input),
+  SolToRhn: (input) => bounds("SolToRhn", input),
+  RhnToSol: (input) => bounds("RhnToSol", input),
 };
+
+/**
+ * One route's floor and ceiling, each from the endpoint that owns it.
+ *
+ * The ceiling is looked up through the shared pair→ceiling table rather
+ * than restated per route, so the six entries above are six identical
+ * lookups by design: there is no route-specific arithmetic left to get
+ * wrong, and a seventh route is a compile error in that table instead of a
+ * silently missing bound here.
+ */
+function bounds(
+  route: SettlementRoute,
+  input: RouteStatusInput,
+): { minimum: RouteFigure | null; maximum: RouteFigure | null } {
+  const descriptor = directions[route];
+  const ceiling = perTransferCeiling(descriptor.from.chain.id, descriptor.to.chain.id);
+  return {
+    minimum: policyMinimum(input),
+    maximum:
+      ceiling === "solana-program"
+        ? solanaMaximum(input.limits)
+        : ceiling === "robinhood-contract"
+          ? robinhoodMaximum(
+              input,
+              // The contract bounds LEGS: a route deposited on Robinhood is
+              // capped by `inboundMax`, one paid out onto it by
+              // `outboundMax`. Read off the same leg derivation the form
+              // uses, never from the route name.
+              robinhoodContractLeg(descriptor.from.chain.id, descriptor.to.chain.id) ===
+                "deposit"
+                ? "inbound_max_atomic"
+                : "outbound_max_atomic",
+            )
+          : null,
+  };
+}
 
 /**
  * The source-side floor every route publishes, in canonical 8dp.
@@ -406,17 +475,17 @@ function robinhoodMaximum(
  * The fee that applies to ONE route, from the only field that states it
  * per route.
  *
- * # Why `/limits`' `bridge_fee_bps` is not consulted for three of the four
+ * # Why `/limits`' `bridge_fee_bps` is not consulted for five of the six
  *
  * `GET /limits` passes the SOLANA program's `BridgeConfig` through raw,
  * and the backend documents the fee beside those limits as `GlcToSol`'s
  * own: "it is not the rate any Robinhood route charges and must never be
  * displayed as one" (`TransferLimits::bridge_fee_bps`). `GET /stats`'
  * `bridge_fee_bps` carries the identical caveat and survives only for wire
- * compatibility. Four routes are priced independently, so a single field
- * cannot answer for all of them, and showing `GlcToRhn` the Solana rate is
- * the display half of a bug the backend already closed in its pricing
- * path.
+ * compatibility. Every route is priced independently — the two cross
+ * routes at their own rate again — so a single field cannot answer for all
+ * of them, and showing `SolToRhn` the Solana rate is the display half of a
+ * bug the backend already closed in its pricing path.
  *
  * `route_fees` is the table that does answer per route. When it is absent
  * — a deployment predating it — every route reports no published fee,
@@ -429,6 +498,8 @@ const FEE: Record<SettlementRoute, (input: RouteStatusInput) => RouteFee | null>
   SolToGlc: (input) => publishedFee(input, "SolToGlc"),
   GlcToRhn: (input) => publishedFee(input, "GlcToRhn"),
   RhnToGlc: (input) => publishedFee(input, "RhnToGlc"),
+  SolToRhn: (input) => publishedFee(input, "SolToRhn"),
+  RhnToSol: (input) => publishedFee(input, "RhnToSol"),
 };
 
 function publishedFee(input: RouteStatusInput, route: SettlementRoute): RouteFee | null {
@@ -559,6 +630,34 @@ function routeGateFor(
 }
 
 /**
+ * The operator pause on the reserve that pays a Robinhood-legged route,
+ * when that reserve is not the Robinhood one.
+ *
+ * Read off `directions[route].destinationReserve` rather than from a second
+ * list of which route settles where — the descriptor already states it, and
+ * `CAPACITY` above reads the same field's worth of truth for the figure
+ * beside the badge.
+ *
+ * `null` for a route settling onto the Robinhood reserve (whose pause
+ * `robinhoodRouteGateState` reads directly), and `null` when `/status` has
+ * not answered — "not read" is not "not paused".
+ */
+function destinationReservePause(
+  route: RobinhoodRoute,
+  status: BridgeStatusDto | undefined,
+): boolean | null {
+  if (!status) return null;
+  switch (directions[route].destinationReserve) {
+    case "goldcoin":
+      return status.goldcoin_paused;
+    case "solana":
+      return status.solana_paused;
+    case "robinhood":
+      return null;
+  }
+}
+
+/**
  * One route's complete status row.
  *
  * The order of the two decisions matters and is deliberate. `/chains`
@@ -582,8 +681,8 @@ export function executableRouteStatus(
 
   if (kind === "available") {
     // A more specific, currently-known cause may still close this route.
-    // It may never open one: `refine` returns `available` only when it has
-    // nothing to add.
+    // It may never open one: each branch returns `available` only when it
+    // has nothing to add.
     if (isSolanaGoverned(route) && input.status) {
       kind = SOLANA_GATE_TO_KIND[directionGateState(input.status, route)];
     } else if (isRobinhoodRoute(route)) {
@@ -591,6 +690,15 @@ export function executableRouteStatus(
         route,
         input.robinhood,
         capacity?.atomic ?? null,
+        // The DESTINATION reserve's operator pause, for the two legs that
+        // settle off Robinhood. `reserve.paused` inside that function is
+        // the Robinhood reserve's own pause and is the right answer for
+        // the two payout legs; for `RhnToGlc` and `RhnToSol` the pool that
+        // pays them is somebody else's, and a pause on it closes the route
+        // just as hard. `null` for the payout legs rather than `false`:
+        // there is no second reserve to report on, not a second reserve
+        // reported as running.
+        destinationReservePause(route, input.status),
       );
       kind = ROBINHOOD_GATE_TO_KIND[state];
       note = ROBINHOOD_NOTE[state];
@@ -626,9 +734,10 @@ export function executableRouteStatus(
  * Every executable route this deployment has, each with its own figures.
  *
  * The list comes from `GET /chains`' `implemented` flag, so a route the
- * backend adds later appears with no frontend deploy. When `/chains` has
- * not answered there is no registry to read, and rather than showing
- * nothing at all this falls back to the routes this build has settlement
+ * backend adds later appears with no frontend deploy — and every route the
+ * backend ships today is implemented, so the page carries all six. When
+ * `/chains` has not answered there is no registry to read, and rather than
+ * showing nothing at all this falls back to the routes this build has
  * descriptors for — every one of which then reports `unknown`, because
  * `routeAvailability` has nothing to say about them. That is a statement
  * about the ROUTES THIS BUILD CAN DESCRIBE, never a claim that any of them

@@ -9,12 +9,14 @@ import * as fixtures from "@/lib/api/mock/fixtures";
  *
  * Its whole job is to say which of the backend's routes can be used, and
  * the failure mode this file guards is a specific one: every non-open
- * route used to render the same "Paused" badge. That claimed an operator
- * action for `SolToRhn`/`RhnToSol`, which have no settlement machinery on
- * either side — no operator can unpause something that was never built —
- * and it also asserted a CAUSE that `GET /chains` deliberately never
- * publishes, since `enabled` is the AND of three independent gates and the
- * response names none of them.
+ * route used to render the same "Paused" badge. That asserted a CAUSE that
+ * `GET /chains` deliberately never publishes — `enabled` is the AND of
+ * three independent gates and the response names none of them — and it
+ * would say the same thing about a route reporting `implemented: false`,
+ * which no operator can unpause because it was never built.
+ *
+ * It also guards the copy: with all six routes implemented, nothing on this
+ * card may describe one as unbuilt, in development, or coming soon.
  */
 
 const getStatus = vi.fn();
@@ -84,25 +86,59 @@ describe("StatusView route availability", () => {
     // normalises whitespace — the point is that this copy is the backend's,
     // not that it survives a byte-for-byte comparison.
     expect(fixtures.ROUTE_UNAVAILABLE_MESSAGE).toContain(
-      "Robinhood Network support is in development",
+      "switched off on this deployment",
     );
-    expect(
-      card.getAllByText(/Robinhood Network support is in development/).length,
-    ).toBeGreaterThan(0);
+    expect(card.getAllByText(/switched off on this deployment/).length).toBeGreaterThan(
+      0,
+    );
   });
 
-  it("follows the backend when a route opens", async () => {
+  it("never describes a closed route as unbuilt or coming soon", async () => {
+    // The closed-route copy used to say Robinhood support was "in
+    // development". Every route the backend names is now built and
+    // settling, so that sentence described shipped machinery as unfinished
+    // and told a reader to wait for something that had already landed.
+    renderWithQueryClient(<StatusView />);
+    await routesCard();
+    expect(screen.queryByText(/in development/i)).toBeNull();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    expect(screen.queryByText(/launches/i)).toBeNull();
+  });
+
+  it("follows the backend when the routes open", async () => {
     getChains.mockResolvedValue(
       fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true }),
     );
     renderWithQueryClient(<StatusView />);
     const card = await routesCard();
 
-    expect(card.getAllByText("Available")).toHaveLength(4);
-    // Opening the two Goldcoin<->Robinhood routes says nothing about the
-    // cross pair: they are built, and they stay shut until their own
-    // gates open.
-    expect(card.getAllByText("Unavailable")).toHaveLength(2);
+    // All six, because opening Robinhood is a deployment decision: the four
+    // routes touching it share a custody contract, a reserve ledger and an
+    // indexer, and the gate a closed one waits on is the same gate.
+    expect(card.getAllByText("Available")).toHaveLength(6);
+    expect(card.queryByText("Unavailable")).toBeNull();
     expect(card.queryByText("Not implemented")).toBeNull();
+  });
+
+  it("reports a maintenance pause as temporary on every affected route", async () => {
+    // Switched ON and refused by a runtime gate: `available: false` with
+    // `enabled: true`. A distinct badge from a closed route, because nobody
+    // flipped a switch and nobody has to flip one back.
+    getChains.mockResolvedValue(
+      fixtures.chainsFixture(() => new Date(), {
+        robinhoodOpen: true,
+        robinhoodAvailable: false,
+      }),
+    );
+    renderWithQueryClient(<StatusView />);
+    const card = await routesCard();
+
+    expect(card.getAllByText("Temporarily unavailable")).toHaveLength(4);
+    // And NOT the red "Unavailable" a switched-off route carries, which
+    // would send an operator looking for a setting that is already correct.
+    expect(card.queryByText("Unavailable")).toBeNull();
+    expect(
+      card.getAllByText(fixtures.DIRECTION_UNAVAILABLE_MESSAGE).length,
+    ).toBeGreaterThan(0);
   });
 });

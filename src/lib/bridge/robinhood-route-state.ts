@@ -8,8 +8,8 @@ import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { ROBINHOOD_DECIMALS } from "./robinhood-amount";
 
 /**
- * Per-route operational state for the two Robinhood routes, derived from
- * `GET /robinhood/reserve`.
+ * Per-route operational state for the four Robinhood-legged routes, derived
+ * from `GET /robinhood/reserve`.
  *
  * # Why this is a separate module from `./direction-state`
  *
@@ -35,8 +35,20 @@ import { ROBINHOOD_DECIMALS } from "./robinhood-amount";
  * claiming either would be a guess about money.
  */
 
-/** The two routes that touch the Robinhood custody contract. */
-export type RobinhoodRoute = "GlcToRhn" | "RhnToGlc";
+/**
+ * The routes that touch the Robinhood custody contract — all four of them.
+ *
+ * Two of these settle ONTO Robinhood (`GlcToRhn`, `SolToRhn`, the payout
+ * leg) and two source FROM it (`RhnToGlc`, `RhnToSol`, the deposit leg).
+ * Which leg a route uses is the only thing the contract cares about, so
+ * every derivation below keys on that rather than on the route name.
+ */
+export type RobinhoodRoute = "GlcToRhn" | "RhnToGlc" | "SolToRhn" | "RhnToSol";
+
+/** Whether this route is PAID OUT of the contract, rather than deposited into it. */
+function isPayoutLeg(route: RobinhoodRoute): boolean {
+  return route === "GlcToRhn" || route === "SolToRhn";
+}
 
 export type RobinhoodRouteGateState =
   /** Open, funded, within its window, and reporting live figures. */
@@ -57,17 +69,21 @@ export type RobinhoodRouteGateState =
 /**
  * The contract window that bounds this route's Robinhood-side leg.
  *
- * `GlcToRhn` PAYS OUT onto Robinhood, so it is charged against the
- * outbound window; `RhnToGlc` takes a DEPOSIT on Robinhood and is charged
- * against the inbound one. Crossing them would report a limit the contract
- * does not apply to this route.
+ * A route that PAYS OUT onto Robinhood (`GlcToRhn`, `SolToRhn`) is charged
+ * against the outbound window; one that takes a DEPOSIT on Robinhood
+ * (`RhnToGlc`, `RhnToSol`) is charged against the inbound one. Crossing
+ * them would report a limit the contract does not apply to this route.
+ *
+ * Both routes on a leg read the SAME figure, and that is not an
+ * approximation: the contract holds one inbound accumulator and one
+ * outbound accumulator, shared by every route on that side.
  */
 export function robinhoodWindowFor(
   route: RobinhoodRoute,
   reserve: RobinhoodReserveDto | undefined,
 ): RobinhoodWindowDto | null {
   if (!reserve || !isRobinhoodAvailable(reserve.onchain.availability)) return null;
-  return route === "GlcToRhn"
+  return isPayoutLeg(route)
     ? reserve.onchain.outbound_window
     : reserve.onchain.inbound_window;
 }
@@ -95,26 +111,32 @@ export function robinhoodWindowRemaining(
 }
 
 /**
- * The available capacity of the reserve this route PAYS OUT OF.
+ * The Robinhood reserve's available capacity, in CANONICAL 8-decimal units.
  *
- * `GlcToRhn` settles onto the Robinhood reserve, whose ledger the backend
- * keeps in CANONICAL 8-decimal units — deliberately not Robinhood's 18,
- * because the ledger column is an `INTEGER` and cannot hold the latter.
- * `RhnToGlc` settles onto the Goldcoin reserve, which is published by
- * `GET /reserve` and passed in here: this module never substitutes one
- * reserve's figure for another's, matching a backend that keeps the three
- * pools strictly separate because one cannot cover another.
+ * Deliberately not Robinhood's native 18: the backend's ledger column is an
+ * `INTEGER` and cannot hold that precision, so canonical is what the
+ * endpoint actually publishes.
+ *
+ * # Why this takes no route
+ *
+ * It used to, dispatching on whether the route settled onto this reserve or
+ * onto some other one, and passing the other one's figure through. That put
+ * "which reserve pays which route" in two places — here and in the total
+ * per-route table on the status page that exists precisely to state it
+ * once. With four Robinhood-legged routes settling onto three different
+ * pools, the second statement was the one going stale.
+ *
+ * So this reads ONE reserve and nothing else. The caller decides whether
+ * this reserve is the one that pays the route it is asking about; see
+ * `CAPACITY` in `./route-status`, which names a reserve per route with no
+ * default branch.
+ *
+ * `null` means not published — no `reserve_ledger` row, or a ledger that
+ * reports no capacity. Never zero, which would claim an empty pool.
  */
-export function robinhoodDestinationCapacity(
-  route: RobinhoodRoute,
+export function robinhoodReserveCapacity(
   reserve: RobinhoodReserveDto | undefined,
-  goldcoinCapacityAtomic: string | null,
 ): RobinhoodFigure | null {
-  if (route === "RhnToGlc") {
-    return goldcoinCapacityAtomic === null
-      ? null
-      : { atomic: goldcoinCapacityAtomic, decimals: GOLDCOIN_DECIMALS };
-  }
   if (!reserve || !isRobinhoodAvailable(reserve.ledger_availability)) return null;
   const capacity = reserve.available_capacity_atomic;
   return capacity === null ? null : { atomic: capacity, decimals: GOLDCOIN_DECIMALS };
@@ -122,7 +144,7 @@ export function robinhoodDestinationCapacity(
 
 /** The contract kill switch that applies to this route's Robinhood leg. */
 function legPaused(route: RobinhoodRoute, reserve: RobinhoodReserveDto): boolean | null {
-  return route === "GlcToRhn"
+  return isPayoutLeg(route)
     ? reserve.onchain.payouts_paused
     : reserve.onchain.deposits_paused;
 }
@@ -145,6 +167,18 @@ export function robinhoodRouteGateState(
   route: RobinhoodRoute,
   reserve: RobinhoodReserveDto | undefined,
   destinationCapacityAtomic: string | null,
+  /**
+   * The DESTINATION reserve's own operator pause, for a route that does
+   * NOT settle onto the Robinhood reserve — `goldcoin_paused` for
+   * `RhnToGlc`, `solana_paused` for `RhnToSol`, both off `GET /status`.
+   *
+   * `null` means "not read", not "not paused": a pause is a fact the
+   * backend states outright, and a route whose destination reserve has not
+   * been read is left to the checks below rather than declared open on a
+   * missing value. Omitted for a payout leg, where `reserve.paused` below
+   * already IS the destination reserve's pause.
+   */
+  destinationReservePaused: boolean | null = null,
 ): RobinhoodRouteGateState {
   if (!reserve) return "unknown";
   // No `reserve_ledger` row: this deployment has no Robinhood reserve at
@@ -153,6 +187,10 @@ export function robinhoodRouteGateState(
   if (!isRobinhoodAvailable(reserve.ledger_availability)) return "unknown";
 
   if (reserve.paused === true) return "operator-paused";
+  // The destination reserve's pause, for the legs that settle off
+  // Robinhood. Same severity as the line above and checked beside it:
+  // which pool is paused changes nothing about whether the route can run.
+  if (destinationReservePaused === true) return "operator-paused";
   if (legPaused(route, reserve) === true) return "contract-paused";
 
   if (destinationCapacityAtomic !== null && toBigInt(destinationCapacityAtomic) <= 0n) {

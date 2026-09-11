@@ -16,9 +16,10 @@ import { getDepositCapability, type DepositCapability } from "./deposit";
 
 /**
  * The one function outside `getDepositCapability` that crosses the
- * wallet-adapter/web3.js boundary for the Solana -> Goldcoin direction. It
- * takes and returns only plain strings/numbers — the caller in
- * `src/features/bridge` never sees a `PublicKey` or `Transaction`.
+ * wallet-adapter/web3.js boundary for a Solana-SOURCED deposit — the source
+ * leg of both `SolToGlc` and `SolToRhn`. It takes and returns only plain
+ * strings/numbers — the caller in `src/features/bridge` never sees a
+ * `PublicKey` or `Transaction`.
  *
  * `useWallet()`'s default (no-`WalletProvider`-mounted) context throws the
  * moment `publicKey`/`wallet`/`wallets` is read — the same reason
@@ -35,12 +36,20 @@ export interface DepositResult {
 
 export interface DepositParams {
   readonly amountAtomic: bigint;
-  readonly goldcoinAddress: string;
+  /**
+   * The opaque destination payload, as text: a Goldcoin address for
+   * `SolToGlc`, a checksummed `0x…` EVM address for `SolToRhn`. The program
+   * has no route field, so THESE BYTES are what select the route — the
+   * backend classifies on the `0x` prefix — which is why the caller must
+   * have encoded them for the route it intends
+   * (`@/lib/bridge/solana-destination`).
+   */
+  readonly destination: string;
   readonly obligationIndex: number;
 }
 
 export function useDepositToReserve(): {
-  readonly capability: (goldcoinAddressLength: number) => DepositCapability;
+  readonly capability: (destinationByteLength: number) => DepositCapability;
   readonly deposit: (params: DepositParams) => Promise<DepositResult>;
 } {
   const { connection } = useConnection();
@@ -53,13 +62,13 @@ export function useDepositToReserve(): {
   const canSign = ready && adapter.connected && Boolean(adapter.signTransaction);
 
   const capability = useCallback(
-    (goldcoinAddressLength: number): DepositCapability =>
+    (destinationByteLength: number): DepositCapability =>
       getDepositCapability({
         walletConfigured: Boolean(env.solanaRpcUrl),
         programConfigured: isDepositProgramConfigured(),
         walletConnected: connected,
         canSign,
-        glcAddressBytesLength: goldcoinAddressLength,
+        glcAddressBytesLength: destinationByteLength,
       }),
     [connected, canSign],
   );
@@ -79,7 +88,7 @@ export function useDepositToReserve(): {
         reserveMint,
         obligationIndex: params.obligationIndex,
         amountAtomic: params.amountAtomic,
-        goldcoinAddress: params.goldcoinAddress,
+        destination: params.destination,
       });
 
       const transaction = new Transaction().add(instruction);

@@ -143,26 +143,33 @@ function Row({
 /**
  * The one-word state of the selected pair.
  *
- * `closed` reads as "Coming soon" because that is what the backend's own
- * copy for these routes says — support is in development — rather than a
- * promise this UI invented. `unimplemented` is a stronger statement: no
- * settlement machinery exists on either side, so no operator action opens
- * it. `unavailable` is the weakest of the three: the route is switched on
- * and a runtime gate on its destination reserve is holding it shut, so it
- * reopens on its own. The backend's full sentence renders underneath in
- * every case.
+ * `closed` used to read "Coming soon", because the backend's own copy for
+ * the routes that were closed at the time said support was in development.
+ * It is not a promise this UI may make any more: every route the backend
+ * names is built and settling, so a closed one is switched off, not unbuilt,
+ * and "Coming soon" told a user to wait for a launch that already happened.
+ * "Currently unavailable" is what `closed` actually means, and it matches
+ * the Routes list's badge for the same verdict.
+ *
+ * `unavailable` is the weaker statement: the route is switched on and a
+ * runtime gate on its destination reserve is holding it shut, so it reopens
+ * on its own without an operator. `unimplemented` is the stronger one: no
+ * settlement machinery at all, which no operator action opens. The
+ * backend's full sentence renders underneath in every case.
  */
 function statusLabel(availability: RouteAvailability): string {
   switch (availability.kind) {
     case "open":
       return "Available";
     case "closed":
-      return "Coming soon";
+      // Switched off on this deployment. Distinct from `unavailable` only
+      // in who reopens it, which the sentence below says and this label
+      // does not try to.
+      return "Currently unavailable";
     case "unavailable":
-      // Switched on and currently refused. NOT "Coming soon", which
-      // promises a future release, and not "Not available", which reads
-      // as permanent: this route works and its destination reserve is
-      // simply not admitting right now.
+      // Switched on and currently refused. Worded as temporary because it
+      // is: this route works and its destination reserve is simply not
+      // admitting right now.
       return "Temporarily unavailable";
     case "unimplemented":
       return "Not available";

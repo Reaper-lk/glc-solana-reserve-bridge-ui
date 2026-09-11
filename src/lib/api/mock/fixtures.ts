@@ -8,6 +8,7 @@ import type { BridgeStatsDto } from "../schemas/stats";
 import type { RobinhoodLimitsDto, RobinhoodReserveDto } from "../schemas/robinhood";
 import { ROBINHOOD_AVAILABLE, ROBINHOOD_NOT_CONFIGURED } from "../schemas/robinhood";
 import type { ChainsViewDto } from "../schemas/chains";
+import type { Route } from "../schemas/common";
 import type { ExplorerEventDto } from "../schemas/explorer";
 import type { ReserveHistoryEntryDto } from "../schemas/reserves";
 import type { TransferViewDto, RefundViewDto, RequestState } from "../schemas/transfer";
@@ -43,6 +44,51 @@ export const BRIDGE_FEE_BPS = 300;
  * what makes that substitution visible.
  */
 export const ROBINHOOD_FEE_BPS = 250;
+
+/**
+ * The two cross routes' rate: 300 bps (3%).
+ *
+ * Robinhood<->Solana is priced independently of the Goldcoin<->Robinhood
+ * pair, and happens to match {@link BRIDGE_FEE_BPS} rather than
+ * {@link ROBINHOOD_FEE_BPS} — which is exactly why it is spelled out here
+ * instead of being borrowed from either. Two routes sharing a rate today is
+ * a fact about this deployment's pricing, not a rule, and a fixture that
+ * expressed it as `BRIDGE_FEE_BPS` would quietly move the cross routes the
+ * next time the Solana rate changed.
+ */
+export const CROSS_ROUTE_FEE_BPS = 300;
+
+/**
+ * The per-route price table, as `GET /stats` publishes it.
+ *
+ * The single place mock mode states a rate per route, read by both
+ * `statsFixture` and the mock quote endpoint so a quote and the status
+ * card for the same route can never disagree.
+ */
+export const ROUTE_FEE_BPS: Readonly<Record<Route, number>> = {
+  GlcToSol: BRIDGE_FEE_BPS,
+  SolToGlc: BRIDGE_FEE_BPS,
+  GlcToRhn: ROBINHOOD_FEE_BPS,
+  RhnToGlc: ROBINHOOD_FEE_BPS,
+  SolToRhn: CROSS_ROUTE_FEE_BPS,
+  RhnToSol: CROSS_ROUTE_FEE_BPS,
+};
+
+/** One route's rate. Total over `Route`, so there is no default to fall into. */
+export function routeFeeBps(route: Route): number {
+  return ROUTE_FEE_BPS[route];
+}
+
+/**
+ * `fee_percent_display`, formatted the way the backend's own helper does —
+ * a whole percentage has no decimal part, anything else gets two places.
+ * Composed here rather than hardcoded per row so a rate and its rendering
+ * cannot drift.
+ */
+function feePercentDisplay(bps: number): string {
+  const fraction = bps % 100;
+  return fraction === 0 ? `${Math.trunc(bps / 100)}%` : `${(bps / 100).toFixed(2)}%`;
+}
 
 /**
  * The authoritative source-side minimum every route publishes: 100 GLC in
@@ -144,19 +190,41 @@ export function quotaPausedStatusFixture(): BridgeStatusDto {
  * - `GlcToSol`/`SolToGlc` — enabled. They predate the route registry and
  *   resolve to enabled against an unmodified config and an unmigrated
  *   ledger, which is why existing behaviour is unchanged.
- * - `GlcToRhn`/`RhnToGlc` — implemented, DISABLED. The settlement
- *   machinery exists (Phase F); the routes ship closed and opening one
- *   needs every gate, this service's and the contract's.
- * - `SolToRhn`/`RhnToSol` — `implemented: false`. Structurally
- *   non-executable: no `Direction` value exists for either, so no
- *   settlement function can be called with them at all.
+ * - the four ROBINHOOD-LEGGED routes — `GlcToRhn`, `RhnToGlc`, `SolToRhn`,
+ *   `RhnToSol` — implemented, and shipped DISABLED. The settlement
+ *   machinery exists for all four; opening any of them needs every gate,
+ *   this service's and the custody contract's.
  *
- * The disabled copy is the backend's `RouteGateError::UNAVAILABLE_MESSAGE`
+ * # Why all four share one switch
+ *
+ * `default_enabled` is `false` for every route that postdates the registry,
+ * and in practice an operator opens Robinhood as a deployment decision
+ * rather than a route-by-route one: the four routes share a custody
+ * contract, a reserve ledger and an indexer, and the gate a closed one is
+ * waiting on is the same gate. A fixture with the pair open and the cross
+ * routes shut would describe a state no real deployment is in, and would
+ * leave the cross routes untested in every `robinhood-open` scenario.
+ *
+ * `implemented` is reported separately from `enabled` throughout, and the
+ * distinction is load-bearing: it is what separates "this build has no
+ * machinery for that" from "an operator has it switched off", and the
+ * second is the one the copy below describes.
+ */
+
+/**
+ * The closed-route copy, the backend's `RouteGateError::UNAVAILABLE_MESSAGE`
  * verbatim, so what mock mode renders is what production renders.
+ *
+ * It deliberately no longer says Robinhood support is "in development".
+ * That sentence was accurate while the routes were unbuilt; with all six
+ * implemented and settling, it described shipped machinery as unfinished
+ * and invited the UI to render a live route as "coming soon". A closed
+ * route is a switched-off route, and the copy says that and nothing more —
+ * it still names no gate, because the backend deliberately does not.
  */
 export const ROUTE_UNAVAILABLE_MESSAGE =
-  "This route is not available yet.\nRobinhood Network support is in development and " +
-  "cannot be used for transfers.";
+  "This route is not available right now.\nIt is switched off on this deployment and " +
+  "cannot be used for transfers until an operator reopens it.";
 
 /**
  * The backend's own cause-agnostic copy for a route that is switched on
@@ -168,6 +236,18 @@ export const ROUTE_UNAVAILABLE_MESSAGE =
 export const DIRECTION_UNAVAILABLE_MESSAGE =
   "Bridge capacity reached for this direction.";
 
+/** The four routes with the Robinhood custody contract on one side. */
+const ROBINHOOD_LEGGED: readonly {
+  readonly id: Route;
+  readonly source: string;
+  readonly destination: string;
+}[] = [
+  { id: "GlcToRhn", source: "goldcoin", destination: "robinhood" },
+  { id: "RhnToGlc", source: "robinhood", destination: "goldcoin" },
+  { id: "SolToRhn", source: "solana", destination: "robinhood" },
+  { id: "RhnToSol", source: "robinhood", destination: "solana" },
+];
+
 export function chainsFixture(
   now: () => Date,
   options: {
@@ -177,22 +257,43 @@ export function chainsFixture(
      * Defaults to `robinhoodOpen`, so the ordinary fixtures describe a
      * coherent backend; setting it `false` while `robinhoodOpen` is
      * `true` reproduces the exact production state that made the two
-     * fields necessary — the route gate open, the Goldcoin reserve's
-     * admission closed.
+     * fields necessary — the route gate open, the destination reserve's
+     * admission closed. That is also the shape of a maintenance pause: a
+     * deployment whose routes are all built and switched on can still
+     * report `available: false` on every one of them.
      */
     readonly robinhoodAvailable?: boolean;
   } = {},
 ): ChainsViewDto {
   // Mock-only. Never a claim that these routes are open in production —
   // it exists so the Robinhood flows can be exercised end to end against
-  // a route the real backend keeps closed.
+  // routes the real backend keeps closed.
   const robinhoodOpen = options.robinhoodOpen ?? false;
   const robinhoodAvailable =
     (options.robinhoodAvailable ?? robinhoodOpen) && robinhoodOpen;
-  const robinhood = (id: "GlcToRhn" | "RhnToGlc"): ChainsViewDto["routes"][number] => ({
+
+  const solanaPair = (
+    id: "GlcToSol" | "SolToGlc",
+    source: string,
+    destination: string,
+  ): ChainsViewDto["routes"][number] => ({
     id,
-    source_chain: id === "GlcToRhn" ? "goldcoin" : "robinhood",
-    destination_chain: id === "GlcToRhn" ? "robinhood" : "goldcoin",
+    source_chain: source,
+    destination_chain: destination,
+    enabled: true,
+    disabled_reason: null,
+    implemented: true,
+    min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
+    available: true,
+    unavailable_reason: null,
+  });
+
+  const robinhood = (
+    entry: (typeof ROBINHOOD_LEGGED)[number],
+  ): ChainsViewDto["routes"][number] => ({
+    id: entry.id,
+    source_chain: entry.source,
+    destination_chain: entry.destination,
     enabled: robinhoodOpen,
     disabled_reason: robinhoodOpen ? null : ROUTE_UNAVAILABLE_MESSAGE,
     implemented: true,
@@ -212,67 +313,9 @@ export function chainsFixture(
       { id: "robinhood", display_name: "Robinhood Network" },
     ],
     routes: [
-      {
-        id: "GlcToSol",
-        source_chain: "goldcoin",
-        destination_chain: "solana",
-        enabled: true,
-        disabled_reason: null,
-        implemented: true,
-        min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
-        available: true,
-        unavailable_reason: null,
-      },
-      {
-        id: "SolToGlc",
-        source_chain: "solana",
-        destination_chain: "goldcoin",
-        enabled: true,
-        disabled_reason: null,
-        implemented: true,
-        min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
-        available: true,
-        unavailable_reason: null,
-      },
-      robinhood("GlcToRhn"),
-      robinhood("RhnToGlc"),
-      // The two Solana<->Robinhood routes: IMPLEMENTED since Phase H, and
-      // shipped shut.
-      //
-      // `implemented: true` says the settlement machinery exists
-      // (`Route::as_direction()` answers `Some`), and nothing more. It is
-      // not permission to move value and it does not imply either gate:
-      // both routes stay `enabled: false` and `available: false` here,
-      // which is what the real backend reports for them — `default_enabled`
-      // is `false` for every route that postdates the registry, so an
-      // unmodified deployment ships them closed.
-      //
-      // The distinction is load-bearing for the UI: `implemented` is what
-      // separates "coming soon" from "temporarily unavailable", and a
-      // fixture claiming these routes do not exist made the app describe a
-      // shipped route as an absent one.
-      {
-        id: "SolToRhn",
-        source_chain: "solana",
-        destination_chain: "robinhood",
-        enabled: false,
-        disabled_reason: ROUTE_UNAVAILABLE_MESSAGE,
-        implemented: true,
-        min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
-        available: false,
-        unavailable_reason: ROUTE_UNAVAILABLE_MESSAGE,
-      },
-      {
-        id: "RhnToSol",
-        source_chain: "robinhood",
-        destination_chain: "solana",
-        enabled: false,
-        disabled_reason: ROUTE_UNAVAILABLE_MESSAGE,
-        implemented: true,
-        min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
-        available: false,
-        unavailable_reason: ROUTE_UNAVAILABLE_MESSAGE,
-      },
+      solanaPair("GlcToSol", "goldcoin", "solana"),
+      solanaPair("SolToGlc", "solana", "goldcoin"),
+      ...ROBINHOOD_LEGGED.map(robinhood),
     ],
     as_of: Math.floor(now().getTime() / 1000),
   };
@@ -562,14 +605,15 @@ export function statsFixture(options: StatsFixtureOptions = {}): BridgeStatsDto 
     sol_to_glc_rolling_volume_remaining: "100000000000",
     bridge_fee_bps: BRIDGE_FEE_BPS,
     // `GlcToSol`'s rate under its historical name above; the per-route
-    // table is the authoritative one. `SolToRhn`/`RhnToSol` are absent
-    // because the backend builds this from the EXECUTABLE routes only.
-    route_fees: [
-      { route: "GlcToSol", fee_bps: BRIDGE_FEE_BPS, fee_percent_display: "3%" },
-      { route: "SolToGlc", fee_bps: BRIDGE_FEE_BPS, fee_percent_display: "3%" },
-      { route: "GlcToRhn", fee_bps: ROBINHOOD_FEE_BPS, fee_percent_display: "2.50%" },
-      { route: "RhnToGlc", fee_bps: ROBINHOOD_FEE_BPS, fee_percent_display: "2.50%" },
-    ],
+    // table is the authoritative one. All six routes appear, because the
+    // backend builds this from the EXECUTABLE routes and every route it
+    // ships is executable — the two cross routes used to be absent here
+    // for the one reason that no longer holds.
+    route_fees: Object.entries(ROUTE_FEE_BPS).map(([route, fee_bps]) => ({
+      route,
+      fee_bps,
+      fee_percent_display: feePercentDisplay(fee_bps),
+    })),
     glc_to_sol: {
       total_requests: 1284,
       in_progress_requests: 6,

@@ -8,11 +8,11 @@ import type { ChainsViewDto, RouteViewDto } from "@/lib/api/schemas/chains";
 import type { RobinhoodReserveDto } from "@/lib/api/schemas/robinhood";
 
 /**
- * /status, rendered for all four executable routes at once.
+ * /status, rendered for all six executable routes at once.
  *
  * `route-status.test.ts` pins each figure to the API field it came from.
- * This file is the other half: that the page actually SHOWS four routes,
- * that the four numbers on screen are four different numbers, and that the
+ * This file is the other half: that the page actually SHOWS six routes,
+ * that the numbers on screen are the right ones per card, and that the
  * badge on each card tracks `available` rather than `enabled`.
  *
  * The fixture below gives every slot a distinct value on purpose. A figure
@@ -59,6 +59,8 @@ const CARDS = {
   SolToGlc: "GLC on Solana → GLC L1",
   GlcToRhn: "GLC L1 → GLC on Robinhood",
   RhnToGlc: "GLC on Robinhood → GLC L1",
+  SolToRhn: "GLC on Solana → GLC on Robinhood",
+  RhnToSol: "GLC on Robinhood → GLC on Solana",
 } as const;
 
 function robinhoodReserve(): RobinhoodReserveDto {
@@ -99,7 +101,14 @@ function chainsWith(available: Record<string, boolean>): ChainsViewDto {
   };
 }
 
-const ALL = { GlcToSol: true, SolToGlc: true, GlcToRhn: true, RhnToGlc: true };
+const ALL = {
+  GlcToSol: true,
+  SolToGlc: true,
+  GlcToRhn: true,
+  RhnToGlc: true,
+  SolToRhn: true,
+  RhnToSol: true,
+};
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -128,54 +137,72 @@ async function card(route: keyof typeof CARDS) {
   return within(await screen.findByRole("group", { name: CARDS[route] }));
 }
 
-describe("all four executable routes get a card", () => {
+describe("all six executable routes get a card", () => {
   it("renders one card per executable route", async () => {
     renderWithQueryClient(<StatusView />);
     for (const title of Object.values(CARDS)) {
       expect(await screen.findByRole("group", { name: title })).toBeInTheDocument();
     }
-    expect(screen.getAllByText("Destination reserve capacity")).toHaveLength(4);
+    expect(screen.getAllByText("Destination reserve capacity")).toHaveLength(6);
   });
 
-  it("gives no card to a route with no settlement machinery", async () => {
+  it("gives the two cross routes full cards, not list rows", async () => {
+    // They used to get no card at all, correctly: `implemented: false` meant
+    // no reserve paid them and no window bounded them, so the Routes list —
+    // which states availability and stops — was the only honest place for
+    // them. Both settle now, so both are first-class cards with their own
+    // figures, and anything less would describe a live route as an absent
+    // one.
     renderWithQueryClient(<StatusView />);
-    await screen.findByRole("group", { name: CARDS.GlcToSol });
-
-    // `SolToRhn`/`RhnToSol` are `implemented: false`: no reserve pays them
-    // and no window bounds them, so there is no figure to put on a card.
-    expect(
-      screen.queryByRole("group", { name: "GLC on Solana → GLC on Robinhood" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("group", { name: "GLC on Robinhood → GLC on Solana" }),
-    ).toBeNull();
+    for (const route of ["SolToRhn", "RhnToSol"] as const) {
+      const scope = await card(route);
+      // `findBy`, not `getBy`: the capacity and window figures arrive with
+      // `GET /robinhood/reserve`, which lands after the card itself.
+      expect(await scope.findByText("Destination reserve capacity")).toBeInTheDocument();
+      expect(
+        scope.getByText("Remaining 24-hour capacity for this direction"),
+      ).toBeInTheDocument();
+      expect(scope.getByText("Route fee")).toBeInTheDocument();
+      expect(scope.getByText("Source minimum")).toBeInTheDocument();
+      expect(scope.getByText("Max per transfer")).toBeInTheDocument();
+    }
   });
 
-  it("still lists the two cross routes, now as built-but-closed", async () => {
-    // They used to report "Not implemented". Phase H built them, so the
-    // Routes card lists them as unavailable — still closed, and still
-    // listed, which is the part that matters: a route the deployment
-    // knows about never silently disappears from this card.
+  it("never describes a cross route as unbuilt or coming soon", async () => {
     renderWithQueryClient(<StatusView />);
     await screen.findByRole("heading", { name: "Routes" });
     const list = within(screen.getByRole("list"));
 
-    // No longer "Not implemented", and no longer the flat "Not available
-    // on this deployment." that verdict carries: a built-but-closed route
-    // shows the BACKEND's own reason, exactly as the other closed routes
-    // already did.
+    // "Not implemented" is a verdict no operator action clears. Applying it
+    // to a route that is built and settling told a reader to wait for
+    // something that had already shipped.
     expect(list.queryByText("Not implemented")).toBeNull();
     expect(list.queryByText("Not available on this deployment.")).toBeNull();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    expect(screen.queryByText(/in development/i)).toBeNull();
+    // And both are still LISTED: a route the deployment knows about never
+    // silently disappears from this card.
     for (const id of ["SolToRhn", "RhnToSol"]) {
       expect(list.getByText(id)).toBeInTheDocument();
     }
-    // Neutral, not danger: nothing is wrong and nothing is waiting to be
-    // switched back on.
-    expect(list.queryByText("Paused")).toBeNull();
+  });
+
+  it("drops a card for a route the backend reports as NOT implemented", async () => {
+    // The card list is read off `implemented`, not off this build's table.
+    const base = chainsWith(ALL);
+    getChains.mockResolvedValue({
+      ...base,
+      routes: base.routes.map((route) =>
+        route.id === "RhnToSol" ? { ...route, implemented: false } : route,
+      ),
+    });
+    renderWithQueryClient(<StatusView />);
+    await screen.findByRole("group", { name: CARDS.SolToRhn });
+    expect(screen.queryByRole("group", { name: CARDS.RhnToSol })).toBeNull();
   });
 });
 
-describe("the four cards show four different sets of figures", () => {
+describe("the six cards show the right figures each", () => {
   it("gives each route its own destination capacity", async () => {
     renderWithQueryClient(<StatusView />);
 
@@ -195,6 +222,20 @@ describe("the four cards show four different sets of figures", () => {
     const rhnToGlc = await card("RhnToGlc");
     expect(rhnToGlc.getByText(new RegExp(GOLDCOIN_CAPACITY.display))).toBeInTheDocument();
     expect(rhnToGlc.queryByText(new RegExp(ROBINHOOD_CAPACITY.display))).toBeNull();
+
+    // The cross routes settle in the direction their NAMES' second half
+    // points: `SolToRhn` onto the Robinhood reserve, `RhnToSol` onto the
+    // Solana one. Reading either by its source chain — the intuitive
+    // mistake — would put the wrong pool's figure on both.
+    const solToRhn = await card("SolToRhn");
+    expect(
+      await solToRhn.findByText(new RegExp(ROBINHOOD_CAPACITY.display)),
+    ).toBeInTheDocument();
+    expect(solToRhn.queryByText(new RegExp(SOLANA_CAPACITY.display))).toBeNull();
+
+    const rhnToSol = await card("RhnToSol");
+    expect(rhnToSol.getByText(new RegExp(SOLANA_CAPACITY.display))).toBeInTheDocument();
+    expect(rhnToSol.queryByText(new RegExp(ROBINHOOD_CAPACITY.display))).toBeNull();
   });
 
   it("gives each route its own 24-hour window, in its own unit", async () => {
@@ -212,6 +253,16 @@ describe("the four cards show four different sets of figures", () => {
     expect(
       (await card("RhnToGlc")).getByText(new RegExp(INBOUND_WINDOW.display)),
     ).toBeInTheDocument();
+    // Each cross route is charged against the contract LEG it uses, which
+    // is the same bucket as its Goldcoin-paired sibling on that leg: the
+    // contract holds one accumulator per leg and charges every route on it
+    // against that one.
+    expect(
+      await (await card("SolToRhn")).findByText(new RegExp(OUTBOUND_WINDOW.display)),
+    ).toBeInTheDocument();
+    expect(
+      (await card("RhnToSol")).getByText(new RegExp(INBOUND_WINDOW.display)),
+    ).toBeInTheDocument();
   });
 
   it("never shows one route's window on another route's card", async () => {
@@ -224,6 +275,8 @@ describe("the four cards show four different sets of figures", () => {
       ["SolToGlc", [GLC_TO_SOL_WINDOW, OUTBOUND_WINDOW, INBOUND_WINDOW]],
       ["GlcToRhn", [GLC_TO_SOL_WINDOW, SOL_TO_GLC_WINDOW, INBOUND_WINDOW]],
       ["RhnToGlc", [GLC_TO_SOL_WINDOW, SOL_TO_GLC_WINDOW, OUTBOUND_WINDOW]],
+      ["SolToRhn", [GLC_TO_SOL_WINDOW, SOL_TO_GLC_WINDOW, INBOUND_WINDOW]],
+      ["RhnToSol", [GLC_TO_SOL_WINDOW, SOL_TO_GLC_WINDOW, OUTBOUND_WINDOW]],
     ] as const) {
       const scope = await card(route);
       for (const figure of forbidden) {
@@ -256,7 +309,7 @@ describe("the four cards show four different sets of figures", () => {
     expect(glcToRhn.queryByText("3%")).toBeNull();
   });
 
-  it("shows a Robinhood route's per-transfer limits, from the contract", async () => {
+  it("shows a Robinhood route's per-transfer bounds, from the contract", async () => {
     // This row used to be absent on a Robinhood card: `GET /limits`
     // carries the Solana program's config alone, and filling the row from
     // it would state a ceiling neither Robinhood chain enforces. The
@@ -265,10 +318,51 @@ describe("the four cards show four different sets of figures", () => {
     // `outboundMax`.
     renderWithQueryClient(<StatusView />);
     const glcToRhn = await card("GlcToRhn");
-    await glcToRhn.findByText("Per-transfer limits");
+    await glcToRhn.findByText("Source minimum");
     expect(glcToRhn.getByText(/100\.00/)).toBeInTheDocument();
+    expect(glcToRhn.getByText("Max per transfer")).toBeInTheDocument();
     expect(glcToRhn.getByText(/20,000\.00/)).toBeInTheDocument();
     expect(glcToRhn.queryByText("Not published")).toBeNull();
+  });
+
+  it("shows the 100 GLC source minimum on every one of the six cards", async () => {
+    // One published policy floor, identical on every route, rendered
+    // unadjusted — the fee is deducted AFTER the minimum is checked, so
+    // grossing it up would state a floor the backend does not apply.
+    renderWithQueryClient(<StatusView />);
+    for (const route of Object.keys(CARDS) as (keyof typeof CARDS)[]) {
+      const scope = await card(route);
+      expect(await scope.findByText("Source minimum")).toBeInTheDocument();
+      expect(scope.getByText(/100\.00/)).toBeInTheDocument();
+      // Never the fee-grossed figures this row used to be derived from.
+      expect(scope.queryByText(/102\.06/)).toBeNull();
+      expect(scope.queryByText(/103\.09/)).toBeNull();
+    }
+  });
+
+  it("keeps the minimum when the maximum could not be read", async () => {
+    // The two used to be one "Per-transfer limits" range rendered only when
+    // BOTH existed, so an unread contract blanked the one figure every route
+    // publishes and a user needs before typing an amount.
+    getRobinhoodLimits.mockResolvedValue(
+      fixtures.robinhoodLimitsFixture(() => new Date(), { open: false }),
+    );
+    renderWithQueryClient(<StatusView />);
+    const glcToRhn = await card("GlcToRhn");
+    expect(await glcToRhn.findByText("Source minimum")).toBeInTheDocument();
+    expect(glcToRhn.getByText(/100\.00/)).toBeInTheDocument();
+    expect(glcToRhn.queryByText("Max per transfer")).toBeNull();
+  });
+
+  it("prices the cross routes at their own rate, not a neighbour's", async () => {
+    renderWithQueryClient(<StatusView />);
+    for (const route of ["SolToRhn", "RhnToSol"] as const) {
+      const scope = await card(route);
+      expect(await scope.findByText("3%")).toBeInTheDocument();
+      // `GlcToRhn`'s 2.50% is the nearest wrong answer — same contract,
+      // different price — so its absence is what this asserts.
+      expect(scope.queryByText("2.50%")).toBeNull();
+    }
   });
 
   it("omits the limits row entirely when the contract could not be read", async () => {
@@ -288,7 +382,7 @@ describe("the four cards show four different sets of figures", () => {
 describe("route.available controls the badge", () => {
   it("shows Available only where the backend answered available: true", async () => {
     renderWithQueryClient(<StatusView />);
-    for (const route of ["GlcToSol", "SolToGlc", "GlcToRhn", "RhnToGlc"] as const) {
+    for (const route of Object.keys(CARDS) as (keyof typeof CARDS)[]) {
       const scope = await card(route);
       expect(await scope.findByText("Available")).toBeInTheDocument();
       expect(scope.getByText("Available (effective)").parentElement).toHaveTextContent(
@@ -297,7 +391,7 @@ describe("route.available controls the badge", () => {
     }
   });
 
-  it("turns one card unavailable without touching the other three", async () => {
+  it("turns one card unavailable without touching the other five", async () => {
     getChains.mockResolvedValue(chainsWith({ ...ALL, RhnToGlc: false }));
     renderWithQueryClient(<StatusView />);
 

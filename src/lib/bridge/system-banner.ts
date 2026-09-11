@@ -39,10 +39,12 @@ import { isSettlementRoute } from "@/lib/api/schemas/common";
  *
  * # What counts
  *
- * Only EXECUTABLE routes — `implemented: true`, and in this build's
- * settlement vocabulary. `SolToRhn`/`RhnToSol` have no settlement
- * machinery on either side, so counting them would make a warning
- * permanent and meaningless.
+ * Only EXECUTABLE routes — `implemented: true`, and in this build's route
+ * vocabulary. The filter is read off the registry rather than written as a
+ * list: it used to exclude `SolToRhn`/`RhnToSol`, which had no settlement
+ * machinery and would have made a warning permanent, and it now includes
+ * them because the backend reports them implemented. Nothing here changed
+ * to achieve that.
  *
  * A route is available only when the backend positively answered
  * `available: true`. An ABSENT `available` counts as unavailable, the
@@ -109,9 +111,9 @@ export const SYSTEM_ROUTE_MESSAGE = {
 
 /**
  * Executable routes only — `implemented: true`, and known to this build's
- * settlement vocabulary so that a route the backend adds ahead of the
- * frontend does not silently drag the whole strip into a warning before
- * anyone can describe it.
+ * route vocabulary so that a route the backend adds ahead of the frontend
+ * does not silently drag the whole strip into a warning before anyone can
+ * describe it.
  */
 function executableRouteViews(chains: ChainsViewDto): readonly RouteViewDto[] {
   return chains.routes.filter((view) => view.implemented && isSettlementRoute(view.id));

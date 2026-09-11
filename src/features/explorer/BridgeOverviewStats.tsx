@@ -113,9 +113,10 @@ const SETTLED_VOLUME: Record<
  * `BridgeStats` carries exactly two `DirectionStats` members, named
  * `glc_to_sol` and `sol_to_glc`. This is not a UI policy about which routes
  * matter — it is the shape of the DTO, which is why the map is keyed by the
- * field that exists rather than by a list of routes this build likes. A
- * Robinhood transfer is counted in neither, so the cards built from these
- * say whose counts they are instead of implying they cover the bridge.
+ * field that exists rather than by a list of routes this build likes. None
+ * of the four Robinhood-legged routes is counted in either, so the cards
+ * built from these say whose counts they are instead of implying they cover
+ * the bridge.
  */
 const DIRECTION_STATS: Partial<
   Record<SettlementRoute, (stats: BridgeStatsDto) => BridgeStatsDto["glc_to_sol"]>
@@ -139,10 +140,9 @@ const DIRECTION_STATS: Partial<
  *
  * So the families are read from `/chains`' `implemented` flag and grouped
  * by the reserve they settle onto — which is the granularity `/stats`
- * actually publishes. `SolToRhn`/`RhnToSol` are excluded by the same flag,
- * permanently: the backend reports them `implemented: false` because
- * neither has a `Direction` value, so no settlement function can be called
- * with them and no volume can ever accrue to either.
+ * actually publishes. All six routes now report implemented, so all six are
+ * grouped: two per reserve, three counters. Reading the flag rather than
+ * naming routes is why that needed no change here.
  *
  * # Degradation
  *

@@ -39,10 +39,12 @@ describe("routeAvailability", () => {
   });
 
   it("reads the implemented-but-shut cross routes as closed, not absent", () => {
-    // `SolToRhn`/`RhnToSol` gained settlement machinery in Phase H and
-    // ship shut, so they are `closed` — an operator action opens them.
+    // `SolToRhn`/`RhnToSol` have settlement machinery and ship shut, so
+    // they are `closed` — an operator action opens them. Reporting them
+    // `unimplemented` would say no such action exists.
     for (const route of ["SolToRhn", "RhnToSol"] as const) {
       expect(routeAvailability(chains(), route).kind).toBe("closed");
+      expect(routeAvailability(chains(), route).view?.implemented).toBe(true);
     }
   });
 
@@ -75,13 +77,31 @@ describe("routeAvailability", () => {
   });
 
   it("follows the backend when a route opens, with no frontend change", () => {
-    expect(routeAvailability(openChains(), "GlcToRhn").kind).toBe("open");
-    expect(routeAvailability(openChains(), "RhnToGlc").kind).toBe("open");
-    // Opening the two Goldcoin<->Robinhood routes does NOT open the
-    // cross pair: `robinhoodOpen` is about those two alone, and the
-    // cross routes stay shut until their own gates say otherwise.
-    expect(routeAvailability(openChains(), "SolToRhn").kind).toBe("closed");
-    expect(routeAvailability(openChains(), "RhnToSol").kind).toBe("closed");
+    // All four Robinhood-legged routes share a custody contract, a reserve
+    // ledger and an indexer, and an operator opens Robinhood as a
+    // deployment decision — so the fixture's `robinhoodOpen` opens all
+    // four, and this reads every one of them off the response rather than
+    // from any list here.
+    for (const route of ["GlcToRhn", "RhnToGlc", "SolToRhn", "RhnToSol"] as const) {
+      expect(routeAvailability(openChains(), route).kind).toBe("open");
+    }
+  });
+
+  it("reports every route closed while the bridge is shut for maintenance", () => {
+    // The production state this models: every route built and switched on,
+    // and `available: false` across the board while a reserve is held shut.
+    // That is `unavailable` — switched on and refused — and NOT `closed`,
+    // because nobody has to flip anything back on for it to end.
+    const maintenance = fixtures.chainsFixture(() => new Date(), {
+      robinhoodOpen: true,
+      robinhoodAvailable: false,
+    });
+    for (const route of ["GlcToRhn", "RhnToGlc", "SolToRhn", "RhnToSol"] as const) {
+      const state = routeAvailability(maintenance, route);
+      expect(state.kind).toBe("unavailable");
+      if (state.kind !== "unavailable") continue;
+      expect(state.reason).toBe(fixtures.DIRECTION_UNAVAILABLE_MESSAGE);
+    }
   });
 });
 
@@ -98,7 +118,7 @@ describe("routeAvailabilitySummary", () => {
     // Counted from the response itself, so a route the backend adds later
     // is included with no frontend deploy.
     expect(routeAvailabilitySummary(chains())).toEqual({ open: 2, total: 6 });
-    expect(routeAvailabilitySummary(openChains())).toEqual({ open: 4, total: 6 });
+    expect(routeAvailabilitySummary(openChains())).toEqual({ open: 6, total: 6 });
   });
 
   it("returns null rather than 0 of 0 when /chains has not loaded", () => {

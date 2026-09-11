@@ -107,7 +107,7 @@ export {
 export type { DirectionGateState, SolanaGovernedRoute } from "./direction-state";
 
 export {
-  robinhoodDestinationCapacity,
+  robinhoodReserveCapacity,
   robinhoodRouteGateState,
   robinhoodWindowFor,
   robinhoodWindowRemaining,
@@ -155,10 +155,20 @@ export {
   isDefinedPair,
   resolveRoute,
   routeForPair,
+  routesTouchingChain,
   routeSourceMinimum,
   sourceChainIds,
   type RouteResolution,
 } from "./route-resolution";
+
+export { perTransferCeiling, type PerTransferCeiling } from "./route-limits";
+
+export {
+  payloadSelectsRobinhood,
+  solanaDepositDestination,
+  type SolanaDestinationResult,
+  type SolanaSourcedRoute,
+} from "./solana-destination";
 
 export {
   adapterFor,

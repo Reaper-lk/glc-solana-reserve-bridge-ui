@@ -147,25 +147,30 @@ describe("no route is answered with another route's figures", () => {
     expect(glcToRhn.capacity?.source).not.toBe(rhnToGlc.capacity?.source);
   });
 
-  it("charges each Robinhood route against its own contract window", () => {
-    // `GlcToRhn` PAYS OUT onto Robinhood and is charged against the
-    // outbound bucket; `RhnToGlc` takes a DEPOSIT and is charged against
-    // the inbound one. Crossing them reports a limit the contract does not
-    // apply to that route.
-    expect(statusOf("GlcToRhn").window).toEqual({
-      atomic: OUTBOUND_WINDOW,
-      decimals: 18,
-      source: "GET /robinhood/reserve · onchain.outbound_window.remaining_atomic",
-    });
-    expect(statusOf("RhnToGlc").window).toEqual({
-      atomic: INBOUND_WINDOW,
-      decimals: 18,
-      source: "GET /robinhood/reserve · onchain.inbound_window.remaining_atomic",
-    });
+  it("charges each Robinhood route against its own contract LEG's window", () => {
+    // A route PAID OUT onto Robinhood is charged against the outbound
+    // bucket; one taking a DEPOSIT on Robinhood against the inbound one.
+    // Crossing them reports a limit the contract does not apply to that
+    // route. Both routes on a leg read the same bucket because the contract
+    // holds one accumulator per leg and charges both against it.
+    for (const route of ["GlcToRhn", "SolToRhn"] as const) {
+      expect(statusOf(route).window).toEqual({
+        atomic: OUTBOUND_WINDOW,
+        decimals: 18,
+        source: "GET /robinhood/reserve · onchain.outbound_window.remaining_atomic",
+      });
+    }
+    for (const route of ["RhnToGlc", "RhnToSol"] as const) {
+      expect(statusOf(route).window).toEqual({
+        atomic: INBOUND_WINDOW,
+        decimals: 18,
+        source: "GET /robinhood/reserve · onchain.inbound_window.remaining_atomic",
+      });
+    }
   });
 
   it("never gives a Robinhood route the Solana rolling window", () => {
-    for (const route of ["GlcToRhn", "RhnToGlc"] as const) {
+    for (const route of ["GlcToRhn", "RhnToGlc", "SolToRhn", "RhnToSol"] as const) {
       const card = statusOf(route);
       expect(card.window?.atomic).not.toBe(GLC_TO_SOL_WINDOW);
       expect(card.window?.atomic).not.toBe(SOL_TO_GLC_WINDOW);
@@ -186,17 +191,21 @@ describe("no route is answered with another route's figures", () => {
     });
   });
 
-  it("gives all four routes a window figure that is theirs alone", () => {
+  it("uses exactly four distinct window figures across the six routes", () => {
+    // Four sources, six routes. The two Solana-governed routes each read
+    // their own `/status` field; the four Robinhood-legged ones read the
+    // contract's two buckets, two routes per bucket. Sharing a bucket is
+    // what the contract does, so it is the right answer — and the COUNT is
+    // what distinguishes that from a figure leaking across legs.
     const windows = executableRouteStatuses(input()).map((card) => card.window?.atomic);
-    expect(windows).toHaveLength(4);
+    expect(windows).toHaveLength(6);
     expect(new Set(windows).size).toBe(4);
   });
 
-  it("uses exactly three distinct capacity sources across the four routes", () => {
-    // Three reserve pools, four routes: `SolToGlc` and `RhnToGlc` settle
-    // onto the SAME Goldcoin pool, so they share one figure by design.
-    // That is a shared source, not a reused one — and the count is what
-    // tells the two apart.
+  it("uses exactly three distinct capacity sources across the six routes", () => {
+    // Three reserve pools, six routes: each pool pays exactly two of them,
+    // so each pair shares one figure by design. That is a shared source,
+    // not a reused one — and the count is what tells the two apart.
     const sources = executableRouteStatuses(input()).map((card) => card.capacity?.source);
     expect(new Set(sources).size).toBe(3);
   });
@@ -315,25 +324,55 @@ describe("availability comes from GET /chains and nothing else", () => {
 });
 
 describe("the route list itself", () => {
-  it("covers exactly the four executable routes", () => {
+  it("covers all six executable routes", () => {
     const routes = executableRouteStatuses(input()).map((card) => card.route);
-    expect(routes).toEqual(["GlcToSol", "SolToGlc", "GlcToRhn", "RhnToGlc"]);
+    expect(routes).toEqual([
+      "GlcToSol",
+      "SolToGlc",
+      "GlcToRhn",
+      "RhnToGlc",
+      "SolToRhn",
+      "RhnToSol",
+    ]);
   });
 
-  it("never includes a route with no settlement machinery", () => {
-    // `SolToRhn`/`RhnToSol` are `implemented: false`: no `Direction` value
-    // exists for either, so no reserve pays them and no window bounds them.
-    // They belong in the Routes list, which states availability and stops.
-    const routes = executableRouteStatuses(input()).map((card) => card.route);
-    expect(routes).not.toContain("SolToRhn");
+  it("gives the cross routes a card with real figures, not a bare row", () => {
+    // They used to be excluded here, because `implemented: false` meant no
+    // reserve paid them and no window bounded them — so the Routes list,
+    // which states availability and stops, was the only honest place for
+    // them. Both now settle, so both get a full card, and every figure on
+    // it has to come from the endpoint that owns it.
+    for (const route of ["SolToRhn", "RhnToSol"] as const) {
+      const card = statusOf(route);
+      expect(card.capacity).not.toBeNull();
+      expect(card.window).not.toBeNull();
+      expect(card.fee).not.toBeNull();
+      expect(card.minimum).not.toBeNull();
+      expect(card.maximum).not.toBeNull();
+    }
+  });
+
+  it("drops a route the backend still reports as NOT implemented", () => {
+    // Read off the registry, not from this build's list of descriptors.
+    const base = fixtures.chainsFixture(now, { robinhoodOpen: true });
+    const inert = {
+      ...base,
+      routes: base.routes.map((route) =>
+        route.id === "RhnToSol" ? { ...route, implemented: false } : route,
+      ),
+    };
+    const routes = executableRouteStatuses(input({ chains: inert })).map(
+      (card) => card.route,
+    );
     expect(routes).not.toContain("RhnToSol");
+    expect(routes).toContain("SolToRhn");
   });
 
-  it("still lists this build's settlement routes when /chains is unreachable", () => {
-    // Rendering nothing would be worse than rendering four rows that all
+  it("still lists this build's routes when /chains is unreachable", () => {
+    // Rendering nothing would be worse than rendering six rows that all
     // say "unknown" — and every one of them does say exactly that.
     const cards = executableRouteStatuses(input({ chains: undefined }));
-    expect(cards).toHaveLength(4);
+    expect(cards).toHaveLength(6);
     for (const card of cards) expect(card.kind).toBe("unknown");
   });
 });

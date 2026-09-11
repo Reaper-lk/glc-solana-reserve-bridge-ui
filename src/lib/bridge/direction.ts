@@ -1,5 +1,4 @@
 import type { Route, SettlementRoute } from "@/lib/api/schemas/common";
-import { isSettlementRoute } from "@/lib/api/schemas/common";
 import {
   descriptorFor,
   GOLDCOIN_GLC,
@@ -81,15 +80,23 @@ const ROBINHOOD = requireChain("robinhood");
 // with either value again.
 
 /**
- * Descriptors for the four routes that HAVE backend settlement machinery.
+ * Descriptors for every route the backend names — all six.
  *
- * Being in this table says the UI knows how to render and (for an open
- * route) drive the flow — it says nothing about availability. Both
- * Robinhood routes ship disabled backend-side and stay that way until
- * `GET /chains` reports otherwise; `./route-availability` is the only
- * thing that answers "can this be used". `SolToRhn`/`RhnToSol` are absent
- * by design: they have no settlement machinery on either side, so there
- * is no flow to describe.
+ * Being in this table says the UI knows how to NAME and describe the
+ * route. It says nothing about availability: `./route-availability` is the
+ * only thing that answers "can this be used", and several of these ship
+ * disabled backend-side.
+ *
+ * It used to hold four, because `SolToRhn`/`RhnToSol` had no settlement
+ * machinery on either side and there was no flow to describe. The backend
+ * has since shipped both (`GET /chains` reports `implemented: true` for
+ * all six), so the table is total over `Route` and there is no longer a
+ * second, parallel "display only" table beside it — which is what made
+ * `routeDisplay` below a single lookup.
+ *
+ * Whether THIS BUILD can construct the on-chain deposit a route needs is a
+ * third, separate question, answered by `./route-execution` and by nothing
+ * here.
  */
 export const directions: Record<SettlementRoute, DirectionDescriptor> = {
   GlcToSol: {
@@ -124,6 +131,28 @@ export const directions: Record<SettlementRoute, DirectionDescriptor> = {
     destinationReserve: "goldcoin",
     funding: "robinhood-contract",
   },
+  // The two cross routes. Neither touches Goldcoin at all: `SolToRhn`
+  // sources from the Solana program and settles onto the Robinhood
+  // reserve, `RhnToSol` sources from the Robinhood custody contract and
+  // settles onto the Solana reserve. The reserve named here is the one
+  // `Direction::destination_reserve()` names, which is what decides whose
+  // capacity figure the status card may show.
+  SolToRhn: {
+    id: "SolToRhn",
+    from: { chain: SOLANA, token: SOLANA_GLC },
+    to: { chain: ROBINHOOD, token: ROBINHOOD_GLC },
+    label: `${SOLANA_GLC.name} → ${ROBINHOOD_GLC.name}`,
+    destinationReserve: "robinhood",
+    funding: "solana-program",
+  },
+  RhnToSol: {
+    id: "RhnToSol",
+    from: { chain: ROBINHOOD, token: ROBINHOOD_GLC },
+    to: { chain: SOLANA, token: SOLANA_GLC },
+    label: `${ROBINHOOD_GLC.name} → ${SOLANA_GLC.name}`,
+    destinationReserve: "solana",
+    funding: "robinhood-contract",
+  },
 };
 
 const OPPOSITES: Record<SettlementRoute, SettlementRoute> = {
@@ -131,6 +160,8 @@ const OPPOSITES: Record<SettlementRoute, SettlementRoute> = {
   SolToGlc: "GlcToSol",
   GlcToRhn: "RhnToGlc",
   RhnToGlc: "GlcToRhn",
+  SolToRhn: "RhnToSol",
+  RhnToSol: "SolToRhn",
 };
 
 /** The reverse route. Being the reverse of an open route implies nothing about availability. */
@@ -139,17 +170,16 @@ export function oppositeDirection(direction: SettlementRoute): SettlementRoute {
 }
 
 /**
- * Presentation for EVERY route the backend can name, including the two
- * with no settlement machinery.
+ * Presentation for EVERY route the backend can name.
  *
- * `directions` above covers only routes the UI can drive. This covers the
- * whole wire vocabulary, because a route with no flow still has to be
- * NAMEABLE: `GET /chains` lists all six so a disabled `SolToRhn` can
- * render as visibly unavailable rather than silently missing, and a
- * response could in principle carry any of them.
+ * This used to be a second table beside {@link directions}, covering the
+ * two routes that table excluded, plus a branch here to pick between them.
+ * Both routes are now in `directions` — the backend implements all six — so
+ * the branch is gone and there is exactly one place a route's label, source
+ * and destination are stated.
  *
  * Having a label here is not an implication that a route works. It is the
- * opposite — it is what lets the UI say clearly that one does not.
+ * opposite: it is what lets the UI say clearly that one does not.
  */
 export interface RouteDisplay {
   readonly from: DirectionSide;
@@ -157,23 +187,7 @@ export interface RouteDisplay {
   readonly label: string;
 }
 
-const NON_SETTLEMENT_DISPLAY: Record<Exclude<Route, SettlementRoute>, RouteDisplay> = {
-  SolToRhn: {
-    from: { chain: SOLANA, token: SOLANA_GLC },
-    to: { chain: ROBINHOOD, token: ROBINHOOD_GLC },
-    label: `${SOLANA_GLC.name} → ${ROBINHOOD_GLC.name}`,
-  },
-  RhnToSol: {
-    from: { chain: ROBINHOOD, token: ROBINHOOD_GLC },
-    to: { chain: SOLANA, token: SOLANA_GLC },
-    label: `${ROBINHOOD_GLC.name} → ${SOLANA_GLC.name}`,
-  },
-};
-
 export function routeDisplay(route: Route): RouteDisplay {
-  if (isSettlementRoute(route)) {
-    const descriptor = directions[route];
-    return { from: descriptor.from, to: descriptor.to, label: descriptor.label };
-  }
-  return NON_SETTLEMENT_DISPLAY[route];
+  const descriptor = directions[route];
+  return { from: descriptor.from, to: descriptor.to, label: descriptor.label };
 }

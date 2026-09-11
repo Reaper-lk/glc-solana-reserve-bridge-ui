@@ -9,21 +9,37 @@ import {
 } from "viem";
 import { evmConfirmationError, evmPreflightError, evmSendError } from "@/lib/api/errors";
 import { ROBINHOOD_DECIMALS } from "@/lib/bridge/robinhood-amount";
-import { CONTRACT_ROUTE_IDS, erc20Abi, glcRobinhoodBridgeAbi } from "./abi";
+import {
+  DEPOSIT_CONTRACT_ROUTE_IDS,
+  erc20Abi,
+  glcRobinhoodBridgeAbi,
+  type DepositContractRoute,
+} from "./abi";
 import type { RobinhoodDeployment } from "./config";
 
 /**
- * The `RhnToGlc` deposit: the one place this app writes to Robinhood
- * Network.
+ * A Robinhood-sourced deposit — `RhnToGlc` or `RhnToSol`. The one place
+ * this app writes to Robinhood Network.
  *
  * # Why the UI does this at all
  *
- * `RhnToGlc` has no backend create-transfer endpoint, and that is a
+ * Neither route has a backend create-transfer endpoint, and that is a
  * deliberate backend design rather than a gap — the same design
- * `SolToGlc` already uses. The depositor calls the custody contract
- * directly, and the service's indexer observes the resulting
- * `DepositCreated` event and folds it into a bridge request. There is no
- * request id to hold until the chain has one.
+ * `SolToGlc` already uses, and `POST /transfers` refuses both by name
+ * ("route RhnToSol is not created through this endpoint"). The depositor
+ * calls the custody contract directly, and the service's indexer observes
+ * the resulting `DepositCreated` event and folds it into a bridge request.
+ * There is no request id to hold until the chain has one.
+ *
+ * # The route is an argument, not an assumption
+ *
+ * `deposit(route, amount, destination)` takes the route explicitly, and it
+ * is the one thing about a deposit that cannot be recovered afterwards —
+ * the destination is opaque bytes the contract never parses, so the route
+ * is what says which network they name. Every function below therefore
+ * takes the route from its caller; none carries a default, and the id comes
+ * from `DEPOSIT_CONTRACT_ROUTE_IDS`, which holds only the two the contract
+ * accepts a deposit on.
  *
  * # Everything checkable is checked before anything is signed
  *
@@ -45,10 +61,23 @@ import type { RobinhoodDeployment } from "./config";
 export interface RobinhoodDepositParams {
   readonly provider: EIP1193Provider;
   readonly deployment: RobinhoodDeployment;
+  /**
+   * Which inbound route this deposit is for. Decides the contract's `route`
+   * argument AND what the service will parse `destination` as, so the two
+   * must describe the same intent — the caller encodes the destination for
+   * THIS route or not at all.
+   */
+  readonly route: DepositContractRoute;
   readonly account: Address;
   /** Robinhood atomic units (18 decimals). Must be an exact canonical multiple. */
   readonly amountRaw: bigint;
-  /** The ABI `bytes` destination payload from `encodeGoldcoinDestination`. */
+  /**
+   * The ABI `bytes` destination payload, encoded for `route`'s destination
+   * network: `encodeGoldcoinDestination` for `RhnToGlc`,
+   * `encodeSolanaDestination` for `RhnToSol`. Never interchangeable — the
+   * service parses these bytes by route, and a mismatch is accepted
+   * on-chain and parked undeliverable with the deposit already made.
+   */
   readonly destination: Hex;
   /** Progress callback, so the UI can narrate a two-transaction flow. */
   readonly onStep?: (step: RobinhoodDepositStep) => void;
@@ -82,12 +111,14 @@ function walletClientFor(provider: EIP1193Provider, account: Address) {
  */
 export async function preflightRobinhoodDeposit(params: {
   readonly deployment: RobinhoodDeployment;
+  /** The route whose `isRouteLive` is read. Each is gated independently on-chain. */
+  readonly route: DepositContractRoute;
   readonly account: Address;
   readonly amountRaw: bigint;
 }): Promise<void> {
   const { deployment, account, amountRaw } = params;
   const client = publicClientFor(deployment);
-  const route = CONTRACT_ROUTE_IDS.RhnToGlc;
+  const route = DEPOSIT_CONTRACT_ROUTE_IDS[params.route];
 
   const [token, decimals, routeLive, limits, balance] = await Promise.all([
     client.readContract({
@@ -177,10 +208,17 @@ export async function depositToRobinhoodReserve(
   const { provider, deployment, account, amountRaw, destination, onStep } = params;
   const publicClient = publicClientFor(deployment);
   const walletClient = walletClientFor(provider, account);
-  const route = CONTRACT_ROUTE_IDS.RhnToGlc;
+  const route = DEPOSIT_CONTRACT_ROUTE_IDS[params.route];
 
   onStep?.("preflight");
-  await preflightRobinhoodDeposit({ deployment, account, amountRaw });
+  // The SAME route the deposit below names, so the liveness that was
+  // checked and the liveness that is relied on cannot be different routes'.
+  await preflightRobinhoodDeposit({
+    deployment,
+    route: params.route,
+    account,
+    amountRaw,
+  });
 
   const allowance = await publicClient.readContract({
     address: deployment.tokenAddress,

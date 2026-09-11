@@ -16,6 +16,9 @@ import type { ChainsViewDto } from "@/lib/api/schemas/chains";
  * `settled_volume_atomic` is a per-reserve counter — so the card labelled
  * "Solana → Goldcoin settled" would silently start including Robinhood
  * volume the day that route opened.
+ *
+ * With all six routes implemented every reserve is now shared by exactly
+ * two of them, which is what the grouping cases below pin.
  */
 
 const chains = () => fixtures.chainsFixture(() => new Date());
@@ -40,26 +43,42 @@ function chainsWithUnknownExecutableRoute(): ChainsViewDto {
 }
 
 describe("executableRoutes", () => {
-  it("returns exactly the four families the backend implements", () => {
+  it("returns every family the backend implements — all six", () => {
     expect([...executableRoutes(chains())]).toEqual([
       "GlcToSol",
       "SolToGlc",
       "GlcToRhn",
       "RhnToGlc",
+      "SolToRhn",
+      "RhnToSol",
     ]);
   });
 
-  it("never reports SolToRhn or RhnToSol as executable", () => {
-    // These two have no `Direction` value on either side, so no settlement
-    // function can ever be called with them and no volume can accrue. The
-    // backend says so with `implemented: false`; nothing here may soften
-    // that into "closed for now".
+  it("includes the cross routes because the registry says they are implemented", () => {
+    // They used to be excluded here, correctly: the backend reported
+    // `implemented: false` because neither had a `Direction` value. Both
+    // now do. Nothing in the module changed to follow that — it reads the
+    // flag instead of keeping a list, which is the property being pinned.
     const routes = executableRoutes(chains());
-    expect(routes).not.toContain("SolToRhn");
-    expect(routes).not.toContain("RhnToSol");
+    expect(routes).toContain("SolToRhn");
+    expect(routes).toContain("RhnToSol");
   });
 
-  it("is the whole route vocabulary minus the two non-executable spellings", () => {
+  it("still drops a route the backend reports as NOT implemented", () => {
+    // The flag is read, not assumed. A deployment reporting a route inert
+    // gets no family here, however many routes this build can describe.
+    const base = chains();
+    const inert = {
+      ...base,
+      routes: base.routes.map((route) =>
+        route.id === "SolToRhn" ? { ...route, implemented: false } : route,
+      ),
+    };
+    expect(executableRoutes(inert)).not.toContain("SolToRhn");
+    expect(executableRoutes(inert)).toContain("RhnToSol");
+  });
+
+  it("is the whole route vocabulary, pinned against the schemas", () => {
     // Pinned against the schemas rather than a second literal list, so a
     // route added to the wire enum cannot be silently omitted here.
     const executable = new Set(executableRoutes(chains()));
@@ -96,15 +115,27 @@ describe("executableRoutes", () => {
 });
 
 describe("destinationReserveGroups", () => {
-  it("groups the four families onto the three reserves that pay them", () => {
+  it("groups all six families onto the three reserves that pay them", () => {
     const groups = destinationReserveGroups(executableRoutes(chains()));
     expect(groups.map((group) => [group.reserve, group.routes.map((r) => r.id)])).toEqual(
       [
-        ["solana", ["GlcToSol"]],
+        ["solana", ["GlcToSol", "RhnToSol"]],
         ["goldcoin", ["SolToGlc", "RhnToGlc"]],
-        ["robinhood", ["GlcToRhn"]],
+        ["robinhood", ["GlcToRhn", "SolToRhn"]],
       ],
     );
+  });
+
+  it("gives every reserve exactly one group, whatever feeds it", () => {
+    // `/stats` publishes one `settled_volume_atomic` per RESERVE. Two
+    // groups for one reserve would show the same figure twice and double
+    // that side's apparent volume — which is now a live risk on all three
+    // pools, not just Goldcoin, because each has two routes settling onto
+    // it.
+    const groups = destinationReserveGroups(executableRoutes(chains()));
+    const reserves = groups.map((group) => group.reserve);
+    expect(new Set(reserves).size).toBe(reserves.length);
+    expect(groups.flatMap((group) => group.routes)).toHaveLength(6);
   });
 
   it("keeps SolToGlc and RhnToGlc in ONE group, never two", () => {
@@ -115,6 +146,20 @@ describe("destinationReserveGroups", () => {
     const goldcoin = groups.filter((group) => group.reserve === "goldcoin");
     expect(goldcoin).toHaveLength(1);
     expect(goldcoin[0]!.routes.map((r) => r.id)).toEqual(["SolToGlc", "RhnToGlc"]);
+  });
+
+  it("puts each cross route with the pool that actually pays it", () => {
+    // `SolToRhn` settles onto the ROBINHOOD reserve and `RhnToSol` onto the
+    // SOLANA one, which is the opposite of where their names' first half
+    // points. Grouping either by its source would attribute its volume to a
+    // pool that never paid it.
+    const groups = destinationReserveGroups(["SolToRhn", "RhnToSol"]);
+    expect(groups.map((group) => [group.reserve, group.routes.map((r) => r.id)])).toEqual(
+      [
+        ["robinhood", ["SolToRhn"]],
+        ["solana", ["RhnToSol"]],
+      ],
+    );
   });
 
   it("is stable in order, so a card does not move when a route closes", () => {

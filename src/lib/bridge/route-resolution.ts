@@ -40,8 +40,9 @@ import { atomicRescaleCeil } from "./canonical";
  * Add its rows to `ROUTE_TABLE`. Nothing else in the UI changes: the
  * selector already iterates the chain registry, the form already renders
  * one shape, and availability already comes from `GET /chains`. Resolving
- * a route here still says NOTHING about whether it may be used — both
- * Robinhood routes resolve today and both are closed.
+ * a route here still says NOTHING about whether it may be used — every
+ * Robinhood-legged route resolves today, and a deployment may have all of
+ * them closed.
  */
 
 /** `sourceChainId -> destinationChainId -> route`. */
@@ -49,9 +50,10 @@ type RouteTable = Readonly<Record<string, Readonly<Record<string, Route>>>>;
 
 /**
  * The complete pair→route mapping, mirroring the backend's `Route` enum
- * (`service/src/routes.rs`) exactly — every route it defines appears here,
- * including the two with no settlement machinery, because the UI must be
- * able to NAME an unusable route in order to explain it.
+ * (`service/src/routes.rs`) exactly — all six routes it defines appear
+ * here. Being in this table is not a claim that a route is open, and not a
+ * claim that this build can start one: the UI must be able to NAME an
+ * unusable route in order to explain it.
  */
 const ROUTE_TABLE: RouteTable = {
   goldcoin: { solana: "GlcToSol", robinhood: "GlcToRhn" },
@@ -118,6 +120,25 @@ export function destinationsFor(sourceChainId: string): readonly string[] {
 /** Every source network with at least one defined outbound route. */
 export function sourceChainIds(): readonly string[] {
   return Object.keys(ROUTE_TABLE);
+}
+
+/**
+ * Every route with `chainId` on either side, in table order.
+ *
+ * For consumers scoped to ONE network — the integration strip, the gating
+ * of a network-specific endpoint poll — which would otherwise each keep
+ * their own list of "the Robinhood routes" and each go stale on its own the
+ * next time a route is added. Read off the same table every other
+ * derivation uses, so there is nothing to keep in sync.
+ */
+export function routesTouchingChain(chainId: string): readonly Route[] {
+  const touching: Route[] = [];
+  for (const [source, destinations] of Object.entries(ROUTE_TABLE)) {
+    for (const [destination, route] of Object.entries(destinations)) {
+      if (source === chainId || destination === chainId) touching.push(route);
+    }
+  }
+  return touching;
 }
 
 /**

@@ -141,3 +141,29 @@ export function isValidAddress(value: string): boolean {
     return false;
   }
 }
+
+/**
+ * The 32 raw bytes of a base58 Solana address, or `null` if it is not one.
+ *
+ * The same decode {@link isValidAddress} performs, returning the bytes
+ * rather than discarding them — for the one caller that needs the pubkey
+ * ITSELF rather than a verdict about it: the custody contract's
+ * `destination` payload for an `RhnToSol` deposit, which the bridge service
+ * reads as 32 raw bytes (`validate_solana_destination`).
+ *
+ * Lives here, beside its sibling, because `@solana/web3.js` is confined to
+ * `src/lib/solana` by lint rule — the encoder in `@/lib/evm/destination`
+ * calls this rather than constructing a `PublicKey` of its own.
+ *
+ * `PublicKey`'s constructor base58-decodes and requires exactly 32 bytes,
+ * which is the same thing `Pubkey::from_str` does service-side. Neither
+ * checks that the point is on the curve, and neither may: an off-curve
+ * address is a legitimate payout destination and a PDA is a real account.
+ */
+export function solanaPubkeyBytes(value: string): Uint8Array | null {
+  try {
+    return new PublicKey(value).toBytes();
+  } catch {
+    return null;
+  }
+}

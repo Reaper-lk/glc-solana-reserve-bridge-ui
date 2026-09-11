@@ -152,8 +152,31 @@ describe("what the backend does and does not publish", () => {
       "SolToGlc",
       "GlcToRhn",
       "RhnToGlc",
+      "SolToRhn",
+      "RhnToSol",
     ]);
     expect(stats.bridge_fee_bps).toBe(fixtures.BRIDGE_FEE_BPS);
+  });
+
+  it("prices the two cross routes at their own 300 bps, not a neighbour's rate", () => {
+    // The table exists because routes are priced independently. The cross
+    // routes happen to match `GlcToSol`'s rate and NOT the Goldcoin<->
+    // Robinhood pair's, so showing either neighbour's number would be
+    // visibly wrong for one of them — which is the point of asserting the
+    // figure rather than a relationship.
+    const stats = bridgeStatsSchema.parse(fixtures.statsFixture());
+    const byRoute = new Map(stats.route_fees?.map((fee) => [fee.route, fee]));
+    for (const route of ["SolToRhn", "RhnToSol"] as const) {
+      expect(byRoute.get(route)).toMatchObject({
+        fee_bps: 300,
+        fee_percent_display: "3%",
+      });
+    }
+    // And the Goldcoin<->Robinhood pair keeps its own, different rate.
+    expect(byRoute.get("GlcToRhn")).toMatchObject({
+      fee_bps: fixtures.ROBINHOOD_FEE_BPS,
+      fee_percent_display: "2.50%",
+    });
   });
 
   it("parses a deployment that publishes no per-route fee table at all", () => {

@@ -4,6 +4,7 @@ import {
   isDefinedPair,
   resolveRoute,
   routeForPair,
+  routesTouchingChain,
   sourceChainIds,
 } from "@/lib/bridge/route-resolution";
 
@@ -29,12 +30,55 @@ describe("resolveRoute — the six defined pairs", () => {
     expect(resolveRoute(source, destination)).toEqual({ kind: "route", route: expected });
   });
 
-  it("resolves the two non-executable routes like any other — resolution is not permission", () => {
-    // `SolToRhn`/`RhnToSol` have no settlement machinery, and the UI still
-    // has to NAME them in order to explain that. Availability is a
-    // separate question, answered only by `GET /chains`.
+  it("resolves the two cross routes like any other — resolution is not permission", () => {
+    // Resolving a pair says nothing about whether it is open, and nothing
+    // about whether this app can start it. Availability is `GET /chains`'
+    // answer alone; startability is `route-execution`'s.
     expect(routeForPair("solana", "robinhood")).toBe("SolToRhn");
     expect(routeForPair("robinhood", "solana")).toBe("RhnToSol");
+  });
+});
+
+describe("routesTouchingChain", () => {
+  it("names every route with that network on either side", () => {
+    // Four for Robinhood — the two Goldcoin-paired and the two cross
+    // routes. Consumers scoped to one network read this instead of each
+    // keeping their own list and each going stale on its own.
+    // Table order: rows are walked source-first, so `GlcToRhn` (from
+    // goldcoin) precedes `SolToRhn` (from solana), which precedes the two
+    // sourced from Robinhood itself.
+    expect([...routesTouchingChain("robinhood")]).toEqual([
+      "GlcToRhn",
+      "SolToRhn",
+      "RhnToGlc",
+      "RhnToSol",
+    ]);
+    expect([...routesTouchingChain("solana")]).toEqual([
+      "GlcToSol",
+      "SolToGlc",
+      "SolToRhn",
+      "RhnToSol",
+    ]);
+
+    expect([...routesTouchingChain("goldcoin")]).toEqual([
+      "GlcToSol",
+      "GlcToRhn",
+      "SolToGlc",
+      "RhnToGlc",
+    ]);
+  });
+
+  it("covers both directions, never only the outbound half", () => {
+    // The mistake this guards: filtering on `source === chainId`, which
+    // would have reported two Robinhood routes instead of four and left the
+    // integration strip speaking for half the integration.
+    for (const chain of ["goldcoin", "solana", "robinhood"]) {
+      expect(routesTouchingChain(chain)).toHaveLength(4);
+    }
+  });
+
+  it("returns nothing for a network it has never heard of", () => {
+    expect(routesTouchingChain("ethereum")).toEqual([]);
   });
 });
 

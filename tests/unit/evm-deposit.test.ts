@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type * as Viem from "viem";
 
 /**
- * The `RhnToGlc` deposit orchestration.
+ * The Robinhood-sourced deposit orchestration — `RhnToGlc` and `RhnToSol`.
  *
  * viem's clients are mocked so the sequence itself is under test: what is
  * read before anything is signed, what is refused, what the approval is
@@ -91,7 +91,15 @@ beforeEach(() => {
 });
 
 describe("preflightRobinhoodDeposit", () => {
-  const params = { deployment: DEPLOYMENT, account: ACCOUNT, amountRaw: ONE_GLC };
+  // `RhnToGlc` throughout: this file is about the gates, and the route only
+  // selects WHICH `isRouteLive` is read. The cross route's own id is pinned
+  // in `cross-route-submit.test.ts`.
+  const params = {
+    deployment: DEPLOYMENT,
+    route: "RhnToGlc" as const,
+    account: ACCOUNT,
+    amountRaw: ONE_GLC,
+  };
 
   it("passes when every on-chain gate is open", async () => {
     await expect(preflightRobinhoodDeposit(params)).resolves.toBeUndefined();
@@ -161,6 +169,7 @@ describe("depositToRobinhoodReserve", () => {
   const params = {
     provider: {} as never,
     deployment: DEPLOYMENT,
+    route: "RhnToGlc" as const,
     account: ACCOUNT,
     amountRaw: ONE_GLC,
     destination: DESTINATION,
@@ -200,6 +209,79 @@ describe("depositToRobinhoodReserve", () => {
     // route id would authorize a payout on the wrong network.
     expect(deposit![0].args).toEqual([CONTRACT_ROUTE_IDS.RhnToGlc, ONE_GLC, DESTINATION]);
     expect(CONTRACT_ROUTE_IDS.RhnToGlc).toBe(0x02);
+  });
+
+  describe("the RhnToSol route", () => {
+    /*
+     * The cross route's own deposit. Same function, same gates, one
+     * different byte — and that byte is the whole thing the contract cannot
+     * recover afterwards: `destination` is opaque bytes it never parses, so
+     * the route is what tells the service they name a Solana pubkey rather
+     * than a Goldcoin address.
+     *
+     * The payload here is 32 raw bytes (`validate_solana_destination` reads
+     * that form first, by length), not the base58 text.
+     */
+    const SOLANA_DESTINATION = `0x${"ab".repeat(32)}` as const;
+    const rhnToSolParams = {
+      ...params,
+      route: "RhnToSol" as const,
+      destination: SOLANA_DESTINATION,
+    };
+
+    it("deposits on route id 0x04 with the 32-byte payload unchanged", async () => {
+      await depositToRobinhoodReserve(rhnToSolParams);
+
+      const deposit = writeContract.mock.calls.find(
+        ([call]) => call.functionName === "deposit",
+      );
+      expect(deposit).toBeDefined();
+      expect(deposit![0].args).toEqual([
+        CONTRACT_ROUTE_IDS.RhnToSol,
+        ONE_GLC,
+        SOLANA_DESTINATION,
+      ]);
+      expect(CONTRACT_ROUTE_IDS.RhnToSol).toBe(0x04);
+      // And never the sibling's id: the two routes share a contract, a
+      // token and a window, so the id is the only thing distinguishing the
+      // obligation the contract stores.
+      expect(deposit![0].args[0]).not.toBe(CONTRACT_ROUTE_IDS.RhnToGlc);
+    });
+
+    it("reads liveness for the route it is about to deposit on", async () => {
+      // Each route is gated independently on-chain. Checking `0x02`'s
+      // liveness and then depositing on `0x04` would be a preflight about a
+      // different route — which the contract would then revert, after the
+      // approval had already been signed and paid for.
+      await depositToRobinhoodReserve(rhnToSolParams);
+
+      const liveness = readContract.mock.calls.filter(
+        ([call]) => call.functionName === "isRouteLive",
+      );
+      expect(liveness.length).toBeGreaterThan(0);
+      for (const [call] of liveness) {
+        expect(call.args).toEqual([CONTRACT_ROUTE_IDS.RhnToSol]);
+      }
+    });
+
+    it("still refuses on every gate the sibling refuses on", async () => {
+      // The route changes which `isRouteLive` is read and nothing else: the
+      // token check, the decimals check, the balance and the contract's own
+      // inbound bounds all apply identically, and a cross-route deposit must
+      // not have quietly skipped any of them.
+      for (const reads of [
+        { isRouteLive: false },
+        { token: "0x0000000000000000000000000000000000000001" },
+        { decimals: 6 },
+        { balanceOf: 0n },
+        { limits: { ...LIMITS, inboundMax: 1n } },
+      ]) {
+        vi.clearAllMocks();
+        healthyReads(reads);
+        await expect(depositToRobinhoodReserve(rhnToSolParams)).rejects.toThrow();
+        expect(writeContract).not.toHaveBeenCalled();
+      }
+    });
   });
 
   it("refuses before signing anything when preflight fails", async () => {

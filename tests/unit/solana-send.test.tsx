@@ -82,7 +82,7 @@ function connectAndConfigure() {
 
 const DEPOSIT_PARAMS = {
   amountAtomic: 1n,
-  goldcoinAddress: "MzDXwBbmkg8ZTbNMqU",
+  destination: "MzDXwBbmkg8ZTbNMqU",
   obligationIndex: 0,
 };
 
@@ -119,7 +119,7 @@ describe("useDepositToReserve — deposit", () => {
     await expect(
       result.current.deposit({
         amountAtomic: 1n,
-        goldcoinAddress: "abc",
+        destination: "abc",
         obligationIndex: 0,
       }),
     ).rejects.toThrow(/not connected/i);
@@ -132,7 +132,7 @@ describe("useDepositToReserve — deposit", () => {
     await expect(
       result.current.deposit({
         amountAtomic: 1n,
-        goldcoinAddress: "abc",
+        destination: "abc",
         obligationIndex: 0,
       }),
     ).rejects.toThrow(/program id is not configured/i);

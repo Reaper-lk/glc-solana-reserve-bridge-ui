@@ -75,19 +75,31 @@ function chainsWith(states: Partial<Record<string, RouteState>>): ChainsViewDto 
   };
 }
 
+/**
+ * Every route the backend names, available. Six entries, because every one
+ * of them is implemented and therefore counted — this used to be four, and
+ * the two missing entries were the two the strip could not see.
+ */
 const ALL_AVAILABLE: Record<string, RouteState> = {
   GlcToSol: "available",
   SolToGlc: "available",
   GlcToRhn: "available",
   RhnToGlc: "available",
+  SolToRhn: "available",
+  RhnToSol: "available",
 };
+
+/** Every route in one state, for the outage cases. */
+function allIn(state: RouteState): Record<string, RouteState> {
+  return Object.fromEntries(Object.keys(ALL_AVAILABLE).map((id) => [id, state]));
+}
 
 describe("systemRouteAvailability — the five states", () => {
   it("every executable route enabled and available", () => {
     expect(systemRouteAvailability(chainsWith(ALL_AVAILABLE))).toEqual({
       kind: "all-available",
-      total: 4,
-      available: 4,
+      total: 6,
+      available: 6,
       disabled: 0,
       unavailable: 0,
     });
@@ -98,8 +110,8 @@ describe("systemRouteAvailability — the five states", () => {
       systemRouteAvailability(chainsWith({ ...ALL_AVAILABLE, GlcToRhn: "disabled" })),
     ).toEqual({
       kind: "some-disabled",
-      total: 4,
-      available: 3,
+      total: 6,
+      available: 5,
       disabled: 1,
       unavailable: 0,
     });
@@ -110,8 +122,8 @@ describe("systemRouteAvailability — the five states", () => {
       systemRouteAvailability(chainsWith({ ...ALL_AVAILABLE, RhnToGlc: "unavailable" })),
     ).toEqual({
       kind: "some-unavailable",
-      total: 4,
-      available: 3,
+      total: 6,
+      available: 5,
       disabled: 0,
       unavailable: 1,
     });
@@ -130,8 +142,8 @@ describe("systemRouteAvailability — the five states", () => {
       ),
     ).toEqual({
       kind: "some-disabled-and-unavailable",
-      total: 4,
-      available: 2,
+      total: 6,
+      available: 4,
       disabled: 1,
       unavailable: 1,
     });
@@ -143,38 +155,54 @@ describe("systemRouteAvailability — the five states", () => {
         chainsWith({
           GlcToSol: "unavailable",
           SolToGlc: "unavailable",
+          SolToRhn: "unavailable",
           GlcToRhn: "disabled",
           RhnToGlc: "disabled",
+          RhnToSol: "disabled",
         }),
       ),
     ).toEqual({
       kind: "none-available",
-      total: 4,
+      total: 6,
       available: 0,
-      disabled: 2,
-      unavailable: 2,
+      disabled: 3,
+      unavailable: 3,
     });
+  });
+
+  it("reports a maintenance pause as temporary, never as disabled", () => {
+    // The production state: every Robinhood-legged route built and switched
+    // ON, and every one reporting `available: false` while a reserve is held
+    // shut. All four land in the `unavailable` bucket — nobody flipped a
+    // switch, so the copy must not send anyone looking for one — and the
+    // Solana pair, which is unaffected, keeps running.
+    const maintenance = systemRouteAvailability(
+      fixtures.chainsFixture(now, { robinhoodOpen: true, robinhoodAvailable: false }),
+    );
+    expect(maintenance).toEqual({
+      kind: "some-unavailable",
+      total: 6,
+      available: 2,
+      disabled: 0,
+      unavailable: 4,
+    });
+    expect(systemRouteMessage(maintenance)).toBe(SYSTEM_ROUTE_MESSAGE.unavailable);
+  });
+
+  it("reports a maintenance pause across ALL six as a full outage", () => {
+    // The same cause reaching every route. The headline drops the
+    // disabled/temporary split, because with nothing usable at all which
+    // gate closed each route is detail for /status.
+    const maintenance = systemRouteAvailability(chainsWith(allIn("unavailable")));
+    expect(maintenance).toMatchObject({ kind: "none-available", total: 6, available: 0 });
+    expect(systemRouteMessage(maintenance)).toBe(SYSTEM_ROUTE_MESSAGE.none);
   });
 
   it("full outage does not split by cause", () => {
     // Every route disabled and every route gated shut are different
     // situations, and with nothing usable at all neither is the headline.
-    const allDisabled = systemRouteAvailability(
-      chainsWith({
-        GlcToSol: "disabled",
-        SolToGlc: "disabled",
-        GlcToRhn: "disabled",
-        RhnToGlc: "disabled",
-      }),
-    );
-    const allGated = systemRouteAvailability(
-      chainsWith({
-        GlcToSol: "unavailable",
-        SolToGlc: "unavailable",
-        GlcToRhn: "unavailable",
-        RhnToGlc: "unavailable",
-      }),
-    );
+    const allDisabled = systemRouteAvailability(chainsWith(allIn("disabled")));
+    const allGated = systemRouteAvailability(chainsWith(allIn("unavailable")));
     expect(allDisabled.kind).toBe("none-available");
     expect(allGated.kind).toBe("none-available");
     expect(systemRouteMessage(allDisabled)).toBe(systemRouteMessage(allGated));
@@ -192,9 +220,8 @@ describe("bucketing rules", () => {
         RhnToGlc: "unavailable" as const,
       },
       {
+        ...allIn("disabled"),
         GlcToSol: "unavailable" as const,
-        SolToGlc: "disabled" as const,
-        GlcToRhn: "disabled" as const,
         RhnToGlc: "unavailable" as const,
       },
     ]) {
@@ -238,18 +265,38 @@ describe("bucketing rules", () => {
     };
     expect(systemRouteAvailability(legacy)).toMatchObject({
       kind: "some-unavailable",
-      available: 3,
+      available: 5,
       disabled: 0,
       unavailable: 1,
     });
   });
 
-  it("counts only EXECUTABLE routes", () => {
-    // `SolToRhn`/`RhnToSol` are `implemented: false` on every deployment.
-    // Counting them would make a warning permanent and meaningless.
+  it("counts every route the registry reports as implemented", () => {
+    // All six, now that the backend implements all six. It used to be four,
+    // and the two it left out were left out by reading `implemented` — not
+    // by naming them — which is why this needed no new arm to follow the
+    // backend.
     expect(fixtures.chainsFixture(now).routes).toHaveLength(6);
     expect(systemRouteAvailability(chainsWith(ALL_AVAILABLE))).toMatchObject({
-      total: 4,
+      total: 6,
+    });
+  });
+
+  it("counts only EXECUTABLE routes", () => {
+    // A route a deployment reports `implemented: false` is structurally
+    // inert there: counting it would make a warning permanent and
+    // meaningless, because no operator action clears it.
+    const base = chainsWith(ALL_AVAILABLE);
+    const inert: ChainsViewDto = {
+      ...base,
+      routes: base.routes.map((route) =>
+        route.id === "RhnToSol" ? { ...route, implemented: false } : route,
+      ),
+    };
+    expect(systemRouteAvailability(inert)).toMatchObject({
+      kind: "all-available",
+      total: 5,
+      available: 5,
     });
   });
 
