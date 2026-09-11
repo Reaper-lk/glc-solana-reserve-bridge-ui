@@ -136,7 +136,14 @@ export class MockBridgeClient implements BridgeApiClient {
   }
 
   async getStats() {
-    return this.delay(bridgeStatsSchema.parse(fixtures.statsFixture()));
+    return this.delay(
+      bridgeStatsSchema.parse(
+        // Same scenario flag `getRobinhoodReserve` reads, so the two
+        // endpoints never disagree about whether this deployment has a
+        // Robinhood reserve at all.
+        fixtures.statsFixture({ robinhoodOpen: this.scenario === "robinhood-open" }),
+      ),
+    );
   }
 
   /**

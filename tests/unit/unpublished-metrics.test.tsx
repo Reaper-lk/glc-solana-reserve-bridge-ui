@@ -78,21 +78,54 @@ beforeEach(() => {
 });
 
 describe("what the backend does and does not publish", () => {
-  it("publishes a settled-volume counter for the Goldcoin and Solana reserves only", () => {
-    // `BridgeStats` carries exactly two `ReserveStats` members. There is
-    // no `robinhood_reserve`, so there is no third counter to show — and
-    // if one is ever added, this is the test that says so.
+  it("publishes a settled-volume counter for all three reserves", () => {
+    // `BridgeStats` carried exactly two `ReserveStats` members until
+    // backend PR #79 added `robinhood_reserve`. Three counters now, and if
+    // a fourth reserve is ever added, this is the test that says so.
     const members = Object.keys(bridgeStatsSchema.shape).filter((key) =>
       key.endsWith("_reserve"),
     );
-    expect(members.sort()).toEqual(["goldcoin_reserve", "solana_reserve"]);
+    expect(members.sort()).toEqual([
+      "goldcoin_reserve",
+      "robinhood_reserve",
+      "solana_reserve",
+    ]);
   });
 
-  it("publishes no cumulative volume figure on the Robinhood reserve", () => {
+  it("keeps the Robinhood reserve's /stats figures nullable, so absent is never zero", () => {
+    // The whole difference between this member and the other two. A
+    // deployment with no `[reserve.robinhood]` section sends nulls, and a
+    // schema that defaulted them would publish a balance the bridge
+    // explicitly declined to claim.
+    const parsed = bridgeStatsSchema.parse({
+      ...fixtures.statsFixture(),
+      robinhood_reserve: {
+        ledger_availability: "not_configured",
+        paused: null,
+        available_capacity: null,
+        settled_volume_atomic: null,
+        accrued_fees_atomic: null,
+      },
+    });
+    expect(parsed.robinhood_reserve).toEqual({
+      ledger_availability: "not_configured",
+      paused: null,
+      available_capacity: null,
+      settled_volume_atomic: null,
+      accrued_fees_atomic: null,
+    });
+  });
+
+  it("publishes no cumulative volume figure on GET /robinhood/reserve", () => {
     // What `GET /robinhood/reserve` does carry is a balance, a protected
     // minimum, reserved liquidity, pending obligations, capacity and
     // accrued FEES. None of those is settled volume: capacity and balance
     // are point-in-time positions, and accrued fees are revenue.
+    //
+    // `GET /stats`' `robinhood_reserve` is where the cumulative counter
+    // does live, as of backend PR #79 — a different endpoint, asserted
+    // above. This one is unchanged, so nothing may read a settled volume
+    // out of it.
     const fields = Object.keys(robinhoodReserveSchema.shape);
     expect(fields.some((field) => /settled|volume|completed/i.test(field))).toBe(false);
     expect(fields).toContain("balance_atomic");

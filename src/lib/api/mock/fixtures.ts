@@ -418,7 +418,26 @@ export function healthFixture(): PublicHealthDto {
   };
 }
 
-export function statsFixture(): BridgeStatsDto {
+/**
+ * Mock `GET /stats`.
+ *
+ * `robinhoodOpen` mirrors {@link robinhoodReserveFixture}'s `open`, and the
+ * mock client passes the same `MockScenario === "robinhood-open"` to both:
+ * a mock backend that called the Robinhood reserve configured on `/stats`
+ * and unconfigured on `/robinhood/reserve` would be describing a state no
+ * real deployment can be in.
+ *
+ * Default is the unconfigured one, and — exactly as for
+ * {@link robinhoodReserveFixture} — that is not a placeholder but what a
+ * deployment with no `[reserve.robinhood]` section really answers: NULLS,
+ * never zeroes.
+ */
+export interface StatsFixtureOptions {
+  /** Report a live Robinhood reserve ledger row, as "robinhood-open" does. */
+  readonly robinhoodOpen?: boolean;
+}
+
+export function statsFixture(options: StatsFixtureOptions = {}): BridgeStatsDto {
   return {
     goldcoin_paused: false,
     solana_paused: false,
@@ -462,6 +481,27 @@ export function statsFixture(): BridgeStatsDto {
       settled_volume_atomic: "6110000000000000",
       accrued_fees_atomic: "61100000000000",
     },
+    // The third reserve, backend PR #79. Its figures are CANONICAL
+    // 8-decimal amounts like the Goldcoin member's — never the custody
+    // contract's native 18, which only `/robinhood/reserve`'s `onchain`
+    // block uses. Every one of them is `null` when there is no reserve,
+    // which is the property this fixture exists to preserve rather than
+    // paper over: a zero would claim an empty reserve that exists.
+    robinhood_reserve: options.robinhoodOpen
+      ? {
+          ledger_availability: "available",
+          paused: false,
+          available_capacity: "120000000000000",
+          settled_volume_atomic: "31000000000000",
+          accrued_fees_atomic: "775000000000",
+        }
+      : {
+          ledger_availability: "not_configured",
+          paused: null,
+          available_capacity: null,
+          settled_volume_atomic: null,
+          accrued_fees_atomic: null,
+        },
     goldcoin_indexer_halted: false,
     goldcoin_indexer_seconds_since_tick: 8,
     solana_indexer_seconds_since_tick: 4,

@@ -13,8 +13,10 @@ import {
   SOLANA_GLC,
 } from "@/lib/bridge";
 import type { DestinationReserve } from "@/lib/bridge";
+import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import type { SettlementRoute } from "@/lib/api/schemas/common";
 import type { BridgeStatsDto } from "@/lib/api/schemas/stats";
+import { robinhoodReserveLedger } from "@/lib/api/schemas/stats";
 
 function Stat({
   label,
@@ -59,23 +61,27 @@ function Stat({
  * (docs/05-reserve-accounting.md) — so the decimals belong to the reserve,
  * not to a single global token constant.
  *
- * The Robinhood reserve is `null` here, and that is a statement about the
- * API rather than about the reserve: `GET /robinhood/reserve` publishes a
- * balance, a protected minimum, reserved liquidity, pending obligations,
- * capacity and accrued fees — but no cumulative settled-volume counter, and
- * `GET /stats` has no `robinhood_reserve` member at all. Nothing in this
- * app may stand in for it. Summing what /stats does publish, deriving a
- * figure from capacity movement, or reading the rolling-24h window (which
- * measures headroom remaining, not volume settled) would each produce a
- * number the bridge has never asserted, on the one page whose entire
- * premise is that every figure is one it has.
+ * The Robinhood reserve publishes one too, as of backend PR #79:
+ * `/stats`' `robinhood_reserve.settled_volume_atomic`, in the CANONICAL 8
+ * decimals that reserve's ledger is kept in — deliberately not the custody
+ * contract's native 18, which `GET /robinhood/reserve`'s `onchain` figures
+ * use. (`GET /robinhood/reserve` itself still has no cumulative counter;
+ * this is the member that added one.)
+ *
+ * It is `null` in every case in which the backend declined to state the
+ * figure — member absent, ledger `not_configured` or `unavailable`, or the
+ * counter itself `null` — and nothing in this app may stand in for it
+ * there. Summing what /stats does publish, deriving a figure from capacity
+ * movement, or reading the rolling-24h window (which measures headroom
+ * remaining, not volume settled) would each produce a number the bridge
+ * has never asserted, on the one page whose entire premise is that every
+ * figure is one it has.
  *
  * A reserve that returns `null` gets NO CARD. It previously got one
  * reading "Not published", which put a permanent unfinished-looking slot
  * in the grid to report the absence of a metric a reader never asked
  * after — and invited exactly the "just fill it in from somewhere" fix
- * this map exists to prevent. When the backend adds the counter, adding it
- * here brings the card back.
+ * this map exists to prevent.
  */
 interface SettledVolume {
   readonly atomic: string;
@@ -94,7 +100,11 @@ const SETTLED_VOLUME: Record<
     atomic: stats.solana_reserve.settled_volume_atomic,
     decimals: SOLANA_GLC.decimals,
   }),
-  robinhood: () => null,
+  robinhood: (stats) => {
+    const ledger = robinhoodReserveLedger(stats);
+    if (!ledger || ledger.settled_volume_atomic === null) return null;
+    return { atomic: ledger.settled_volume_atomic, decimals: GOLDCOIN_DECIMALS };
+  },
 };
 
 /**

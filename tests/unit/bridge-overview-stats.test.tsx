@@ -123,19 +123,40 @@ describe("BridgeOverviewStats", () => {
     expect(await screen.findAllByText(/5,000\.00/)).toHaveLength(2);
   });
 
-  it("shows no Robinhood settled-volume card at all", async () => {
-    // No DTO carries the figure: `GET /stats` has no `robinhood_reserve`
-    // member, and `GET /robinhood/reserve` publishes a balance, capacity,
-    // pending obligations and accrued fees but no cumulative
-    // settled-volume counter. A zero would be invented, the rolling-24h
-    // window measures headroom rather than volume, and the placeholder
-    // this replaced ("Not published") left a permanently unfinished slot
-    // in the grid to announce a metric nobody asked after.
+  it("shows no Robinhood settled-volume card when the reserve is not configured", async () => {
+    // The default fixture is a deployment with no `[reserve.robinhood]`
+    // section, so `/stats` sends `ledger_availability: "not_configured"`
+    // and `settled_volume_atomic: null`. A zero would be invented, the
+    // rolling-24h window measures headroom rather than volume, and the
+    // placeholder this replaced ("Not published") left a permanently
+    // unfinished slot in the grid to announce a metric nobody asked after.
     renderWithQueryClient(<BridgeOverviewStats />);
     await screen.findByText(/Settled into Solana/);
 
     expect(screen.queryByText("Not published")).toBeNull();
     expect(screen.queryByText(/Settled into Robinhood/)).toBeNull();
+  });
+
+  it("shows a Robinhood settled-volume card once /stats publishes a real one", async () => {
+    // Backend PR #79's `robinhood_reserve.settled_volume_atomic`, in the
+    // CANONICAL 8 decimals that reserve's ledger is kept in — not the
+    // custody contract's native 18, which would be wrong by ten orders of
+    // magnitude.
+    getStats.mockResolvedValue({
+      ...fixtures.statsFixture(),
+      robinhood_reserve: {
+        ledger_availability: "available",
+        paused: true,
+        available_capacity: "153971500000000",
+        settled_volume_atomic: "48500000000",
+        accrued_fees_atomic: "2880600000000",
+      },
+    });
+    renderWithQueryClient(<BridgeOverviewStats />);
+
+    expect(await screen.findByText(/Settled into Robinhood/)).toBeInTheDocument();
+    // 48500000000 at 8dp is 485 GLC, not 48.5 (6dp) and not 0.0000000485 (18dp).
+    expect(screen.getByText(/485\.00/)).toBeInTheDocument();
   });
 
   it("keeps the remaining cards a full grid row", async () => {
