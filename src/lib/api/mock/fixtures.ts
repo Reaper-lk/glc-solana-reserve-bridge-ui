@@ -45,6 +45,18 @@ export const BRIDGE_FEE_BPS = 300;
 export const ROBINHOOD_FEE_BPS = 250;
 
 /**
+ * The authoritative source-side minimum every route publishes: 100 GLC in
+ * canonical 8-decimal units, matching the backend's
+ * `min_transfer::SOURCE_MINIMUM_CANONICAL`.
+ *
+ * One figure for every route because that IS the policy — a per-route
+ * minimum would be a commercial lever the bridge does not have. Kept as a
+ * named constant so a test asserting the rendered "Min 100 GLC" can
+ * derive it from here rather than writing the number out.
+ */
+export const SOURCE_MINIMUM_ATOMIC = "10000000000";
+
+/**
  * Quota fields are in the on-chain mint's atomic units (6 decimals), the
  * unit the on-chain rolling window records — NOT the canonical 8-decimal
  * unit gross/fee/net figures use. Full pilot window: 100,000 GLC per
@@ -184,6 +196,7 @@ export function chainsFixture(
     enabled: robinhoodOpen,
     disabled_reason: robinhoodOpen ? null : ROUTE_UNAVAILABLE_MESSAGE,
     implemented: true,
+    min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
     available: robinhoodAvailable,
     unavailable_reason: robinhoodAvailable
       ? null
@@ -206,6 +219,7 @@ export function chainsFixture(
         enabled: true,
         disabled_reason: null,
         implemented: true,
+        min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
         available: true,
         unavailable_reason: null,
       },
@@ -216,21 +230,35 @@ export function chainsFixture(
         enabled: true,
         disabled_reason: null,
         implemented: true,
+        min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
         available: true,
         unavailable_reason: null,
       },
       robinhood("GlcToRhn"),
       robinhood("RhnToGlc"),
+      // The two Solana<->Robinhood routes: IMPLEMENTED since Phase H, and
+      // shipped shut.
+      //
+      // `implemented: true` says the settlement machinery exists
+      // (`Route::as_direction()` answers `Some`), and nothing more. It is
+      // not permission to move value and it does not imply either gate:
+      // both routes stay `enabled: false` and `available: false` here,
+      // which is what the real backend reports for them — `default_enabled`
+      // is `false` for every route that postdates the registry, so an
+      // unmodified deployment ships them closed.
+      //
+      // The distinction is load-bearing for the UI: `implemented` is what
+      // separates "coming soon" from "temporarily unavailable", and a
+      // fixture claiming these routes do not exist made the app describe a
+      // shipped route as an absent one.
       {
         id: "SolToRhn",
         source_chain: "solana",
         destination_chain: "robinhood",
         enabled: false,
         disabled_reason: ROUTE_UNAVAILABLE_MESSAGE,
-        implemented: false,
-        // A route with no settlement machinery can admit nothing, and the
-        // backend answers `available: false` for it before it looks at any
-        // reserve at all.
+        implemented: true,
+        min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
         available: false,
         unavailable_reason: ROUTE_UNAVAILABLE_MESSAGE,
       },
@@ -240,7 +268,8 @@ export function chainsFixture(
         destination_chain: "solana",
         enabled: false,
         disabled_reason: ROUTE_UNAVAILABLE_MESSAGE,
-        implemented: false,
+        implemented: true,
+        min_transfer_atomic: SOURCE_MINIMUM_ATOMIC,
         available: false,
         unavailable_reason: ROUTE_UNAVAILABLE_MESSAGE,
       },

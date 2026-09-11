@@ -1,12 +1,7 @@
 import type { RobinhoodLimitsDto } from "@/lib/api/schemas/robinhood";
 import { isRobinhoodAvailable } from "@/lib/api/schemas/robinhood";
-import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { ROBINHOOD_DECIMALS } from "./robinhood-amount";
-import {
-  atomicRescaleCeil,
-  atomicRescaleFloor,
-  minimumGrossCanonicalForMinTransferAmount,
-} from "./canonical";
+import { atomicRescaleFloor } from "./canonical";
 
 /**
  * Which side of the Robinhood custody contract a transfer touches.
@@ -17,20 +12,29 @@ import {
  */
 export type RobinhoodContractLeg = "deposit" | "payout";
 
+/**
+ * There is deliberately no `robinhoodPerTransferMinimum` here.
+ *
+ * One used to exist, deriving an entry floor from the contract's
+ * `inboundMin`/`outboundMin` and grossing the payout leg up through the
+ * fee, because `outboundMin` bounds the NET payout. The arithmetic was
+ * right; the rule was not. A chain's floor is not a statement about what
+ * a user may type, and deriving one from it produced entry minimums that
+ * moved with the fee — "102.061856 GLC", "102.56410256 GLC".
+ *
+ * The minimum is now one published policy figure, identical on every
+ * route: `GET /chains`' `min_transfer_atomic`, read by
+ * `routeSourceMinimum` in `./route-resolution` and rendered without
+ * adjustment. If you find yourself about to add a fee-aware minimum
+ * helper back to this file, that is the bug.
+ */
+
 const MAX_FIELD: Record<
   RobinhoodContractLeg,
   "inbound_max_atomic" | "outbound_max_atomic"
 > = {
   deposit: "inbound_max_atomic",
   payout: "outbound_max_atomic",
-};
-
-const MIN_FIELD: Record<
-  RobinhoodContractLeg,
-  "inbound_min_atomic" | "outbound_min_atomic"
-> = {
-  deposit: "inbound_min_atomic",
-  payout: "outbound_min_atomic",
 };
 
 /**
@@ -140,77 +144,6 @@ export function robinhoodPerTransferMaximum(
   const raw = limits[MAX_FIELD[leg]];
   if (raw === null) return undefined;
   return atomicRescaleFloor(raw, ROBINHOOD_DECIMALS, sourceDecimals);
-}
-
-/**
- * The authoritative per-transaction MINIMUM for one Robinhood leg, in the
- * SOURCE token's own base units — the counterpart to
- * {@link robinhoodPerTransferMaximum}, and subject to exactly the same
- * "unknown stays unknown" rule.
- *
- * # The two legs need different arithmetic, and that is the whole point
- *
- * `inboundMin` and `outboundMin` are both floors the contract applies to
- * the amount IT sees. Which quantity that is differs by leg:
- *
- * - `deposit` (`RhnToGlc`): `deposit()` checks `amount < inboundMin`
- *   against the tokens actually transferred in, which is exactly the
- *   figure the user types on this route — the bridge fee is charged later,
- *   at fold time, on the Goldcoin side. The floor therefore applies as-is.
- * - `payout` (`GlcToRhn`): `executePayout` checks `req.amount <
- *   outboundMin` against the NET this service pays out after `GlcToRhn`'s
- *   fee, not the gross a user spends on the Goldcoin side. Publishing
- *   `outboundMin` raw would invite an amount whose net lands under it —
- *   accepted here, priced here, and then reverted on chain with
- *   `AmountBelowMinimum`. The floor shown must be the smallest GROSS whose
- *   net clears it.
- *
- * That second case is the Solana `min_transfer_amount` situation exactly:
- * a NET-side floor whose user-facing GROSS entry minimum moves with the
- * fee. It reuses the same
- * {@link minimumGrossCanonicalForMinTransferAmount} search, at
- * `glc_to_rhn_fee_bps` — this route's own configured rate, never the
- * Solana one and never `bridge_fee_bps`, which is `RhnToGlc`'s.
- *
- * # Units and rounding
- *
- * CEILED at every narrowing, the opposite of a maximum's floor and for the
- * same reason: a rounded bound must never be more permissive than the
- * chain's. The `payout` leg narrows 18dp -> canonical 8dp before the fee
- * search, because that search works in canonical units; the contract's own
- * `_requireCanonicalAmount` means `outboundMin` is already an exact
- * multiple of 10^10, so that step is exact in practice and the ceil only
- * guards a deployment where it is not.
- */
-export function robinhoodPerTransferMinimum(
-  leg: RobinhoodContractLeg | null,
-  limits: RobinhoodLimitsDto | undefined,
-  sourceDecimals: number,
-): string | undefined {
-  if (leg === null) return undefined;
-  if (!limits || !isRobinhoodAvailable(limits.availability)) return undefined;
-  const raw = limits[MIN_FIELD[leg]];
-  if (raw === null) return undefined;
-
-  if (leg === "deposit") {
-    return atomicRescaleCeil(raw, ROBINHOOD_DECIMALS, sourceDecimals);
-  }
-
-  // A rate at or above 100% leaves no gross whose net clears anything,
-  // and the search throws rather than looping forever. That is a
-  // misconfigured backend, not a user-facing state: report the floor as
-  // unknown — which blanks it — instead of taking the form down with an
-  // exception thrown inside a render.
-  if (limits.glc_to_rhn_fee_bps < 0 || limits.glc_to_rhn_fee_bps >= 10_000) {
-    return undefined;
-  }
-  const minNetCanonical = atomicRescaleCeil(raw, ROBINHOOD_DECIMALS, GOLDCOIN_DECIMALS);
-  const minGrossCanonical = minimumGrossCanonicalForMinTransferAmount(
-    minNetCanonical,
-    limits.glc_to_rhn_fee_bps,
-    GOLDCOIN_DECIMALS,
-  );
-  return atomicRescaleCeil(minGrossCanonical, GOLDCOIN_DECIMALS, sourceDecimals);
 }
 
 /**

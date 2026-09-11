@@ -29,7 +29,7 @@ import {
   CANONICAL_TO_ROBINHOOD_SCALE,
   resolveRoute,
   robinhoodPerTransferMaximum,
-  robinhoodPerTransferMinimum,
+  routeSourceMinimum,
   robinhoodRollingRemaining,
   robinhoodPredepositVerdict,
   robinhoodRawToCanonicalExact,
@@ -55,13 +55,10 @@ import type {
   SolanaGovernedRoute,
 } from "@/lib/bridge";
 import {
-  atomicRescaleCeil,
   atomicRescaleFloor,
   canonicalToSourceRawExact,
-  minimumGrossCanonicalForMinTransferAmount,
   sourceRawToCanonical,
 } from "@/lib/bridge/canonical";
-import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
 import { formatBaseUnits, formatDisplayDecimalOrRaw } from "@/lib/format/amount";
 import { routes } from "@/lib/config/links";
 import {
@@ -253,23 +250,44 @@ export function BridgeForm() {
   );
 
   /**
-   * This pair's per-transaction FLOOR, in the same units.
+   * **The source-side minimum for this pair**, in the source token's own
+   * base units — the SAME rule on every route, published by the backend.
    *
-   * `inboundMin`/`outboundMin` as the deployed contract holds them — and,
-   * on `GlcToRhn`, grossed up through that route's own fee, because the
-   * contract's floor there bounds the NET payout rather than the gross a
-   * user types. `robinhoodPerTransferMinimum` is where that distinction
-   * lives; showing `outboundMin` raw is the "Min 99 GLC" bug, which is
-   * why this line is no longer blank.
+   * # Why nothing is computed here any more
+   *
+   * This used to be derived per route from whichever chain floor governed
+   * it, grossed up through the fee wherever that floor bounded the NET
+   * rather than the gross. The arithmetic was right and the rule was
+   * wrong: a chain's net-side floor is not a statement about what a user
+   * may type, and deriving one from it produced entry minimums like
+   * "102.061856 GLC" that moved every time a fee did.
+   *
+   * The backend now states the rule directly — one policy floor, the same
+   * value `POST /transfers` and `POST /quote` admit against — and this
+   * renders it. In particular it is NOT adjusted for the fee: the fee is
+   * deducted after the minimum is checked, so a minimum transfer
+   * legitimately delivers less than this, and grossing the displayed
+   * figure up would publish a floor the backend does not apply.
+   *
+   * `undefined` when the route is unknown to this response or the backend
+   * predates the field — never a fallback figure, which would be this
+   * client inventing a limit again.
    */
-  const robinhoodMinimum = useMemo(
+  // Keyed by the two chain ids rather than the resolved route, for the
+  // same compiler reason `robinhoodLeg` above is: `route` has already
+  // been handed to `routeAvailability` by this point, after which the
+  // React Compiler refuses it — or anything derived from it — as a
+  // dependency. `RouteView` carries both chain ids, so nothing is
+  // restated to achieve it.
+  const sourceMinimum = useMemo(
     () =>
-      robinhoodPerTransferMinimum(
-        robinhoodLeg,
-        robinhoodLimits.data,
+      routeSourceMinimum(
+        chains.data,
+        sourceChainId,
+        destinationChainId,
         sourceToken.decimals,
       ),
-    [robinhoodLeg, robinhoodLimits.data, sourceToken.decimals],
+    [chains.data, sourceChainId, destinationChainId, sourceToken.decimals],
   );
 
   /**
@@ -284,47 +302,33 @@ export function BridgeForm() {
   );
 
   const amountBounds = useMemo(() => {
+    // The MINIMUM is the same rule on every route and comes from one
+    // place — `GET /chains`' per-route `min_transfer_atomic` — so it sits
+    // outside the branch below. Only the MAXIMUM still differs by route
+    // family, because the two chains really do enforce different
+    // ceilings: the Solana program's `per_transfer_limit` for the
+    // Solana-governed pairs, `GlcRobinhoodBridge`'s
+    // `inboundMax`/`outboundMax` for the Robinhood ones.
     if (!limitsGovernRoute) {
-      // A Robinhood-legged pair. Both bounds are the deployed contract's
-      // own — `inboundMin`/`inboundMax` or `outboundMin`/`outboundMax`,
-      // converted into this source token's units — and either is absent
-      // only while the read has not landed or the contract could not be
-      // reached.
-      //
-      // The MINIMUM is no longer omitted. What made it unsafe was taking
-      // it raw: on `GlcToRhn` the contract's floor bounds the NET payout,
-      // not the gross the user types, so the raw figure is the "Min 99
-      // GLC" bug. `robinhoodPerTransferMinimum` grosses that leg up
-      // through `glc_to_rhn_fee_bps` and leaves the deposit leg — whose
-      // floor really does bound the typed amount — alone.
       return {
         decimals: sourceToken.decimals,
         symbol: sourceToken.symbol,
-        minimum: robinhoodMinimum,
+        minimum: sourceMinimum,
         maximum: robinhoodMaximum,
       };
     }
     if (!limits.data) return null;
-    const minimumCanonical = minimumGrossCanonicalForMinTransferAmount(
-      String(limits.data.min_transfer_amount),
-      limits.data.bridge_fee_bps,
-      SOLANA_GLC.decimals,
-    );
     return {
       decimals: sourceToken.decimals,
       symbol: sourceToken.symbol,
-      minimum: atomicRescaleCeil(
-        minimumCanonical,
-        GOLDCOIN_DECIMALS,
-        sourceToken.decimals,
-      ),
+      minimum: sourceMinimum,
       maximum: atomicRescaleFloor(
         String(limits.data.per_transfer_limit),
         SOLANA_GLC.decimals,
         sourceToken.decimals,
       ),
     };
-  }, [limits.data, sourceToken, limitsGovernRoute, robinhoodMinimum, robinhoodMaximum]);
+  }, [limits.data, sourceToken, limitsGovernRoute, sourceMinimum, robinhoodMaximum]);
 
   const amountValidation = amountBounds
     ? validateAmount(amountInput, amountBounds)
@@ -627,17 +631,61 @@ export function BridgeForm() {
    * This reads availability rather than deriving it, and it only chooses
    * which defined pair to show — it never makes a closed route usable.
    */
+  /**
+   * Picks the destination to land on when the SOURCE selector changes.
+   *
+   * # Why this is ranked rather than a single predicate
+   *
+   * It used to keep the current destination whenever that pair was merely
+   * `implemented`. That was indistinguishable from "usable" only while
+   * every implemented route was also open — and it stopped being true the
+   * moment Phase H shipped `SolToRhn`/`RhnToSol` built and switched off.
+   * Switching the source to Robinhood while the destination was Solana
+   * then landed on `RhnToSol`, a closed route, instead of falling through
+   * to `RhnToGlc`, an open one. Being implemented says the settlement
+   * machinery exists; it is not permission to move value, and it is not a
+   * reason to put a user in front of a route that cannot run.
+   *
+   * So an OPEN route is preferred over one that merely exists, and the
+   * user's own choice is preferred over the registry's order:
+   *
+   *   1. the destination already selected, if THIS pair is open
+   *   2. the first open destination from this source
+   *   3. the destination already selected, if nothing is open and the
+   *      verdict is `unknown` — `/chains` has not answered, so moving the
+   *      user on a guess would be worse than leaving them where they are
+   *   4. the first destination that at least exists and is not
+   *      structurally inert, then anything defined at all
+   *
+   * Nothing here opens a route or changes what the backend reports. The
+   * landing pair is still gated by every check that stood in front of it
+   * before, and steps 3–4 exist only so a source with no open destination
+   * still lands somewhere coherent rather than nowhere.
+   */
   function onSourceChange(nextSource: string) {
     const candidates = destinationsFor(nextSource);
-    const isUsable = (destinationId: string) => {
+    const verdictOf = (destinationId: string) => {
       const resolved = resolveRoute(nextSource, destinationId);
-      if (resolved.kind !== "route") return false;
-      return routeAvailability(chains.data, resolved.route).kind !== "unimplemented";
+      if (resolved.kind !== "route") return null;
+      return routeAvailability(chains.data, resolved.route).kind;
     };
+    const isOpen = (destinationId: string) => verdictOf(destinationId) === "open";
+    // Everything the selector may land on at all. `unimplemented` is the
+    // only verdict excluded: a route with no machinery behind it cannot
+    // become usable, so it is never a destination to fall back to.
+    const exists = (destinationId: string) => {
+      const kind = verdictOf(destinationId);
+      return kind !== null && kind !== "unimplemented";
+    };
+
+    const current = destinationChainId;
     const next =
-      isDefinedPair(nextSource, destinationChainId) && isUsable(destinationChainId)
-        ? destinationChainId
-        : (candidates.find(isUsable) ?? candidates[0] ?? destinationChainId);
+      (isOpen(current) ? current : undefined) ??
+      candidates.find(isOpen) ??
+      (verdictOf(current) === "unknown" ? current : undefined) ??
+      candidates.find(exists) ??
+      candidates[0] ??
+      current;
     selectPair(nextSource, next);
   }
 

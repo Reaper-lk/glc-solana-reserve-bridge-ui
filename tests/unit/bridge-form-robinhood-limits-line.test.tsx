@@ -8,7 +8,6 @@ import { BridgeForm } from "@/features/bridge/BridgeForm";
 import {
   ROBINHOOD_DECIMALS,
   robinhoodPerTransferMaximum,
-  robinhoodPerTransferMinimum,
   robinhoodRollingRemaining,
 } from "@/lib/bridge";
 import { atomicRescaleFloor } from "@/lib/bridge/canonical";
@@ -223,14 +222,16 @@ function asDisplayed(raw: string, decimals: number): string {
 function expected(leg: "deposit" | "payout") {
   const limits = openLimits();
   const decimals = DECIMALS[leg];
-  const min = robinhoodPerTransferMinimum(leg, limits, decimals);
   const max = robinhoodPerTransferMaximum(leg, limits, decimals);
   const remaining = robinhoodRollingRemaining(leg, limits, decimals);
-  if (min === undefined || max === undefined || remaining === undefined) {
-    throw new Error("the open fixture must publish all three figures");
+  if (max === undefined || remaining === undefined) {
+    throw new Error("the open fixture must publish a ceiling and a window");
   }
   return {
-    min: asDisplayed(min, decimals),
+    // The MINIMUM is not a contract figure and is not per leg: one
+    // published policy floor, the same on every route, which is why it is
+    // read straight from the route fixture rather than derived here.
+    min: asDisplayed(fixtures.SOURCE_MINIMUM_ATOMIC, GOLDCOIN_DECIMALS),
     max: asDisplayed(max, decimals),
     remaining: asDisplayed(remaining, decimals),
   };
@@ -241,7 +242,14 @@ async function selectGlcToRhn(user: ReturnType<typeof userEvent.setup>) {
   await selectNetwork(user, "Destination network", /Robinhood Chain/);
 }
 
-/** Puts the form on `RhnToGlc`. */
+/**
+ * Puts the form on `RhnToGlc` by selecting the SOURCE alone.
+ *
+ * Deliberately not naming the destination: `onSourceChange` prefers an
+ * OPEN destination, and with this fixture `RhnToGlc` is open while
+ * `RhnToSol` is built and shut. Landing anywhere else would mean the
+ * selector had gone back to preferring a route for merely existing.
+ */
 async function selectRhnToGlc(user: ReturnType<typeof userEvent.setup>) {
   await selectNetwork(user, "Source network", /Robinhood Chain/);
 }
@@ -422,7 +430,11 @@ describe("an unread window publishes nothing", () => {
     await waitFor(() => expect(getRobinhoodLimits).toHaveBeenCalled());
     // Not "0 GLC remaining today", which would say the route is done for
     // the day when nobody actually asked the chain.
-    expect(limitsLine()).toBeNull();
+    expect(limitsLine()).not.toContain("remaining today");
+    expect(limitsLine()).not.toContain("Max ");
+    // The published policy floor survives: it never came from the
+    // contract, so an unreachable contract cannot make it unknown.
+    expect(limitsLine()).toContain(`Min ${expected("payout").min}`);
   });
 
   it("keeps Min and Max when only the window is missing", async () => {

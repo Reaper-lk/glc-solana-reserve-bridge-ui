@@ -8,32 +8,38 @@ import { BridgeCard } from "@/features/bridge/BridgeCard";
 import type * as EnvModule from "@/lib/config/env";
 
 /**
- * Regression coverage for the "Min 99 GLC" bug, and its later "Min 100 GLC"
- * recurrence once the real bridge fee moved from 1% to 6%.
+ * The source-side minimum, and the three bugs it has had.
  *
- * The UI used to display and enforce `GET /limits`' `min_transfer_amount`
- * (a NET-side on-chain check, `limits.rs::enforce_transfer_amount` compares
- * it against the amount AFTER the bridge fee) directly as the GROSS
- * entry-side minimum. Then it used a fixed "100 GLC" constant tuned
- * specifically for a 1% fee (100 GLC gross nets to exactly 99 GLC at 1%) —
- * which silently went stale and under-shot the real on-chain floor once the
- * fee became 6% (100 GLC gross nets to only 94 GLC at 6%, BELOW the real
- * 100 GLC on-chain minimum).
+ * # The history, because each fix caused the next bug
  *
- * The correct GROSS entry-side minimum is now DERIVED at use time from
- * `/limits`' own `min_transfer_amount` (99 GLC, the live production
- * NET-side floor — docs/22-production-readiness-review.md's 2026-08-29
- * update note) and `bridge_fee_bps` (300, i.e. 3%) via
- * `minimumGrossCanonicalForMinTransferAmount`
- * (`src/lib/bridge/canonical.ts`) — the exact smallest gross that still
- * nets to at least 99 GLC after a 3% fee, which is 102.06185566 GLC
- * (canonical, Goldcoin-source precision) / 102.061856 GLC (ceiled to
- * Solana's 6-decimal source precision). There is no longer a fixed
- * constant to keep in sync with the real fee rate.
+ * 1. The UI displayed `GET /limits`' `min_transfer_amount` directly as the
+ *    entry minimum. That figure is a NET-side on-chain floor
+ *    (`limits.rs::enforce_transfer_amount` compares it against the amount
+ *    AFTER the fee), so the entry floor was too low — "Min 99 GLC".
+ * 2. It was replaced with a fixed "100 GLC" constant, correct only at the
+ *    1% fee it was tuned for, and silently wrong at 6%.
+ * 3. It was then DERIVED from `min_transfer_amount` and `bridge_fee_bps`
+ *    at use time — arithmetic that was finally correct, against a rule
+ *    that never was. A chain's net-side floor is not a statement about
+ *    what a user may type, so the entry minimum tracked the fee and
+ *    landed on figures like "102.06185566 GLC".
  *
- * `limitsFixture()` reports the real production `min_transfer_amount` (99
- * GLC) and `bridge_fee_bps` (300) so these tests exercise the actual
- * derivation, not a hand-picked coincidence.
+ * # The rule now
+ *
+ * The backend states it directly: one policy floor, EXACTLY 100 GLC of
+ * source-side GROSS on every route, published per route as `GET /chains`'
+ * `min_transfer_atomic` and enforced by the same value at `POST
+ * /transfers` and `POST /quote`. This UI renders it and does no
+ * arithmetic on it.
+ *
+ * In particular it is NOT adjusted for the fee. The fee is deducted AFTER
+ * the minimum is checked, so a 100 GLC transfer at 3% delivers 97 GLC —
+ * below the minimum, and correct. Re-deriving a "grossed-up" entry floor
+ * is bug 3 again.
+ *
+ * Nothing here writes 100 out as a literal: every expectation comes from
+ * the fixture's `SOURCE_MINIMUM_ATOMIC`, so a policy change reaches the
+ * screen without a UI release.
  *
  * Kept as its own file (not added to bridge-card.test.tsx) for the same
  * reason as bridge-card-sol-to-glc-redirect.test.tsx: the SolToGlc cases
@@ -41,13 +47,27 @@ import type * as EnvModule from "@/lib/config/env";
  * shared file's other ~30 tests do not need.
  */
 
-const GLC_TO_SOL_MINIMUM_DISPLAY = "102.06185566 GLC";
-const GLC_TO_SOL_MINIMUM_INPUT = "102.06185566";
-const GLC_TO_SOL_JUST_BELOW_MINIMUM_INPUT = "102.06185565";
+/**
+ * The policy floor, in whole GLC, taken from the fixture the mock backend
+ * publishes rather than written out. `10_000_000_000` canonical 8dp.
+ */
+const MINIMUM_WHOLE_GLC = BigInt(fixtures.SOURCE_MINIMUM_ATOMIC) / 100_000_000n;
 
-const SOL_TO_GLC_MINIMUM_DISPLAY = "102.061856 GLC";
-const SOL_TO_GLC_MINIMUM_INPUT = "102.061856";
-const SOL_TO_GLC_JUST_BELOW_MINIMUM_INPUT = "102.061855";
+/**
+ * The same figure at each source chain's own precision.
+ *
+ * Both render identically — "100 GLC" — because the policy is a whole
+ * number of GLC and `display` trims to the significant digits. The
+ * just-below inputs differ, because one atomic unit is 10^-8 GLC on
+ * Goldcoin and 10^-6 GLC on the Solana mint.
+ */
+const GLC_TO_SOL_MINIMUM_DISPLAY = `${MINIMUM_WHOLE_GLC} GLC`;
+const GLC_TO_SOL_MINIMUM_INPUT = `${MINIMUM_WHOLE_GLC}`;
+const GLC_TO_SOL_JUST_BELOW_MINIMUM_INPUT = `${MINIMUM_WHOLE_GLC - 1n}.99999999`;
+
+const SOL_TO_GLC_MINIMUM_DISPLAY = `${MINIMUM_WHOLE_GLC} GLC`;
+const SOL_TO_GLC_MINIMUM_INPUT = `${MINIMUM_WHOLE_GLC}`;
+const SOL_TO_GLC_JUST_BELOW_MINIMUM_INPUT = `${MINIMUM_WHOLE_GLC - 1n}.999999`;
 
 const getStatus = vi.fn();
 const getChains = vi.fn();
@@ -247,14 +267,35 @@ describe("BridgeCard — minimum bridge amount (Goldcoin -> Solana)", () => {
     expect(primaryCta()).toBeDisabled();
   });
 
-  it("rejects 100 GLC (the stale pre-fix minimum, now well under the real floor)", async () => {
+  /**
+   * The boundary the policy is written in. This test used to assert the
+   * OPPOSITE — that 100 GLC was refused as "the stale pre-fix minimum" —
+   * back when the entry floor was derived from a chain's net-side check
+   * and landed above 102. The rule changed, so the assertion inverted.
+   */
+  it("accepts exactly 100 GLC, the policy floor", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, "100");
-    await expectMinimumMessage(GLC_TO_SOL_MINIMUM_DISPLAY);
-    expect(primaryCta()).toBeDisabled();
+    const submit = primaryCta();
+    await waitFor(() => expect(submit).toBeEnabled());
+    expect(screen.queryByText(/minimum transfer is/i)).not.toBeInTheDocument();
   });
 
-  it("accepts exactly the minimum, 102.06185566 GLC", async () => {
+  /**
+   * And the fee still comes off afterwards, leaving a destination figure
+   * below the minimum — which is the policy working, not a violation of
+   * it. Asserted on the quote the form actually shows.
+   */
+  it("still charges the ordinary fee on a minimum transfer", async () => {
+    const user = userEvent.setup();
+    await typeGlcToSolAmount(user, "100");
+    await waitFor(() => expect(primaryCta()).toBeEnabled());
+    expect(getQuote).toHaveBeenCalled();
+    const quoted = getQuote.mock.calls.at(-1)?.[0] as { gross_amount: string };
+    expect(BigInt(quoted.gross_amount)).toBe(BigInt(fixtures.SOURCE_MINIMUM_ATOMIC));
+  });
+
+  it("accepts exactly the minimum at Goldcoin precision", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, GLC_TO_SOL_MINIMUM_INPUT);
     const submit = primaryCta();
@@ -292,14 +333,35 @@ describe("BridgeCard — minimum bridge amount (Solana -> Goldcoin)", () => {
     expect(primaryCta()).toBeDisabled();
   });
 
-  it("rejects 100 GLC (the stale pre-fix minimum, now well under the real floor)", async () => {
+  /**
+   * The boundary the policy is written in. This test used to assert the
+   * OPPOSITE — that 100 GLC was refused as "the stale pre-fix minimum" —
+   * back when the entry floor was derived from a chain's net-side check
+   * and landed above 102. The rule changed, so the assertion inverted.
+   */
+  it("accepts exactly 100 GLC, the policy floor", async () => {
     const user = userEvent.setup();
     await typeSolToGlcAmount(user, "100");
-    await expectMinimumMessage(SOL_TO_GLC_MINIMUM_DISPLAY);
-    expect(primaryCta()).toBeDisabled();
+    const submit = primaryCta();
+    await waitFor(() => expect(submit).toBeEnabled());
+    expect(screen.queryByText(/minimum transfer is/i)).not.toBeInTheDocument();
   });
 
-  it("accepts exactly the minimum, 102.061856 GLC", async () => {
+  /**
+   * And the fee still comes off afterwards, leaving a destination figure
+   * below the minimum — which is the policy working, not a violation of
+   * it. Asserted on the quote the form actually shows.
+   */
+  it("still charges the ordinary fee on a minimum transfer", async () => {
+    const user = userEvent.setup();
+    await typeSolToGlcAmount(user, "100");
+    await waitFor(() => expect(primaryCta()).toBeEnabled());
+    expect(getQuote).toHaveBeenCalled();
+    const quoted = getQuote.mock.calls.at(-1)?.[0] as { gross_amount: string };
+    expect(BigInt(quoted.gross_amount)).toBe(BigInt(fixtures.SOURCE_MINIMUM_ATOMIC));
+  });
+
+  it("accepts exactly the minimum at the mint's precision", async () => {
     const user = userEvent.setup();
     await typeSolToGlcAmount(user, SOL_TO_GLC_MINIMUM_INPUT);
     const submit = primaryCta();

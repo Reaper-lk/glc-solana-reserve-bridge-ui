@@ -36,7 +36,6 @@ export {
 export {
   robinhoodContractLeg,
   robinhoodPerTransferMaximum,
-  robinhoodPerTransferMinimum,
   robinhoodRollingRemaining,
 } from "./robinhood-limits";
 export type { RobinhoodContractLeg } from "./robinhood-limits";
@@ -156,6 +155,7 @@ export {
   isDefinedPair,
   resolveRoute,
   routeForPair,
+  routeSourceMinimum,
   sourceChainIds,
   type RouteResolution,
 } from "./route-resolution";

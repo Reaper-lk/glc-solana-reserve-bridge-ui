@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ROBINHOOD_DECIMALS,
-  robinhoodPerTransferMinimum,
+  robinhoodPerTransferMaximum,
   robinhoodRollingRemaining,
 } from "@/lib/bridge";
 import { robinhoodLimitsSchema } from "@/lib/api/schemas/robinhood";
@@ -41,25 +41,6 @@ function glc18(whole: bigint): string {
 /** 8dp canonical units for a whole number of GLC. */
 function glc8(whole: bigint): string {
   return (whole * 10n ** BigInt(GOLDCOIN_DECIMALS)).toString();
-}
-
-/**
- * The smallest canonical GROSS whose net clears `minNetCanonical`, worked
- * out by brute search rather than by algebra.
- *
- * This is the independent oracle for the payout leg. The production helper
- * binary-searches the same predicate; a search here would share its bug, so
- * this walks upward from the continuous-algebra answer minus a margin and
- * takes the first gross that qualifies.
- */
-function smallestGrossClearing(minNetCanonical: bigint, feeBps: bigint): bigint {
-  const net = (gross: bigint) => gross - (gross * feeBps) / 10_000n;
-  let candidate = (minNetCanonical * 10_000n) / (10_000n - feeBps) - 10n;
-  if (candidate < 0n) candidate = 0n;
-  for (let i = 0n; i < 1_000n; i += 1n) {
-    if (net(candidate + i) >= minNetCanonical) return candidate + i;
-  }
-  throw new Error("no gross clears the floor within the search window");
 }
 
 /**
@@ -105,110 +86,6 @@ function limitsWith(overrides: Partial<RobinhoodLimitsDto> = {}): RobinhoodLimit
     ...overrides,
   });
 }
-
-describe("robinhoodPerTransferMinimum — RhnToGlc (the deposit leg)", () => {
-  it("is inboundMin as-is, because the deposit is what the user types", () => {
-    // `deposit()` checks `amount < inboundMin` against the tokens
-    // transferred in. Source IS Robinhood, so 18dp in, 18dp out, and the
-    // fee — charged later at fold time — does not enter.
-    expect(robinhoodPerTransferMinimum("deposit", limitsWith(), ROBINHOOD_DECIMALS)).toBe(
-      glc18(100n),
-    );
-  });
-
-  it("does not read the payout leg's floor", () => {
-    expect(
-      robinhoodPerTransferMinimum("deposit", limitsWith(), ROBINHOOD_DECIMALS),
-    ).not.toBe(glc18(250n));
-  });
-
-  it("is not adjusted by this route's fee", () => {
-    // The guard against "grossed up both legs for symmetry". Charging a
-    // fee this leg does not charge would publish a floor above the
-    // contract's, refusing amounts it would have accepted.
-    const raw = limitsWith();
-    const unadjusted = robinhoodPerTransferMinimum("deposit", raw, ROBINHOOD_DECIMALS);
-    const doubledFee = limitsWith({ rhn_to_glc_fee_bps: 2_500 });
-    expect(robinhoodPerTransferMinimum("deposit", doubledFee, ROBINHOOD_DECIMALS)).toBe(
-      unadjusted,
-    );
-  });
-});
-
-describe("robinhoodPerTransferMinimum — GlcToRhn (the payout leg)", () => {
-  it("is the smallest GROSS whose net clears outboundMin", () => {
-    // `executePayout` checks `req.amount < outboundMin` against the NET.
-    // Publishing outboundMin raw is the "Min 99 GLC" bug: a user enters
-    // it, this service prices it, and the chain reverts the payout.
-    const limits = limitsWith();
-    const expected = smallestGrossClearing(BigInt(glc8(250n)), 250n);
-    expect(robinhoodPerTransferMinimum("payout", limits, GOLDCOIN_DECIMALS)).toBe(
-      expected.toString(),
-    );
-    // And it really is ABOVE the raw floor — otherwise the assertion
-    // above would pass on a helper that did nothing.
-    expect(expected).toBeGreaterThan(BigInt(glc8(250n)));
-  });
-
-  it("prices the gross-up with GlcToRhn's own fee, not the other route's", () => {
-    const limits = limitsWith();
-    const wrongFee = smallestGrossClearing(BigInt(glc8(250n)), 300n);
-    expect(robinhoodPerTransferMinimum("payout", limits, GOLDCOIN_DECIMALS)).not.toBe(
-      wrongFee.toString(),
-    );
-  });
-
-  it("moves with the fee, so a rate change needs no UI release", () => {
-    const cheaper = limitsWith({ glc_to_rhn_fee_bps: 100 });
-    const dearer = limitsWith({ glc_to_rhn_fee_bps: 900 });
-    const cheap = robinhoodPerTransferMinimum("payout", cheaper, GOLDCOIN_DECIMALS)!;
-    const dear = robinhoodPerTransferMinimum("payout", dearer, GOLDCOIN_DECIMALS)!;
-    expect(BigInt(dear)).toBeGreaterThan(BigInt(cheap));
-  });
-
-  it("clears the floor when run back through the fee", () => {
-    // The property that matters, stated directly: whatever the helper
-    // returns must actually survive `compute_fee` on the backend.
-    for (const feeBps of [0, 1, 100, 250, 300, 600, 900, 4_999]) {
-      const limits = limitsWith({ glc_to_rhn_fee_bps: feeBps });
-      const gross = BigInt(
-        robinhoodPerTransferMinimum("payout", limits, GOLDCOIN_DECIMALS)!,
-      );
-      const net = gross - (gross * BigInt(feeBps)) / 10_000n;
-      expect(net).toBeGreaterThanOrEqual(BigInt(glc8(250n)));
-      // And it is the SMALLEST such gross — one unit less must fail.
-      const under = gross - 1n;
-      expect(under - (under * BigInt(feeBps)) / 10_000n).toBeLessThan(BigInt(glc8(250n)));
-    }
-  });
-
-  it("does not read the deposit leg's floor", () => {
-    const limits = limitsWith();
-    expect(robinhoodPerTransferMinimum("payout", limits, GOLDCOIN_DECIMALS)).not.toBe(
-      glc8(100n),
-    );
-  });
-
-  it("reports unknown rather than throwing on a fee at or above 100%", () => {
-    // No gross clears any floor at a 100% rate, and the search refuses
-    // the input. A misconfigured backend must blank the figure, not throw
-    // inside a render and take the whole form down.
-    for (const feeBps of [10_000, 12_000]) {
-      const limits = limitsWith({ glc_to_rhn_fee_bps: feeBps });
-      expect(() =>
-        robinhoodPerTransferMinimum("payout", limits, GOLDCOIN_DECIMALS),
-      ).not.toThrow();
-      expect(
-        robinhoodPerTransferMinimum("payout", limits, GOLDCOIN_DECIMALS),
-      ).toBeUndefined();
-    }
-    // The deposit leg is unaffected: it never consults a fee.
-    const limits = limitsWith({ glc_to_rhn_fee_bps: 10_000 });
-    expect(robinhoodPerTransferMinimum("deposit", limits, ROBINHOOD_DECIMALS)).toBe(
-      glc18(100n),
-    );
-  });
-});
 
 describe("robinhoodRollingRemaining — which window bounds which route", () => {
   it("RhnToGlc reads the inbound accumulator the backend names for it", () => {
@@ -277,11 +154,8 @@ describe("robinhoodRollingRemaining — which window bounds which route", () => 
   });
 });
 
-describe("unknown stays unknown, on both new figures", () => {
+describe("unknown stays unknown", () => {
   it("is undefined before the query has answered", () => {
-    expect(
-      robinhoodPerTransferMinimum("payout", undefined, GOLDCOIN_DECIMALS),
-    ).toBeUndefined();
     expect(
       robinhoodRollingRemaining("payout", undefined, GOLDCOIN_DECIMALS),
     ).toBeUndefined();
@@ -290,13 +164,10 @@ describe("unknown stays unknown, on both new figures", () => {
   it("is undefined when the contract could not be read", () => {
     const limits = limitsWith({
       availability: "unavailable",
-      inbound_min_atomic: null,
-      outbound_min_atomic: null,
       rhn_to_glc_rolling_window: null,
       glc_to_rhn_rolling_window: null,
     });
     for (const leg of ["deposit", "payout"] as const) {
-      expect(robinhoodPerTransferMinimum(leg, limits, GOLDCOIN_DECIMALS)).toBeUndefined();
       expect(robinhoodRollingRemaining(leg, limits, GOLDCOIN_DECIMALS)).toBeUndefined();
     }
   });
@@ -306,9 +177,6 @@ describe("unknown stays unknown, on both new figures", () => {
     // under test. A fourth backend constant must never publish them.
     const limits = limitsWith({ availability: "degraded" });
     expect(
-      robinhoodPerTransferMinimum("payout", limits, GOLDCOIN_DECIMALS),
-    ).toBeUndefined();
-    expect(
       robinhoodRollingRemaining("payout", limits, GOLDCOIN_DECIMALS),
     ).toBeUndefined();
   });
@@ -316,8 +184,8 @@ describe("unknown stays unknown, on both new figures", () => {
   it("treats an omitted window as unknown, not as an exhausted one", () => {
     // A backend too old to publish these sends no key at all. Zero would
     // claim the route is out of capacity for the day; undefined blanks
-    // the figure and leaves Min/Max alone, which is what the form needs
-    // when the two repos deploy in either order.
+    // that part of the line and leaves the rest standing, which is what
+    // the form needs when the two repos deploy in either order.
     const { rhn_to_glc_rolling_window, glc_to_rhn_rolling_window, ...rest } =
       limitsWith();
     void rhn_to_glc_rolling_window;
@@ -327,21 +195,10 @@ describe("unknown stays unknown, on both new figures", () => {
       robinhoodRollingRemaining("deposit", older, ROBINHOOD_DECIMALS),
     ).toBeUndefined();
     expect(robinhoodRollingRemaining("payout", older, GOLDCOIN_DECIMALS)).toBeUndefined();
-    // The bounds are unaffected: an absent window blanks one part of the
-    // line, not the whole of it.
-    expect(robinhoodPerTransferMinimum("deposit", older, ROBINHOOD_DECIMALS)).toBe(
-      glc18(100n),
-    );
-  });
-
-  it("is undefined when one field alone is null under an available verdict", () => {
-    const limits = limitsWith({ outbound_min_atomic: null });
-    expect(
-      robinhoodPerTransferMinimum("payout", limits, GOLDCOIN_DECIMALS),
-    ).toBeUndefined();
-    // One null does not blank the other direction.
-    expect(robinhoodPerTransferMinimum("deposit", limits, ROBINHOOD_DECIMALS)).toBe(
-      glc18(100n),
+    // The per-transfer CEILING is unaffected: one absent window blanks
+    // one part of the line, not the whole of it.
+    expect(robinhoodPerTransferMaximum("payout", older, GOLDCOIN_DECIMALS)).toBe(
+      glc8(15_000n),
     );
   });
 });

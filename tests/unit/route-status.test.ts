@@ -59,6 +59,7 @@ function robinhoodReserve(): RobinhoodReserveDto {
 
 function input(overrides: Partial<RouteStatusInput> = {}): RouteStatusInput {
   return {
+    robinhoodLimits: fixtures.robinhoodLimitsFixture(now, { open: true }),
     chains: fixtures.chainsFixture(now, { robinhoodOpen: true }),
     status: {
       ...fixtures.statusFixture(now),
@@ -338,24 +339,52 @@ describe("the route list itself", () => {
 });
 
 describe("published limits and fees", () => {
-  it("gives the Solana-governed pair the limits GET /limits actually describes", () => {
+  it("takes the MAXIMUM from whichever chain enforces that route", () => {
     for (const route of ["GlcToSol", "SolToGlc"] as const) {
-      const card = statusOf(route);
-      expect(card.minimum?.source).toBe("GET /limits · min_transfer_amount");
-      expect(card.maximum?.source).toBe("GET /limits · per_transfer_limit");
-      // Mint-atomic, the unit the on-chain checks compare against.
-      expect(card.minimum?.decimals).toBe(6);
+      expect(statusOf(route).maximum?.source).toBe("GET /limits · per_transfer_limit");
+      // Mint-atomic, the unit the on-chain check compares against.
+      expect(statusOf(route).maximum?.decimals).toBe(6);
     }
+    // The Robinhood routes read the CONTRACT that reverts an oversized
+    // transfer, each its own direction's field, in its native 18 decimals.
+    expect(statusOf("GlcToRhn").maximum?.source).toBe(
+      "GET /robinhood/limits · outbound_max_atomic",
+    );
+    expect(statusOf("RhnToGlc").maximum?.source).toBe(
+      "GET /robinhood/limits · inbound_max_atomic",
+    );
+    expect(statusOf("GlcToRhn").maximum?.decimals).toBe(18);
   });
 
-  it("gives a Robinhood route no per-transfer limits rather than Solana's", () => {
-    // `GET /limits` passes the SOLANA program's `BridgeConfig` through raw.
-    // Applying it to a Robinhood-legged route would state a ceiling that
-    // neither chain enforces — the same rule the bridge form's MAX applies.
-    for (const route of ["GlcToRhn", "RhnToGlc"] as const) {
+  it("gives every route the SAME published minimum, from GET /chains", () => {
+    // One policy floor, not a per-chain figure. `GET /limits`'
+    // `min_transfer_amount` is deliberately NOT it: that is a NET-side
+    // on-chain check, and printing it as a per-transfer floor is the
+    // reading that produced "Min 99 GLC".
+    const seen = new Set<string>();
+    for (const route of ["GlcToSol", "SolToGlc", "GlcToRhn", "RhnToGlc"] as const) {
       const card = statusOf(route);
-      expect(card.minimum).toBeNull();
-      expect(card.maximum).toBeNull();
+      expect(card.minimum?.source).toBe("GET /chains · min_transfer_atomic");
+      expect(card.minimum?.decimals).toBe(8);
+      expect(card.minimum?.atomic).toBe(fixtures.SOURCE_MINIMUM_ATOMIC);
+      seen.add(card.minimum?.atomic ?? "missing");
+    }
+    expect(seen.size).toBe(1);
+    // And it is not the Solana program's floor, which the fixture holds
+    // as a different number.
+    expect(fixtures.SOURCE_MINIMUM_ATOMIC).not.toBe(
+      fixtures.limitsFixture().min_transfer_amount,
+    );
+  });
+
+  it("publishes no Robinhood maximum when the contract could not be read", () => {
+    for (const route of ["GlcToRhn", "RhnToGlc"] as const) {
+      const card = executableRouteStatuses(input({ robinhoodLimits: undefined })).find(
+        (c) => c.route === route,
+      );
+      expect(card?.maximum).toBeNull();
+      // The published floor is unaffected: it never came from the contract.
+      expect(card?.minimum?.atomic).toBe(fixtures.SOURCE_MINIMUM_ATOMIC);
     }
   });
 

@@ -65,14 +65,16 @@ describe("StatusView route availability", () => {
     expect(card.queryByText("Paused")).toBeNull();
   });
 
-  it("separates an implemented-but-closed route from a non-executable one", async () => {
+  it("shows every built-but-closed route as unavailable, not unimplemented", async () => {
     renderWithQueryClient(<StatusView />);
     const card = await routesCard();
 
-    // GlcToRhn / RhnToGlc — built, and refused by the gate.
-    expect(card.getAllByText("Unavailable")).toHaveLength(2);
-    // SolToRhn / RhnToSol — `implemented: false`, nothing to reopen.
-    expect(card.getAllByText("Not implemented")).toHaveLength(2);
+    // All four non-default routes are built and refused by their gates:
+    // GlcToRhn/RhnToGlc, and since Phase H the two cross routes as well.
+    expect(card.getAllByText("Unavailable")).toHaveLength(4);
+    // Nothing in this build reports `implemented: false` any more, so the
+    // stronger "nothing to reopen" verdict must not appear.
+    expect(card.queryByText("Not implemented")).toBeNull();
   });
 
   it("renders the backend's own reason rather than re-authoring one", async () => {
@@ -97,9 +99,10 @@ describe("StatusView route availability", () => {
     const card = await routesCard();
 
     expect(card.getAllByText("Available")).toHaveLength(4);
-    expect(card.queryByText("Unavailable")).toBeNull();
-    // Still unimplemented: opening a settlement route says nothing about
-    // the two routes that have no settlement path at all.
-    expect(card.getAllByText("Not implemented")).toHaveLength(2);
+    // Opening the two Goldcoin<->Robinhood routes says nothing about the
+    // cross pair: they are built, and they stay shut until their own
+    // gates open.
+    expect(card.getAllByText("Unavailable")).toHaveLength(2);
+    expect(card.queryByText("Not implemented")).toBeNull();
   });
 });

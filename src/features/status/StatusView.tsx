@@ -10,6 +10,7 @@ import {
   useHealth,
   useLimits,
   useReserve,
+  useRobinhoodLimits,
   useRobinhoodReserve,
   useStats,
 } from "@/lib/query/hooks";
@@ -56,6 +57,10 @@ export function StatusView() {
   const robinhoodLive =
     isRouteEnabled(chains.data, "GlcToRhn") || isRouteEnabled(chains.data, "RhnToGlc");
   const robinhood = useRobinhoodReserve(robinhoodLive);
+  // The custody contract's per-transfer ceilings, gated on the same
+  // condition and for the same reason: a deployment without the route has
+  // no endpoint to ask.
+  const robinhoodLimits = useRobinhoodLimits(robinhoodLive);
 
   if (status.isPending || health.isPending || reserve.isPending) {
     return (
@@ -79,6 +84,7 @@ export function StatusView() {
     robinhood: robinhood.data,
     limits: limits.data,
     stats: stats.data,
+    robinhoodLimits: robinhoodLimits.data,
   });
 
   return (

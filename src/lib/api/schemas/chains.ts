@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { unixSecondsSchema } from "./common";
+import { nonNegativeAtomicAmountSchema, unixSecondsSchema } from "./common";
 
 /**
  * `GET /chains` — the chain/route registry, and the ONLY authoritative
@@ -117,6 +117,33 @@ export const routeViewSchema = z.object({
    * not try to infer one.
    */
   unavailable_reason: z.string().nullable().optional(),
+  /**
+   * **The authoritative source-side minimum for this route** — canonical
+   * 8-decimal units, the figure to render as "Min … GLC".
+   *
+   * # Render it; do not compute with it
+   *
+   * This is the backend's `min_transfer::SOURCE_MINIMUM_CANONICAL`: the
+   * smallest GROSS the bridge accepts, and the same value `POST
+   * /transfers` and `POST /quote` admit against. The bridge fee is
+   * deducted AFTER that check, so a minimum transfer legitimately
+   * delivers less than this — adjusting the displayed figure for the fee
+   * would state a floor the backend does not apply.
+   *
+   * That adjustment is exactly what this field replaces. Before it,
+   * a client had to reconstruct a minimum from whichever CHAIN floor
+   * governed the route, grossing it up when that floor bounded the net —
+   * which produced entry minimums like "102.061856 GLC": correct
+   * arithmetic against the wrong rule, silently different every time a
+   * fee moved.
+   *
+   * # Optional, so the two repos can deploy in either order
+   *
+   * A backend that predates this field omits it, which must read as "not
+   * published" and leave the minimum absent — never as `0`, which would
+   * claim the route has no floor at all.
+   */
+  min_transfer_atomic: nonNegativeAtomicAmountSchema.optional(),
 });
 
 export type RouteViewDto = z.infer<typeof routeViewSchema>;
