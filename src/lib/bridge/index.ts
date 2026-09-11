@@ -33,7 +33,12 @@ export {
   CANONICAL_TO_ROBINHOOD_SCALE,
   ROBINHOOD_DECIMALS,
 } from "./robinhood-amount";
-export { robinhoodContractLeg, robinhoodPerTransferMaximum } from "./robinhood-limits";
+export {
+  robinhoodContractLeg,
+  robinhoodPerTransferMaximum,
+  robinhoodPerTransferMinimum,
+  robinhoodRollingRemaining,
+} from "./robinhood-limits";
 export type { RobinhoodContractLeg } from "./robinhood-limits";
 export type {
   ChainDescriptor,

@@ -195,12 +195,52 @@ export const robinhoodLimitsSchema = z.object({
   protected_min_reserve_atomic: nonNegativeAtomicAmountSchema.nullable(),
   rolling_window_seconds: z.number().int().nonnegative().nullable(),
   /**
+   * `RhnToGlc`'s rolling window: the contract's INBOUND accumulator, the
+   * one `deposit()` charges against `inboundRollingLimit`. Its
+   * `remaining_atomic` is the authoritative answer to "how much more may
+   * move on this route in this window" — the same projection
+   * `GET /robinhood/reserve` publishes as `onchain.inbound_window`, from
+   * the same backend helper, so the two endpoints cannot disagree.
+   *
+   * Keyed by ROUTE rather than by contract direction on purpose: pairing
+   * an inbound figure with an outbound route is the one mistake this
+   * shape exists to make impossible, and the name is now the mapping.
+   *
+   * The charged quantity is the DEPOSIT amount, which is exactly what a
+   * user types on `RhnToGlc` — the fee is taken later, on the Goldcoin
+   * side — so this needs no fee adjustment to be comparable with the
+   * amount field.
+   */
+  rhn_to_glc_rolling_window: robinhoodWindowSchema.nullish(),
+  /**
+   * `GlcToRhn`'s rolling window: the contract's OUTBOUND accumulator,
+   * charged by `executePayout` against `outboundRollingLimit`.
+   *
+   * # This one is denominated in NET
+   *
+   * `executePayout` consumes `req.amount`, the payout this service makes
+   * AFTER `GlcToRhn`'s fee — not the gross a user spends on the Goldcoin
+   * side. Rendered beside a gross amount field it therefore understates
+   * the spendable headroom slightly, which is the safe direction;
+   * grossing it up would publish capacity the contract would refuse.
+   */
+  glc_to_rhn_rolling_window: robinhoodWindowSchema.nullish(),
+  /**
    * The bridge fee rate in basis points. NOT read from the contract: it
    * is the service's own fixed protocol constant, the same rate
    * `GET /limits` reports. Present even when `availability` is not
    * `"available"`, because it is known without reaching the chain.
+   *
+   * Retained under its historical name and equal to
+   * {@link robinhoodLimitsSchema.shape.rhn_to_glc_fee_bps}. Prefer the
+   * per-route fields below: the two routes' rates are configured
+   * separately and a deployment can hold different ones.
    */
   bridge_fee_bps: z.number().int().nonnegative(),
+  /** `GlcToRhn`'s configured rate, charged when the request is created. */
+  glc_to_rhn_fee_bps: z.number().int().nonnegative(),
+  /** `RhnToGlc`'s configured rate, charged at fold time. */
+  rhn_to_glc_fee_bps: z.number().int().nonnegative(),
   as_of: unixSecondsSchema,
 });
 

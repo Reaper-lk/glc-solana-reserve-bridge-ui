@@ -29,6 +29,8 @@ import {
   CANONICAL_TO_ROBINHOOD_SCALE,
   resolveRoute,
   robinhoodPerTransferMaximum,
+  robinhoodPerTransferMinimum,
+  robinhoodRollingRemaining,
   robinhoodPredepositVerdict,
   robinhoodRawToCanonicalExact,
   rollingVolumeRemaining,
@@ -250,20 +252,55 @@ export function BridgeForm() {
     [robinhoodLeg, robinhoodLimits.data, sourceToken.decimals],
   );
 
+  /**
+   * This pair's per-transaction FLOOR, in the same units.
+   *
+   * `inboundMin`/`outboundMin` as the deployed contract holds them — and,
+   * on `GlcToRhn`, grossed up through that route's own fee, because the
+   * contract's floor there bounds the NET payout rather than the gross a
+   * user types. `robinhoodPerTransferMinimum` is where that distinction
+   * lives; showing `outboundMin` raw is the "Min 99 GLC" bug, which is
+   * why this line is no longer blank.
+   */
+  const robinhoodMinimum = useMemo(
+    () =>
+      robinhoodPerTransferMinimum(
+        robinhoodLeg,
+        robinhoodLimits.data,
+        sourceToken.decimals,
+      ),
+    [robinhoodLeg, robinhoodLimits.data, sourceToken.decimals],
+  );
+
+  /**
+   * What the custody contract's rolling 24-hour window has left for this
+   * pair, in source units — read from the accumulator the contract
+   * charges, never reconstructed here.
+   */
+  const robinhoodRemaining = useMemo(
+    () =>
+      robinhoodRollingRemaining(robinhoodLeg, robinhoodLimits.data, sourceToken.decimals),
+    [robinhoodLeg, robinhoodLimits.data, sourceToken.decimals],
+  );
+
   const amountBounds = useMemo(() => {
     if (!limitsGovernRoute) {
-      // A Robinhood-legged pair. The MAXIMUM is published — it is
-      // `inboundMax`/`outboundMax` as the deployed contract holds them,
-      // converted into this source token's own units — and is absent only
-      // while the read has not landed or the contract could not be
-      // reached. There is deliberately still no MINIMUM here: the
-      // contract's `inboundMin`/`outboundMin` bound a different leg from
-      // the one the user types into on `GlcToRhn`, and a floor derived
-      // from the wrong leg is the "Min 99 GLC" bug again.
+      // A Robinhood-legged pair. Both bounds are the deployed contract's
+      // own — `inboundMin`/`inboundMax` or `outboundMin`/`outboundMax`,
+      // converted into this source token's units — and either is absent
+      // only while the read has not landed or the contract could not be
+      // reached.
+      //
+      // The MINIMUM is no longer omitted. What made it unsafe was taking
+      // it raw: on `GlcToRhn` the contract's floor bounds the NET payout,
+      // not the gross the user types, so the raw figure is the "Min 99
+      // GLC" bug. `robinhoodPerTransferMinimum` grosses that leg up
+      // through `glc_to_rhn_fee_bps` and leaves the deposit leg — whose
+      // floor really does bound the typed amount — alone.
       return {
         decimals: sourceToken.decimals,
         symbol: sourceToken.symbol,
-        minimum: undefined,
+        minimum: robinhoodMinimum,
         maximum: robinhoodMaximum,
       };
     }
@@ -287,7 +324,7 @@ export function BridgeForm() {
         sourceToken.decimals,
       ),
     };
-  }, [limits.data, sourceToken, limitsGovernRoute, robinhoodMaximum]);
+  }, [limits.data, sourceToken, limitsGovernRoute, robinhoodMinimum, robinhoodMaximum]);
 
   const amountValidation = amountBounds
     ? validateAmount(amountInput, amountBounds)
@@ -470,6 +507,37 @@ export function BridgeForm() {
     setSubmitError(null);
   }
 
+  /**
+   * The rolling-window headroom this pair still has, in the SOURCE
+   * token's units, or `null` when this pair publishes none.
+   *
+   * Exactly one of the two can be non-null for a given pair, because a
+   * pair is governed by one chain's window or the other's and never
+   * both: `remainingMintRaw` is `null` off the Solana-governed routes,
+   * and `robinhoodRemaining` is `undefined` off the Robinhood-legged
+   * ones. The Solana figure arrives in the reserve mint's 6 decimals and
+   * narrows here; the Robinhood one was narrowed from 18 already, by the
+   * helper that knows which window it came from.
+   */
+  const rollingRemaining: string | null =
+    remainingMintRaw !== null
+      ? atomicRescaleFloor(remainingMintRaw, SOLANA_GLC.decimals, sourceToken.decimals)
+      : (robinhoodRemaining ?? null);
+
+  /**
+   * Why the two families word this differently: exhausting the Solana
+   * quota AUTO-PAUSES the reserve, and a human has to resume it, so the
+   * window filling is not a wait-it-out condition there. The Robinhood
+   * contract's bucket is a fixed window `_consumeWindow` resets on its
+   * own next write past the boundary, with no operator involved —
+   * promising a manual reopening there would be false, and promising an
+   * automatic one on Solana would be worse.
+   */
+  const rollingRemainingHint =
+    remainingMintRaw !== null
+      ? "Remaining 24-hour bridge capacity for this route. Reopening after exhaustion is a manual operator action, not automatic."
+      : "Remaining capacity in this route's rolling 24-hour window, as the bridge contract itself accounts for it. It refills when the window rolls over.";
+
   // Called directly rather than memoized by hand: it is a pure
   // function of values already computed above, the React Compiler
   // memoizes it, and a hand-written dependency list for this many
@@ -625,30 +693,30 @@ export function BridgeForm() {
                 maxAmount={maxAmount}
                 onMax={applyMax}
               />
-              {/* Only the bounds this pair actually has. The Solana
-                  governed pairs carry both; a Robinhood pair carries the
-                  custody contract's per-transfer maximum and no minimum
-                  (its `inboundMin`/`outboundMin` bound a different leg
-                  from the one the user types into on `GlcToRhn`, and a
-                  floor taken from the wrong leg is the "Min 99 GLC" bug
-                  again); either can be absent while its read is in
-                  flight. The previous single `minimum !== undefined` gate
-                  hid the whole line in every one of those cases, which is
-                  why a Robinhood route showed no maximum at all. Joined
+              {/* Only the bounds this pair actually has, and any of
+                  them can be absent while its read is in flight — the
+                  previous single `minimum !== undefined` gate hid the
+                  whole line in every one of those cases, which is why a
+                  Robinhood route once showed no maximum at all. Joined
                   rather than branched in JSX so the separator cannot
-                  survive the part beside it going away. */}
-              {amountBounds && boundsSummary(amountBounds) !== null && (
+                  survive the part beside it going away.
+
+                  Both families now reach the same line by the same route:
+                  a server-authoritative floor, ceiling and rolling
+                  remainder, each read from the chain that enforces it —
+                  the Solana program's `BridgeConfig` and rolling-volume
+                  PDA for the Solana pairs, `GlcRobinhoodBridge`'s
+                  `limits()` and its inbound/outbound accumulators for the
+                  Robinhood ones. Nothing on this line is computed from
+                  this UI's own view of activity. */}
+              {amountBounds && hasLimitsToShow(amountBounds, rollingRemaining) && (
                 <p className="text-body-sm text-ink-500">
                   {boundsSummary(amountBounds)}
-                  {remainingMintRaw !== null && (
-                    <span title="Remaining 24-hour bridge capacity for this route. Reopening after exhaustion is a manual operator action, not automatic.">
-                      {" · "}
+                  {rollingRemaining !== null && (
+                    <span title={rollingRemainingHint}>
+                      {boundsSummary(amountBounds) === null ? "" : " · "}
                       {display(
-                        atomicRescaleFloor(
-                          remainingMintRaw,
-                          SOLANA_GLC.decimals,
-                          amountBounds.decimals,
-                        ),
+                        rollingRemaining,
                         amountBounds.decimals,
                         amountBounds.symbol,
                       )}{" "}
@@ -1077,6 +1145,21 @@ function boundsSummary(bounds: AmountBounds): string | null {
     parts.push(`Max ${display(bounds.maximum, bounds.decimals, bounds.symbol)}`);
   }
   return parts.length === 0 ? null : parts.join(" · ");
+}
+
+/**
+ * Whether the limits line has anything at all to say.
+ *
+ * The remainder can outlive both bounds. On a Robinhood pair every figure
+ * comes from one response, but they are independently nullable: a
+ * deployment whose contract answered `limits()` with nulls and still
+ * published a window would have a remainder and no bounds. Gating the
+ * line on the bounds alone would blank a figure that had arrived, which
+ * is the mistake the old `minimum !== undefined` gate made in the other
+ * direction.
+ */
+function hasLimitsToShow(bounds: AmountBounds, remaining: string | null): boolean {
+  return boundsSummary(bounds) !== null || remaining !== null;
 }
 
 function isSettlementRouteName(route: string | null): route is SettlementRoute {

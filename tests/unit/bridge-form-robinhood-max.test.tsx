@@ -5,6 +5,10 @@ import { renderWithQueryClient, selectNetwork, waitForRouteVerdict } from "./tes
 import * as fixtures from "@/lib/api/mock/fixtures";
 import type * as EvmModule from "@/lib/evm";
 import { BridgeForm } from "@/features/bridge/BridgeForm";
+import { ROBINHOOD_DECIMALS, robinhoodPerTransferMinimum } from "@/lib/bridge";
+import { robinhoodLimitsSchema } from "@/lib/api/schemas/robinhood";
+import { GOLDCOIN_DECIMALS } from "@/lib/config/env";
+import { formatBaseUnits } from "@/lib/format/amount";
 
 /**
  * The per-transaction maximum on the two Robinhood routes.
@@ -196,6 +200,34 @@ function grouped(whole: bigint): string {
   return whole.toLocaleString("en-US");
 }
 
+/** The whole-GLC per-transfer floor the mock backend publishes. */
+function publishedMin(direction: "inbound" | "outbound"): bigint {
+  const limits = fixtures.robinhoodLimitsFixture(() => new Date(), { open: true });
+  const raw =
+    direction === "inbound" ? limits.inbound_min_atomic : limits.outbound_min_atomic;
+  return BigInt(raw ?? "0") / 10n ** 18n;
+}
+
+/**
+ * The floor the form must show for one leg, formatted as the line
+ * formats it — derived from the mock backend's own DTO, never written
+ * out as a literal.
+ *
+ * `deposit` sources from Robinhood, so the contract's floor bounds the
+ * typed amount directly. `payout` sources from Goldcoin and the
+ * contract's floor bounds the NET, so the displayed figure is the
+ * smallest gross that clears it at this route's own fee.
+ */
+function publishedMinimum(leg: "deposit" | "payout"): string {
+  const limits = robinhoodLimitsSchema.parse(
+    fixtures.robinhoodLimitsFixture(() => new Date(), { open: true }),
+  );
+  const decimals = leg === "deposit" ? ROBINHOOD_DECIMALS : GOLDCOIN_DECIMALS;
+  const raw = robinhoodPerTransferMinimum(leg, limits, decimals);
+  if (raw === undefined) throw new Error("the open fixture must publish a minimum");
+  return `${formatBaseUnits(raw, decimals, { minFractionDigits: 0 })} GLC`;
+}
+
 describe("GlcToRhn — Goldcoin → Robinhood Chain", () => {
   it("shows the contract's outbound per-transfer maximum", async () => {
     const user = userEvent.setup();
@@ -222,17 +254,22 @@ describe("GlcToRhn — Goldcoin → Robinhood Chain", () => {
     expect(boundsLine()).not.toContain(solana.per_transfer_limit);
   });
 
-  it("states no minimum, because the contract's outboundMin bounds the payout leg", async () => {
-    // The user types a GOLDCOIN amount here. `outboundMin` bounds what
-    // the contract pays out on the far side, which is a different figure
-    // — showing it as an entry floor is the "Min 99 GLC" bug again.
+  it("states the minimum as a GROSS figure, not the contract's raw outboundMin", async () => {
+    // The user types a GOLDCOIN amount here, and `outboundMin` bounds
+    // what the contract PAYS OUT on the far side — after this route's
+    // fee. Showing it raw is the "Min 99 GLC" bug: the amount is entered,
+    // priced, and then reverted on chain with `AmountBelowMinimum`. What
+    // must appear is the smallest gross whose net clears it.
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
 
-    await waitFor(() => expect(boundsLine()).toContain("Max "));
-    expect(boundsLine()).not.toContain("Min ");
+    await waitFor(() => expect(boundsLine()).toContain("Min "));
+    expect(boundsLine()).toContain(`Min ${publishedMinimum("payout")}`);
+    // The raw floor, formatted the way the line formats things, must NOT
+    // be what appears.
+    expect(boundsLine()).not.toContain(`Min ${grouped(publishedMin("outbound"))} GLC`);
   });
 
   it("refuses an amount above the published maximum", async () => {
@@ -375,11 +412,20 @@ describe("the Solana routes are untouched", () => {
     await waitForRouteVerdict();
     await waitFor(() => expect(boundsLine()).toContain("Min "));
 
+    // Both families publish a minimum now, so "the line changed" is what
+    // distinguishes them rather than "the minimum vanished": the
+    // Robinhood route shows ITS contract's floor, which is a different
+    // number from the Solana program's.
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
-    await waitFor(() => expect(boundsLine()).not.toContain("Min "));
+    await waitFor(() =>
+      expect(boundsLine()).toContain(`Min ${publishedMinimum("payout")}`),
+    );
 
     await selectNetwork(user, "Destination network", /Solana/);
-    await waitFor(() => expect(boundsLine()).toContain("Min "));
+    await waitFor(() =>
+      expect(boundsLine()).not.toContain(`Min ${publishedMinimum("payout")}`),
+    );
+    expect(boundsLine()).toContain("Min ");
     expect(boundsLine()).toContain("Max 20,000 GLC");
   });
 });
