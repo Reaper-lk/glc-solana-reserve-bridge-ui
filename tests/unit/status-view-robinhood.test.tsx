@@ -84,18 +84,26 @@ describe("StatusView with Robinhood routes open", () => {
     ).toBeInTheDocument();
   });
 
-  it("never gives SolToRhn or RhnToSol a card", async () => {
+  it("gives SolToRhn and RhnToSol cards too, with the contract's own figures", async () => {
+    // They used to get no card: `implemented: false` meant no reserve paid
+    // them and no window bounded them, so there was nothing to put on one.
+    // Both settle now, and both are bounded by the same custody contract as
+    // the Goldcoin pair — so both get a card, and each reads the leg that
+    // actually charges it.
     renderWithQueryClient(<StatusView />);
-    await screen.findByRole("heading", { name: "GLC L1 → GLC on Robinhood" });
 
-    // Neither has settlement machinery, so neither can have capacity or a
-    // window. They appear in the Routes list below as "Not implemented".
-    expect(
-      screen.queryByRole("heading", { name: "GLC on Solana → GLC on Robinhood" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("heading", { name: "GLC on Robinhood → GLC on Solana" }),
-    ).toBeNull();
+    const solToRhn = await card("GLC on Solana → GLC on Robinhood");
+    // Settles onto the ROBINHOOD reserve (canonical 8dp: 2,120,000 GLC) and
+    // is charged against the contract's OUTBOUND bucket (18dp: 61,250 GLC).
+    expect(await solToRhn.findByText(/2,120,000\.00/)).toBeInTheDocument();
+    expect(solToRhn.getByText(/61,250\.00/)).toBeInTheDocument();
+
+    const rhnToSol = await card("GLC on Robinhood → GLC on Solana");
+    // Settles onto the SOLANA reserve and is charged against the INBOUND
+    // bucket (18dp: 100,000 GLC). Never the Robinhood ledger's capacity,
+    // which is the nearest wrong answer for a Robinhood-sourced route.
+    expect(await rhnToSol.findByText(/100,000\.00/)).toBeInTheDocument();
+    expect(rhnToSol.queryByText(/2,120,000\.00/)).toBeNull();
   });
 
   it("shows availability, destination capacity and 24h headroom on a live route", async () => {
@@ -239,9 +247,9 @@ describe("StatusView with Robinhood routes closed", () => {
 
   it("still gives every executable route a card, closed or not", async () => {
     // The cards used to be dropped for a closed Robinhood route, which
-    // left /status silently missing two of the four routes it exists to
-    // report on. A closed route has a state worth stating; what it does
-    // not have is figures.
+    // left /status silently missing the routes it exists to report on. A
+    // closed route has a state worth stating; what it does not have is
+    // figures.
     renderWithQueryClient(<StatusView />);
     await screen.findByRole("heading", { name: "GLC L1 → GLC on Solana" });
 
@@ -250,14 +258,16 @@ describe("StatusView with Robinhood routes closed", () => {
       "GLC on Solana → GLC L1",
       "GLC L1 → GLC on Robinhood",
       "GLC on Robinhood → GLC L1",
+      "GLC on Solana → GLC on Robinhood",
+      "GLC on Robinhood → GLC on Solana",
     ]) {
       expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
     }
-    // Three of the four have a destination capacity to show: the two
-    // Solana-governed routes and `RhnToGlc`, which settles onto the
-    // Goldcoin reserve. `GlcToRhn` would need the Robinhood reserve, and
-    // this deployment has none.
-    expect(screen.getAllByText("Destination reserve capacity")).toHaveLength(3);
+    // Four of the six have a destination capacity to show: the two
+    // Solana-governed routes, plus `RhnToGlc` (Goldcoin reserve) and
+    // `RhnToSol` (Solana reserve). `GlcToRhn` and `SolToRhn` would need the
+    // Robinhood reserve, and this deployment has none.
+    expect(screen.getAllByText("Destination reserve capacity")).toHaveLength(4);
 
     const glcToRhn = await card("GLC L1 → GLC on Robinhood");
     expect(glcToRhn.getByText("Unavailable")).toBeInTheDocument();
@@ -268,9 +278,15 @@ describe("StatusView with Robinhood routes closed", () => {
     renderWithQueryClient(<StatusView />);
     const rhnToGlc = await card("GLC on Robinhood → GLC L1");
 
-    expect(
-      rhnToGlc.getByText(/Robinhood Network support is in development/),
-    ).toBeInTheDocument();
+    // Verbatim, and never re-authored here. The copy itself no longer
+    // claims Robinhood support is "in development": every route is built,
+    // so a closed one is switched off, and describing shipped machinery as
+    // unfinished is the thing this card must not do.
+    // Matched on a fragment rather than the whole constant: the sentence is
+    // rendered `whitespace-pre-line` and keeps the newline the backend sent.
+    expect(rhnToGlc.getByText(/switched off on this deployment/)).toBeInTheDocument();
+    expect(rhnToGlc.queryByText(/in development/i)).toBeNull();
+    expect(rhnToGlc.queryByText(/coming soon/i)).toBeNull();
   });
 
   it("publishes no capacity or window figure for a closed route", async () => {

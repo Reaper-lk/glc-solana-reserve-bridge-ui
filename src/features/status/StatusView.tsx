@@ -24,6 +24,7 @@ import {
   executableRouteStatuses,
   isRouteEnabled,
   routeAvailability,
+  routesTouchingChain,
 } from "@/lib/bridge";
 import type { ExecutableRouteStatus, RouteFigure } from "@/lib/bridge";
 import type { ChainsViewDto } from "@/lib/api/schemas/chains";
@@ -54,8 +55,15 @@ export function StatusView() {
   // still has the endpoint, and is exactly the state a status page exists
   // to report. A deployment without the route answers 404 per poll tick,
   // which is what this avoids.
-  const robinhoodLive =
-    isRouteEnabled(chains.data, "GlcToRhn") || isRouteEnabled(chains.data, "RhnToGlc");
+  //
+  // Every route touching Robinhood counts, read off the route table rather
+  // than the two that used to be the whole integration — a deployment with
+  // only the cross routes open has the endpoint too, and asking about the
+  // Goldcoin pair alone would leave those two cards blank on a backend that
+  // was answering perfectly well.
+  const robinhoodLive = routesTouchingChain("robinhood").some((route) =>
+    isRouteEnabled(chains.data, route),
+  );
   const robinhood = useRobinhoodReserve(robinhoodLive);
   // The custody contract's per-transfer ceilings, gated on the same
   // condition and for the same reason: a deployment without the route has
@@ -64,9 +72,13 @@ export function StatusView() {
 
   if (status.isPending || health.isPending || reserve.isPending) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Skeleton className="h-36 w-full" />
-        <Skeleton className="h-36 w-full" />
+      // As many placeholders as there are route cards, in the grid they
+      // will land in — so the page does not reflow from two boxes to six
+      // the moment the first response arrives.
+      <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 6 }, (_, index) => (
+          <Skeleton key={index} className="h-36 w-full" />
+        ))}
       </div>
     );
   }
@@ -89,7 +101,16 @@ export function StatusView() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid gap-4 sm:grid-cols-2">
+      {/*
+        Three columns from `xl`, two from `sm`, one below. At two columns a
+        six-route page is three tall rows of cards whose content is four
+        short rows each — mostly whitespace, and a lot of scrolling to
+        compare two routes. The third column is what keeps the set readable
+        without making any single card bigger: the cards themselves are
+        unchanged, and `auto-rows-fr` only stops a short card from
+        stretching to its row's height.
+      */}
+      <div className="grid auto-rows-fr gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map((card) => (
           <RouteCard key={card.route} card={card} />
         ))}
@@ -167,15 +188,23 @@ function Figure({ figure, className }: { figure: RouteFigure; className?: string
  *
  * A figure or a verdict the backend does not publish for this route is not
  * rendered at all — no placeholder, no dash, no zero, and above all no
- * neighbouring route's value standing in for it. Three of the four routes
- * have genuine gaps (`GET /limits` describes only the Solana program's
- * bounds; a deployment with no Robinhood reserve publishes neither a
- * capacity nor a window), and a card that prints "Not published" in each
- * of those slots reads as unfinished while saying nothing a reader can
- * act on. The badge and `card.note` already carry the state; the row goes.
+ * neighbouring route's value standing in for it. Most routes have a genuine
+ * gap somewhere (a deployment with no Robinhood reserve publishes neither a
+ * capacity nor a window for the four routes that touch it), and a card that
+ * prints "Not published" in each of those slots reads as unfinished while
+ * saying nothing a reader can act on. The badge and `card.note` already
+ * carry the state; the row goes.
  *
  * The corollary is that cards differ in height, and deliberately so — the
  * alternative is a uniform grid of placeholders.
+ *
+ * # Compactness is a constraint, not a preference
+ *
+ * Six of these sit on one page. Nothing here grows to fill a column: the
+ * figures stay at their existing sizes, the two bound rows sit in the same
+ * two-column `dl` as everything else, and the only layout change the sixth
+ * route forced was a third grid column around the cards rather than a
+ * taller card.
  */
 function RouteCard({ card }: { card: ExecutableRouteStatus }) {
   const headingId = useId();
@@ -212,19 +241,29 @@ function RouteCard({ card }: { card: ExecutableRouteStatus }) {
     rows.push({ term: "Route fee", value: card.fee.display, tabular: true });
   }
 
-  // `GET /limits` publishes the SOLANA program's `BridgeConfig` only, so
-  // the Robinhood routes have no published per-transfer bounds at all.
-  // That is a real gap in the API, and an omitted row is how it reads
-  // here — a range filled in from Solana's numbers would state a ceiling
-  // neither Robinhood chain enforces.
-  if (card.minimum && card.maximum) {
+  // The floor and the ceiling are SEPARATE rows, because they come from
+  // different endpoints and are independently absent.
+  //
+  // They used to be one "Per-transfer limits" range, rendered only when
+  // BOTH existed — so a route whose maximum had not been read showed no
+  // minimum either, even though the minimum is the one figure every route
+  // publishes and the one a user needs before typing an amount. Two rows
+  // means each appears exactly when its own endpoint answered.
+  if (card.minimum) {
     rows.push({
-      term: "Per-transfer limits",
-      value: (
-        <>
-          <Figure figure={card.minimum} /> – <Figure figure={card.maximum} />
-        </>
-      ),
+      term: "Source minimum",
+      value: <Figure figure={card.minimum} />,
+      tabular: true,
+    });
+  }
+  // `GET /limits` publishes the SOLANA program's `BridgeConfig`, and
+  // `GET /robinhood/limits` the custody contract's; a deployment missing
+  // either leaves this row out rather than borrowing the other's number,
+  // which would state a ceiling the route's own chain does not enforce.
+  if (card.maximum) {
+    rows.push({
+      term: "Max per transfer",
+      value: <Figure figure={card.maximum} />,
       tabular: true,
     });
   }
@@ -233,8 +272,8 @@ function RouteCard({ card }: { card: ExecutableRouteStatus }) {
     /*
       A labelled group, not a bare div. Every card repeats the same terms —
       "Destination reserve capacity", "Remaining 24-hour capacity" — so
-      with four routes on the page a reader navigating by anything other
-      than sight would meet each phrase four times with nothing tying it to
+      with six routes on the page a reader navigating by anything other
+      than sight would meet each phrase six times with nothing tying it to
       a route. The route's own heading is that tie.
     */
     <Card role="group" aria-labelledby={headingId}>
@@ -305,11 +344,11 @@ function RouteCard({ card }: { card: ExecutableRouteStatus }) {
  * # Why this carries no numbers
  *
  * The cards above pair a route with its destination reserve's capacity and
- * its rolling window. This list is the complete registry, and it includes
- * routes for which no such figures exist — `SolToRhn`/`RhnToSol` have no
- * settlement machinery on either side, so there is no reserve paying them
- * and no window bounding them, and a network the backend adds later may
- * arrive here before this build can describe it at all.
+ * its rolling window. This list is the complete registry, and it can include
+ * routes for which no such figures exist: a network the backend adds later
+ * arrives here before this build can describe it at all, and a route a
+ * deployment reports `implemented: false` has no reserve paying it and no
+ * window bounding it.
  *
  * So this card states availability and stops. It does not estimate a
  * capacity, borrow another route's figure, or render an empty placeholder

@@ -29,7 +29,7 @@ import {
 } from "../schemas/transfer";
 import * as fixtures from "./fixtures";
 import type { SettlementRoute } from "../schemas/common";
-import { ROBINHOOD_DECIMALS } from "@/lib/bridge/robinhood-amount";
+import { directions } from "@/lib/bridge/direction";
 
 export type MockScenario =
   | "operational"
@@ -55,7 +55,27 @@ export interface MockClientOptions {
 }
 
 const GOLDCOIN_DECIMALS = 8;
-const SOLANA_DECIMALS = 6;
+
+/**
+ * The asset names `BridgeApi::quote` echoes per chain. Keyed by chain id so
+ * a route's two names come from the same place its two decimals do.
+ */
+const QUOTE_ASSET_NAME: Readonly<Record<string, string>> = {
+  goldcoin: "GLC (Goldcoin)",
+  solana: "GLC (Solana)",
+  robinhood: "GLC (Robinhood)",
+};
+
+/**
+ * Throws rather than falling back, because a mock quoting an asset it has
+ * no name for would be a silently mislabelled response — and mock mode is
+ * what the UI's own tests read.
+ */
+function quoteAssetName(chainId: string): string {
+  const name = QUOTE_ASSET_NAME[chainId];
+  if (name === undefined) throw new Error(`mock: no quote asset name for ${chainId}`);
+  return name;
+}
 
 /**
  * Exact atomic -> decimal string. Integer/BigInt arithmetic only: the real
@@ -184,6 +204,12 @@ export class MockBridgeClient implements BridgeApiClient {
    * Robinhood's token is a compile-time 18 — the backend calls that last
    * one "a compile-time constant, not a live read", because an 18-decimal
    * token is what makes a separate Robinhood unit necessary at all.
+   *
+   * Read off the route descriptor rather than a six-arm `switch`. The
+   * switch was four arms and total over the old vocabulary, so widening the
+   * route enum broke it loudly — which is the behaviour that design is for
+   * — but the arms were six restatements of two facts the registry already
+   * holds: which chain is on each side, and that chain's decimals.
    */
   private quoteUnits(route: SettlementRoute): {
     source: number;
@@ -191,36 +217,13 @@ export class MockBridgeClient implements BridgeApiClient {
     sourceAsset: string;
     destinationAsset: string;
   } {
-    switch (route) {
-      case "GlcToSol":
-        return {
-          source: GOLDCOIN_DECIMALS,
-          destination: SOLANA_DECIMALS,
-          sourceAsset: "GLC (Goldcoin)",
-          destinationAsset: "GLC (Solana)",
-        };
-      case "SolToGlc":
-        return {
-          source: SOLANA_DECIMALS,
-          destination: GOLDCOIN_DECIMALS,
-          sourceAsset: "GLC (Solana)",
-          destinationAsset: "GLC (Goldcoin)",
-        };
-      case "GlcToRhn":
-        return {
-          source: GOLDCOIN_DECIMALS,
-          destination: ROBINHOOD_DECIMALS,
-          sourceAsset: "GLC (Goldcoin)",
-          destinationAsset: "GLC (Robinhood)",
-        };
-      case "RhnToGlc":
-        return {
-          source: ROBINHOOD_DECIMALS,
-          destination: GOLDCOIN_DECIMALS,
-          sourceAsset: "GLC (Robinhood)",
-          destinationAsset: "GLC (Goldcoin)",
-        };
-    }
+    const descriptor = directions[route];
+    return {
+      source: descriptor.from.token.decimals,
+      destination: descriptor.to.token.decimals,
+      sourceAsset: quoteAssetName(descriptor.from.chain.id),
+      destinationAsset: quoteAssetName(descriptor.to.chain.id),
+    };
   }
 
   async getQuote(request: {
@@ -236,7 +239,12 @@ export class MockBridgeClient implements BridgeApiClient {
     // distinguishable from "you sent nonsense".
     if (!this.routeOpen(request.direction)) throw directionUnavailableError();
 
-    const feeBps = fixtures.BRIDGE_FEE_BPS;
+    // The route's OWN rate, off the same `route_fees` table `/stats`
+    // publishes. It used to be `BRIDGE_FEE_BPS` for every route, which
+    // quoted a Robinhood transfer at the Solana program's rate — the exact
+    // display bug the per-route table exists to prevent, reproduced by the
+    // mock the UI is developed against.
+    const feeBps = fixtures.routeFeeBps(request.direction);
     const fee = (gross * BigInt(feeBps)) / 10_000n;
     const net = gross - fee;
     const units = this.quoteUnits(request.direction);

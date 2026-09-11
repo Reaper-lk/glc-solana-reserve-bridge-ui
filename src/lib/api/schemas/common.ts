@@ -141,8 +141,8 @@ export type Chain = z.infer<typeof chainSchema>;
  * This schema exists so a response naming ANY route the backend can
  * produce parses cleanly. It is deliberately permissive, and it is
  * deliberately not an availability signal: `SolToRhn`/`RhnToGlc` and
- * every other value here parse identically whether the route is open,
- * closed, or structurally non-executable.
+ * every other value here parse identically whether the route is open or
+ * closed.
  *
  * Availability comes from ONE place, `GET /chains`' per-route `enabled`
  * flag (see `./chains`), which is the same `RouteGate` verdict
@@ -183,26 +183,37 @@ export const directionSchema = routeSchema;
 export type Direction = Route;
 
 /**
- * The four routes that have backend SETTLEMENT MACHINERY — exactly the
- * routes for which `Route::as_direction()` returns `Some`, mirrored by
- * `GET /chains`' `implemented: true`.
+ * The routes the UI may hand to an ACTION — a quote request, a
+ * create-transfer, a direction descriptor.
  *
- * This is the narrow vocabulary for anything the UI can INITIATE: a
- * quote request, a create-transfer, a direction descriptor. `SolToRhn`
- * and `RhnToSol` are excluded at the type level, so no code path can
- * hand either to an action — matching the backend, where those two
- * routes have no `Direction` value to call a settlement function with.
+ * # Why this is now the whole vocabulary
  *
- * Still not an availability check. An implemented route is very often a
- * closed one: both Robinhood routes ship disabled.
+ * It used to be exactly four: `Route::as_direction()` answered `None` for
+ * `SolToRhn`/`RhnToSol`, so no settlement function could be called with
+ * either and excluding them at the type level was a real safety property.
+ * That stopped being true when the backend shipped settlement machinery
+ * for both — `GET /chains` reports `implemented: true` for all six — and a
+ * type that still excluded them made the app describe a shipped route as
+ * an absent one.
+ *
+ * So this is `routeSchema` itself, and deliberately written as an alias of
+ * it rather than as a second six-member enum: two enums that must stay
+ * identical are two places for them to stop being identical.
+ *
+ * # Why the name survives
+ *
+ * It still names the INTENT at every call site — `useQuote(direction:
+ * SettlementRoute)` says "this value is about to be acted on", which
+ * `Route` does not — and `isSettlementRoute` is still a real runtime check,
+ * because `GET /chains` route ids are open strings by design (see
+ * `./chains`) and a backend that adds a seventh route must narrow to
+ * nothing here rather than be guessed at.
+ *
+ * Still not an availability check, and that has not changed: an
+ * implemented route is very often a closed one.
  */
-export const settlementRouteSchema = z.enum([
-  "GlcToSol",
-  "SolToGlc",
-  "GlcToRhn",
-  "RhnToGlc",
-]);
-export type SettlementRoute = z.infer<typeof settlementRouteSchema>;
+export const settlementRouteSchema = routeSchema;
+export type SettlementRoute = Route;
 
 /**
  * Whether a wire route is one the UI could ever initiate.

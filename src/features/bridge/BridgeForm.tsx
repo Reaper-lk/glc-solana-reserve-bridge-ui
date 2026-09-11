@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, ErrorState } from "@/components/ui";
-import { toBigInt } from "@/lib/api/schemas/common";
+import { isSettlementRoute, toBigInt } from "@/lib/api/schemas/common";
 import type { SettlementRoute } from "@/lib/api/schemas/common";
 import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 import {
@@ -27,8 +27,13 @@ import {
   largestCanonicalRobinhoodAmountAtMost,
   maximumBridgeableAmount,
   CANONICAL_TO_ROBINHOOD_SCALE,
+  isRouteExecutableHere,
+  perTransferCeiling,
   resolveRoute,
+  robinhoodContractLeg,
+  routeExecutionSupport,
   robinhoodPerTransferMaximum,
+  routesTouchingChain,
   routeSourceMinimum,
   robinhoodRollingRemaining,
   robinhoodPredepositVerdict,
@@ -187,15 +192,20 @@ export function BridgeForm() {
   const sourceIsRobinhood = sourceChainId === "robinhood";
 
   /**
-   * `GET /limits` reports the SOLANA program's `BridgeConfig`. Those
-   * bounds govern that program's reserve in that mint's own units — they
-   * are not the Robinhood contract's, and relabelling them for a
-   * Robinhood-legged pair would publish a ceiling neither chain enforces.
-   * A Robinhood route's own bounds come from `GET /robinhood/limits`
-   * instead (see `robinhoodLimits` below), never from here.
+   * Which published ceiling bounds THIS pair — the one table, shared with
+   * /status, so the maximum this form enforces and the one that page prints
+   * are the same figure.
+   *
+   * This used to be an inline `neither side is Robinhood` boolean. That
+   * answered correctly while Robinhood only ever paired with Goldcoin, and
+   * wrongly on the cross routes, where both chains publish a ceiling:
+   * `SolToRhn` is bounded by the Solana program on the way in, and the
+   * inline test called that "Robinhood-legged" and dropped the one bound
+   * that applies to the deposit. See `./route-limits` for which side wins
+   * and why no combined figure is shown.
    */
-  const limitsGovernRoute =
-    sourceChainId !== "robinhood" && destinationChainId !== "robinhood";
+  const ceiling = perTransferCeiling(sourceChainId, destinationChainId);
+  const limitsGovernRoute = ceiling === "solana-program";
 
   /**
    * The Robinhood custody contract's own ceilings, for the one route this
@@ -210,13 +220,18 @@ export function BridgeForm() {
    * without the route never fires the request at all.
    */
   const robinhoodLimits = useRobinhoodLimits(
-    (route === "GlcToRhn" && isRouteEnabled(chains.data, "GlcToRhn")) ||
-      (route === "RhnToGlc" && isRouteEnabled(chains.data, "RhnToGlc")),
+    // Every route touching the custody contract, not just the Goldcoin
+    // pair: the cross routes are bounded and windowed by the same contract
+    // and need the same read. Still gated on the pair the form is pointed
+    // at, so a Goldcoin↔Solana pair never fires the request.
+    routesTouchingChain("robinhood").some(
+      (candidate) => route === candidate && isRouteEnabled(chains.data, candidate),
+    ),
   );
 
   /**
-   * Which side of the custody contract this pair touches, spelled out
-   * from the two chain ids rather than read off `route`.
+   * Which side of the custody contract this pair touches, derived from the
+   * two chain ids rather than read off `route`.
    *
    * The one value in this component that does not come from the single
    * route resolution above, and the reason is a compiler one: `route` has
@@ -225,14 +240,14 @@ export function BridgeForm() {
    * — or anything derived from it — as a `useMemo` dependency.
    * `robinhoodContractLeg` states the same mapping and is pinned against
    * `resolveRoute` by test, so the two cannot disagree about which pair
-   * is which.
+   * is which. It is `null` for a pair with Robinhood on neither side, and
+   * non-null for all four that have it on one — including the two cross
+   * routes, which the inlined version of this test used to miss.
    */
-  const robinhoodLeg: RobinhoodContractLeg | null =
-    sourceChainId === "robinhood" && destinationChainId === "goldcoin"
-      ? "deposit"
-      : sourceChainId === "goldcoin" && destinationChainId === "robinhood"
-        ? "payout"
-        : null;
+  const robinhoodLeg: RobinhoodContractLeg | null = robinhoodContractLeg(
+    sourceChainId,
+    destinationChainId,
+  );
 
   /**
    * This pair's per-transaction ceiling in the source token's own base
@@ -304,11 +319,11 @@ export function BridgeForm() {
   const amountBounds = useMemo(() => {
     // The MINIMUM is the same rule on every route and comes from one
     // place — `GET /chains`' per-route `min_transfer_atomic` — so it sits
-    // outside the branch below. Only the MAXIMUM still differs by route
-    // family, because the two chains really do enforce different
-    // ceilings: the Solana program's `per_transfer_limit` for the
-    // Solana-governed pairs, `GlcRobinhoodBridge`'s
-    // `inboundMax`/`outboundMax` for the Robinhood ones.
+    // outside the branch below. Only the MAXIMUM differs, because the two
+    // chains really do enforce different ceilings: the Solana program's
+    // `per_transfer_limit` where `perTransferCeiling` says that bounds the
+    // pair, `GlcRobinhoodBridge`'s `inboundMax`/`outboundMax` where it says
+    // the contract does.
     if (!limitsGovernRoute) {
       return {
         decimals: sourceToken.decimals,
@@ -352,14 +367,26 @@ export function BridgeForm() {
     amountValidation?.raw === undefined ||
     isCanonicalRobinhoodAmount(amountValidation.raw);
 
-  // A quote is only meaningful for a route with settlement machinery. The
-  // two Solana<->Robinhood routes resolve but have none, so they are never
-  // priced — the backend would refuse, and it already told us via /chains.
-  const settlementRoute = isSettlementRouteName(route) ? route : "GlcToSol";
+  /*
+   * The route a quote is requested for.
+   *
+   * Every route the backend names is now quotable — the cross routes have
+   * settlement machinery and the pricing path prices them — so the only
+   * reason this is not simply `route` is that `route` is `null` for a pair
+   * that resolves to none. `isSettlementRoute` is the runtime narrowing
+   * that makes that a type-safe fallback rather than a cast; the `enabled`
+   * flag beside it is what actually decides whether a request is made, and
+   * it is false in exactly the case the fallback value is used.
+   *
+   * A closed route is still never priced: asking the backend to quote one
+   * earns a refusal it already published on `/chains`.
+   */
+  const settlementRoute: SettlementRoute =
+    route !== null && isSettlementRoute(route) ? route : "GlcToSol";
   const quote = useQuote(
     settlementRoute,
     canonicalGrossAmount,
-    isSettlementRouteName(route) && availability.kind === "open",
+    route !== null && availability.kind === "open",
   );
 
   const recipientValidation = useMemo(
@@ -425,7 +452,8 @@ export function BridgeForm() {
 
   /**
    * `GET /reserve` carries the Goldcoin and Solana reserves only, so a
-   * Robinhood destination gets `null` here rather than a stand-in.
+   * Robinhood destination — `GlcToRhn` or `SolToRhn` — gets `null` here
+   * rather than a stand-in.
    *
    * The Robinhood reserve's capacity IS published now, by its own endpoint
    * (`GET /robinhood/reserve`, rendered on /status). It is deliberately not
@@ -549,6 +577,10 @@ export function BridgeForm() {
   const gate: Gate = computeGate({
     resolution,
     availability,
+    // Whether THIS BUILD can construct the route's source transaction, which
+    // is a different question from whether the backend would admit one. See
+    // `@/lib/bridge/route-execution`.
+    execution: route === null ? null : routeExecutionSupport(route),
     chainsPending: chains.isPending,
     chainsError: chains.isError,
     statusPending: status.isPending,
@@ -638,19 +670,20 @@ export function BridgeForm() {
    *
    * It used to keep the current destination whenever that pair was merely
    * `implemented`. That was indistinguishable from "usable" only while
-   * every implemented route was also open — and it stopped being true the
-   * moment Phase H shipped `SolToRhn`/`RhnToSol` built and switched off.
-   * Switching the source to Robinhood while the destination was Solana
-   * then landed on `RhnToSol`, a closed route, instead of falling through
-   * to `RhnToGlc`, an open one. Being implemented says the settlement
-   * machinery exists; it is not permission to move value, and it is not a
-   * reason to put a user in front of a route that cannot run.
+   * every implemented route was also open — and it stopped being true as
+   * soon as `SolToRhn`/`RhnToSol` shipped built and switched off. Switching
+   * the source to Robinhood while the destination was Solana then landed on
+   * `RhnToSol`, a closed route, instead of falling through to `RhnToGlc`,
+   * an open one. Being implemented says the settlement machinery exists; it
+   * is not permission to move value, and it is not a reason to put a user
+   * in front of a route that cannot run.
    *
    * So an OPEN route is preferred over one that merely exists, and the
    * user's own choice is preferred over the registry's order:
    *
-   *   1. the destination already selected, if THIS pair is open
-   *   2. the first open destination from this source
+   *   1. the destination already selected, if THIS pair is open and
+   *      startable from this app
+   *   2. the first such destination from this source
    *   3. the destination already selected, if nothing is open and the
    *      verdict is `unknown` — `/chains` has not answered, so moving the
    *      user on a guess would be worse than leaving them where they are
@@ -669,7 +702,21 @@ export function BridgeForm() {
       if (resolved.kind !== "route") return null;
       return routeAvailability(chains.data, resolved.route).kind;
     };
-    const isOpen = (destinationId: string) => verdictOf(destinationId) === "open";
+    // "Open" here means open AND startable from this app. A route the
+    // backend serves but this build cannot construct a deposit for is a
+    // worse landing place than a closed one: the user would arrive on a
+    // pair that looks available everywhere else in the UI and cannot be
+    // submitted. It stays selectable — a user may still want to read about
+    // it — but a single click on the source selector never parks anyone
+    // there when something startable exists.
+    const isOpen = (destinationId: string) => {
+      const resolved = resolveRoute(nextSource, destinationId);
+      return (
+        verdictOf(destinationId) === "open" &&
+        resolved.kind === "route" &&
+        isRouteExecutableHere(resolved.route)
+      );
+    };
     // Everything the selector may land on at all. `unimplemented` is the
     // only verdict excluded: a route with no machinery behind it cannot
     // become usable, so it is never a destination to fall back to.
@@ -902,6 +949,14 @@ export function BridgeForm() {
 
   async function submit() {
     if (!gate.can || !amountValidation?.raw || !sourceAdapter || !route) return;
+    // Defence in depth. The gate already refuses a route this build cannot
+    // construct a deposit for, and `gate.can` above is that refusal — but
+    // the two arms below encode a specific route in their payload
+    // (`CONTRACT_ROUTE_IDS.RhnToGlc`, and a Goldcoin destination for the
+    // Solana program), so the one bug that could reach them is worth
+    // stopping here rather than trusting a caller. Silent, because the
+    // blocker callout has already said it.
+    if (!isRouteExecutableHere(route)) return;
     setSubmitError(null);
     setSubmitting(true);
     try {
@@ -1210,15 +1265,6 @@ function hasLimitsToShow(bounds: AmountBounds, remaining: string | null): boolea
   return boundsSummary(bounds) !== null || remaining !== null;
 }
 
-function isSettlementRouteName(route: string | null): route is SettlementRoute {
-  return (
-    route === "GlcToSol" ||
-    route === "SolToGlc" ||
-    route === "GlcToRhn" ||
-    route === "RhnToGlc"
-  );
-}
-
 /**
  * Source options: every network this build describes that has at least one
  * defined outbound route. Availability is per-PAIR, so a source's own
@@ -1272,12 +1318,37 @@ function destinationOptions(
     const state = routeAvailability(chains, resolved.route);
     switch (state.kind) {
       case "open":
-        return { chain, selectable: true, status: "Available" };
+        // Open on the backend, and separately: can this app start it? A
+        // route this build has no source-transaction payload for is shown
+        // as such HERE, in the selector, rather than only after it is
+        // chosen — the whole point of the status line is that a user can
+        // see what a pair will do before committing to it.
+        return isRouteExecutableHere(resolved.route)
+          ? { chain, selectable: true, status: "Available" }
+          : {
+              chain,
+              selectable: true,
+              status: "Not in this app yet",
+              // Short, because the selector is a list. The full sentence —
+              // which route, what is missing, and that nothing has moved —
+              // is the blocker callout's job once the pair is chosen.
+              detail:
+                "This route is live on the bridge, but cannot be started from this app yet.",
+            };
       case "closed":
         // Selectable on purpose: choosing a closed route is allowed, and
         // the form then explains why it cannot be used. Hiding it would
         // leave a user unable to find out.
-        return { chain, selectable: true, status: "Coming soon", detail: state.reason };
+        //
+        // Not "Coming soon". Every route the backend names is built, so a
+        // closed one is switched off rather than unreleased, and promising
+        // a launch here would be this UI inventing one.
+        return {
+          chain,
+          selectable: true,
+          status: "Currently unavailable",
+          detail: state.reason,
+        };
       case "unavailable":
         // Switched on, currently refused by its destination reserve.
         // Selectable for the same reason as `closed`, and worded
@@ -1316,6 +1387,12 @@ interface Gate {
 interface GateInput {
   resolution: ReturnType<typeof resolveRoute>;
   availability: ReturnType<typeof routeAvailability>;
+  /**
+   * Whether this build can build the route's source transaction at all.
+   * `null` only when the pair resolves to no route, which step 1 below has
+   * already refused.
+   */
+  execution: ReturnType<typeof routeExecutionSupport> | null;
   chainsPending: boolean;
   chainsError: boolean;
   statusPending: boolean;
@@ -1435,6 +1512,28 @@ function computeGate(input: GateInput): Gate {
     return blocked(input.predeposit.verdict.reason, {
       cta: "Route unavailable",
       blocker: "route-unavailable",
+    });
+  }
+
+  // 2a'. Can this BUILD start the route? A fact about the app, not a
+  // verdict from the backend — and deliberately NOT folded into
+  // availability, because /chains reports these routes open on a deployment
+  // that has them open and they ARE open. What is missing is a
+  // source-transaction payload this app can construct correctly, and
+  // guessing one would commit a user's GLC on-chain with no way back
+  // (`@/lib/bridge/route-execution`).
+  //
+  // Checked AFTER the backend's verdict, not before it. On a route the
+  // backend has closed, its own sentence is the operative answer and this
+  // app's separate limitation is moot — leading with ours would explain a
+  // refusal nobody had reached yet. Checked before any wallet is asked for,
+  // for the same reason a closed route is: no connect prompt for a transfer
+  // that cannot be submitted.
+  if (input.execution?.kind === "unsupported-here") {
+    return blocked(input.execution.reason, {
+      cta: "Not available in this app",
+      blocker: "route-not-executable-here",
+      reasonShownInline: true,
     });
   }
 

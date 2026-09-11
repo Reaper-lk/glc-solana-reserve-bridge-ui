@@ -41,11 +41,18 @@ const MAX_FIELD: Record<
  * The rolling accumulator each leg is charged against, keyed by the ROUTE
  * the backend names it after.
  *
- * `deposit` is `RhnToGlc`, charged by `deposit()` against
- * `inboundRollingLimit`; `payout` is `GlcToRhn`, charged by
- * `executePayout` against `outboundRollingLimit`. The backend publishes
- * these route-named precisely so this table is the only place the two
- * vocabularies meet.
+ * `deposit` is charged by `deposit()` against `inboundRollingLimit`;
+ * `payout` is charged by `executePayout` against `outboundRollingLimit`.
+ * The backend publishes these under route names — `rhn_to_glc_…`,
+ * `glc_to_rhn_…` — so this table is the only place the two vocabularies
+ * meet.
+ *
+ * The NAMES are route-shaped; the buckets are not. The contract holds one
+ * inbound accumulator and one outbound accumulator, and every route
+ * entering the contract shares the first while every route leaving it
+ * shares the second. So `RhnToSol` reads the same inbound figure as
+ * `RhnToGlc`, and `SolToRhn` the same outbound figure as `GlcToRhn` —
+ * which is exactly what the contract charges them, not an approximation.
  */
 const WINDOW_FIELD: Record<
   RobinhoodContractLeg,
@@ -56,14 +63,21 @@ const WINDOW_FIELD: Record<
 };
 
 /**
- * The contract leg a Goldcoin<->Robinhood pair uses, or `null` for a pair
- * that touches the contract on neither side.
+ * The contract leg a pair uses, or `null` for a pair that touches the
+ * custody contract on neither side.
  *
- * `RhnToGlc` deposits into the contract, so it is bounded by
- * `inboundMax`; `GlcToRhn` is paid out of it, so it is bounded by
- * `outboundMax`. The Solana<->Robinhood pairs return `null`: they have no
- * settlement machinery on either side, and publishing a ceiling for a
- * route that can never run would state a permission that does not exist.
+ * Keyed on WHICH SIDE is Robinhood rather than on a list of pairs, which is
+ * what makes it total over the four Robinhood-legged routes instead of the
+ * two Goldcoin ones it used to cover:
+ *
+ * - Robinhood as DESTINATION (`GlcToRhn`, `SolToRhn`) is paid out of the
+ *   contract, so it is bounded by `outboundMax` and charged against the
+ *   outbound window.
+ * - Robinhood as SOURCE (`RhnToGlc`, `RhnToSol`) deposits into it, so it is
+ *   bounded by `inboundMax` and charged against the inbound window.
+ *
+ * A pair with Robinhood on neither side returns `null`, and so does a
+ * same-network pair — there is no self-route to bound.
  *
  * # Why this reads chain ids rather than a resolved route
  *
@@ -85,12 +99,9 @@ export function robinhoodContractLeg(
   sourceChainId: string,
   destinationChainId: string,
 ): RobinhoodContractLeg | null {
-  if (sourceChainId === "robinhood" && destinationChainId === "goldcoin") {
-    return "deposit";
-  }
-  if (sourceChainId === "goldcoin" && destinationChainId === "robinhood") {
-    return "payout";
-  }
+  if (sourceChainId === destinationChainId) return null;
+  if (sourceChainId === "robinhood") return "deposit";
+  if (destinationChainId === "robinhood") return "payout";
   return null;
 }
 
@@ -130,9 +141,10 @@ export function robinhoodContractLeg(
  *
  * The endpoint reports Robinhood's native 18 decimals. A `deposit` leg
  * sources from Robinhood and needs no conversion; a `payout` leg sources
- * from Goldcoin's canonical 8, so the figure narrows by exactly the 10^10
- * factor between them. FLOORED, never rounded — the same "never more
- * permissive than the chain" convention `atomicRescaleFloor` exists for.
+ * from something coarser — Goldcoin's canonical 8, or the Solana mint's 6 —
+ * so the figure narrows to whatever `sourceDecimals` says. FLOORED, never
+ * rounded — the same "never more permissive than the chain" convention
+ * `atomicRescaleFloor` exists for.
  */
 export function robinhoodPerTransferMaximum(
   leg: RobinhoodContractLeg | null,
@@ -154,7 +166,7 @@ export function robinhoodPerTransferMaximum(
  * # Authoritative, not derived
  *
  * This is `remaining_atomic` from the accumulator the CONTRACT charges:
- * `inboundWindow()` for `RhnToGlc`, `outboundWindow()` for `GlcToRhn`,
+ * `inboundWindow()` for a deposit leg, `outboundWindow()` for a payout one,
  * each against its own `…RollingLimit`, projected for now by the same
  * backend helper `GET /robinhood/reserve` uses. Nothing is subtracted
  * here, and nothing is inferred from this UI's own view of recent
@@ -168,11 +180,11 @@ export function robinhoodPerTransferMaximum(
  *
  * # What the number is denominated in
  *
- * `deposit` (`RhnToGlc`): the window is charged the deposited amount, so
- * this is directly comparable with what the user types.
+ * `deposit` (`RhnToGlc`, `RhnToSol`): the window is charged the deposited
+ * amount, so this is directly comparable with what the user types.
  *
- * `payout` (`GlcToRhn`): the window is charged the NET payout, so this
- * slightly understates the gross a user could still spend. Left
+ * `payout` (`GlcToRhn`, `SolToRhn`): the window is charged the NET payout,
+ * so this slightly understates the gross a user could still spend. Left
  * understated deliberately — grossing it up would advertise headroom the
  * contract would refuse, and the safe direction for a remaining figure is
  * down. FLOORED on narrowing for the same reason.

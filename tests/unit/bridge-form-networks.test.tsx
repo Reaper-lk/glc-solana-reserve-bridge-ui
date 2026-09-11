@@ -244,12 +244,16 @@ describe("BridgeForm — Robinhood pairs in their shipping (closed) state", () =
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
 
     expect(summaryRoute()).toContain("Goldcoin → Robinhood Chain");
-    expect(screen.getByText("Coming soon")).toBeInTheDocument();
+    // "Currently unavailable", never "Coming soon". Every route the backend
+    // names is built and settling, so a closed one is switched off rather
+    // than unreleased — and promising a launch would be this UI inventing
+    // one.
+    expect(screen.getByText("Currently unavailable")).toBeInTheDocument();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+    expect(screen.queryByText(/in development/i)).toBeNull();
     // The backend's own sentence, not a locally-authored one.
     expect(
-      screen.getAllByText(
-        /Robinhood Chain support is in development|Robinhood Network support is in development/i,
-      ).length,
+      screen.getAllByText(/switched off on this deployment/i).length,
     ).toBeGreaterThan(0);
   });
 
@@ -265,10 +269,10 @@ describe("BridgeForm — Robinhood pairs in their shipping (closed) state", () =
   });
 
   it("resolves Solana → Robinhood and reports it closed, not absent", async () => {
-    // `SolToRhn` HAS settlement machinery since Phase H and ships shut,
-    // so it reads as a route that is switched off ("Coming soon") rather
-    // than one that does not exist ("Not available"). The distinction is
-    // the whole reason `implemented` is a separate field from `enabled`.
+    // `SolToRhn` has settlement machinery and ships shut, so it reads as a
+    // route that is switched off rather than one that does not exist ("Not
+    // available"). The distinction is the whole reason `implemented` is a
+    // separate field from `enabled`.
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
@@ -277,8 +281,9 @@ describe("BridgeForm — Robinhood pairs in their shipping (closed) state", () =
     await selectNetwork(user, "Destination network", /Robinhood Chain/);
 
     expect(summaryRoute()).toContain("Solana → Robinhood Chain");
-    expect(screen.getByText("Coming soon")).toBeInTheDocument();
+    expect(screen.getByText("Currently unavailable")).toBeInTheDocument();
     expect(screen.queryByText("Not available")).toBeNull();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
     // Closed is still closed: nothing here opens a route.
     expect(screen.getByRole("button", { name: /Route unavailable/i })).toBeDisabled();
   });
@@ -292,8 +297,9 @@ describe("BridgeForm — Robinhood pairs in their shipping (closed) state", () =
     await selectNetwork(user, "Destination network", /Solana/);
 
     expect(summaryRoute()).toContain("Robinhood Chain → Solana");
-    expect(screen.getByText("Coming soon")).toBeInTheDocument();
+    expect(screen.getByText("Currently unavailable")).toBeInTheDocument();
     expect(screen.queryByText("Not available")).toBeNull();
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
     expect(screen.getByRole("button", { name: /Route unavailable/i })).toBeDisabled();
   });
 
@@ -523,22 +529,28 @@ describe("BridgeForm — reversing direction", () => {
  *
  * `onSourceChange` kept the current destination whenever that pair was
  * merely `implemented`. While every implemented route was also open the
- * two were indistinguishable — and they stopped being so the moment Phase
- * H shipped `SolToRhn`/`RhnToSol` built and switched off. From the
- * default Goldcoin → Solana, switching the SOURCE to Robinhood kept
- * Solana and landed on `RhnToSol`: a closed route, chosen over `RhnToGlc`
- * which was open.
+ * two were indistinguishable — and they stopped being so as soon as
+ * `SolToRhn`/`RhnToSol` shipped built and switched off. From the default
+ * Goldcoin → Solana, switching the SOURCE to Robinhood kept Solana and
+ * landed on `RhnToSol`: a closed route, chosen over `RhnToGlc` which was
+ * open.
  *
  * Being implemented says the settlement machinery exists. It is not
- * permission to move value, and it is not a reason to put someone in
- * front of a route that cannot run.
+ * permission to move value, and it is not a reason to put someone in front
+ * of a route that cannot run.
+ *
+ * The same argument now covers a second case, for the same reason: a route
+ * the backend reports OPEN that this app cannot construct a source
+ * transaction for (`@/lib/bridge/route-execution`). Landing on one is worse
+ * than landing on a closed route, because every other signal in the UI says
+ * it is available. So "open" for ranking purposes means open AND startable
+ * here.
  *
  * # What is pinned
  *
- * That an OPEN destination wins over one that merely exists, that the
- * user's own choice still wins when it is open, that nothing here opens a
- * route, and that a source with no open destination still lands somewhere
- * coherent.
+ * That a startable OPEN destination wins over one that is merely open or
+ * merely exists, that nothing here opens a route, and that a source with no
+ * such destination still lands somewhere coherent.
  */
 describe("BridgeForm — default destination when the source changes", () => {
   /** The two chain ids the summary names, as "Source → Destination". */
@@ -546,13 +558,25 @@ describe("BridgeForm — default destination when the source changes", () => {
     return summaryRoute();
   }
 
-  it("prefers the OPEN Goldcoin route over the built-but-closed Solana one", async () => {
-    // The regression itself. `robinhoodOpen` opens GlcToRhn/RhnToGlc and
-    // leaves the cross pair shut, so Robinhood has exactly one open
-    // destination and it is not the one currently selected.
-    getChains.mockResolvedValue(
-      fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true }),
-    );
+  it("prefers the OPEN Goldcoin route over a closed Solana one", async () => {
+    // The regression itself, against a backend with the cross route
+    // explicitly shut: Robinhood then has exactly one open destination and
+    // it is not the one currently selected.
+    const chains = fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true });
+    getChains.mockResolvedValue({
+      ...chains,
+      routes: chains.routes.map((route) =>
+        route.id === "RhnToSol"
+          ? {
+              ...route,
+              enabled: false,
+              disabled_reason: fixtures.ROUTE_UNAVAILABLE_MESSAGE,
+              available: false,
+              unavailable_reason: fixtures.ROUTE_UNAVAILABLE_MESSAGE,
+            }
+          : route,
+      ),
+    });
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
@@ -568,10 +592,10 @@ describe("BridgeForm — default destination when the source changes", () => {
     // Stated separately from the case above so it fails on its own terms:
     // `RhnToSol` is implemented in the fixture, and that alone must never
     // be enough to be chosen.
-    const chains = fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true });
+    const chains = fixtures.chainsFixture(() => new Date());
     const crossRoute = chains.routes.find((r) => r.id === "RhnToSol");
     expect(crossRoute?.implemented, "the fixture ships it built").toBe(true);
-    expect(crossRoute?.enabled, "and switched off").toBe(false);
+    expect(crossRoute?.enabled, "and switched off by default").toBe(false);
 
     getChains.mockResolvedValue(chains);
     const user = userEvent.setup();
@@ -582,39 +606,23 @@ describe("BridgeForm — default destination when the source changes", () => {
     await waitFor(() => expect(landedOn()).toContain("Robinhood Chain → Goldcoin"));
   });
 
-  it("keeps the destination the user chose when that pair is open", async () => {
-    // The preference is the USER's choice first and the registry's order
-    // second, which only shows itself when the chosen destination is not
-    // the first candidate.
-    //
-    // A CONSTRUCTED backend: this opens `SolToRhn`, which the shipping
-    // fixture deliberately leaves shut, because that is the only way this
-    // branch is reachable at all. Nothing in the shared fixtures changes,
-    // and nothing here opens a route in production — this asserts what
-    // the selector does when a backend reports a route open, which is the
-    // one thing that decides where it lands.
-    const chains = fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true });
-    getChains.mockResolvedValue({
-      ...chains,
-      routes: chains.routes.map((route) =>
-        route.id === "SolToRhn"
-          ? { ...route, enabled: true, available: true, unavailable_reason: null }
-          : route,
-      ),
-    });
+  it("does not pick an OPEN route this app cannot start", async () => {
+    // With Robinhood fully open, `RhnToSol` is open on the backend and
+    // `RhnToGlc` is open AND startable here. Switching the source to
+    // Robinhood while Solana is selected must move to Goldcoin: landing on
+    // the cross route would put someone on a pair that looks available
+    // everywhere else in the UI and cannot be submitted.
+    getChains.mockResolvedValue(
+      fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true }),
+    );
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
+    expect(landedOn()).toContain("Goldcoin → Solana");
 
-    // Goldcoin → Robinhood: open, and Robinhood is the SECOND destination
-    // the registry lists for Goldcoin.
-    await selectNetwork(user, "Destination network", /Robinhood Chain/);
-    await waitFor(() => expect(landedOn()).toContain("Goldcoin → Robinhood Chain"));
+    await selectNetwork(user, "Source network", /Robinhood Chain/);
 
-    // Switching the source to Solana leaves the chosen destination open,
-    // so it must survive rather than snapping back to the first candidate.
-    await selectNetwork(user, "Source network", /Solana/);
-    await waitFor(() => expect(landedOn()).toContain("Solana → Robinhood Chain"));
+    await waitFor(() => expect(landedOn()).toContain("Robinhood Chain → Goldcoin"));
   });
 
   it("still lands somewhere coherent when no destination is open", async () => {

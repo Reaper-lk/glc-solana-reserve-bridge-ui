@@ -28,6 +28,7 @@ export type Blocker =
   | "unavailable"
   | "route-closed"
   | "route-unavailable"
+  | "route-not-executable-here"
   | "paused"
   | "insufficient-liquidity"
   | "quota-exhausted"
@@ -114,6 +115,21 @@ export function BlockerAlert({
       funds:
         "Nothing you enter below will submit while this route is unavailable — no deposit is created and no funds move.",
     },
+    /*
+     * The one blocker whose cause is THIS APP rather than the bridge.
+     *
+     * Worded so it cannot be read as the route being closed or broken: the
+     * route is live, and a reader who goes to /status will see it reported
+     * available, so copy blaming the bridge would contradict the page this
+     * callout links to. `route-execution` authors the sentence — it is the
+     * module that knows which piece is missing — and it is rendered
+     * verbatim, the same contract the two backend-reason blockers follow.
+     */
+    "route-not-executable-here": {
+      title: reason || `${directionLabel} cannot be started from this app yet.`,
+      funds:
+        "Nothing you enter below will submit — no deposit is created, nothing is sent, and no funds move.",
+    },
     "robinhood-recipient-rate-limited": {
       title: ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
       funds:
@@ -148,9 +164,13 @@ export function BlockerAlert({
               (detail ?? "")
             : blocker === "robinhood-eligibility-unknown"
               ? ROBINHOOD_ELIGIBILITY_UNKNOWN_NEXT
-              : blocker === "route-closed" || blocker === "route-unavailable"
-                ? "You can still select another network pair."
-                : "Check your connection and try again, or see the current status.";
+              : blocker === "route-not-executable-here"
+                ? // No "try again": waiting changes nothing here. The one
+                  // useful next step is a pair this app can actually start.
+                  "Select another network pair to bridge GLC now."
+                : blocker === "route-closed" || blocker === "route-unavailable"
+                  ? "You can still select another network pair."
+                  : "Check your connection and try again, or see the current status.";
 
   return (
     <Alert

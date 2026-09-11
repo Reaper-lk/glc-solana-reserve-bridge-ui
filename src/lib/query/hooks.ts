@@ -181,9 +181,9 @@ export function useQuote(
   grossAmount: string,
   /**
    * Additional caller-side gate. The form uses it to withhold a quote for
-   * a pair that resolves to no route, or to a route with no settlement
-   * machinery — asking the backend to price `SolToRhn` would only earn a
-   * refusal it already knows about.
+   * a pair that resolves to no route, and for a route `/chains` has not
+   * reported open — asking the backend to price a closed route would only
+   * earn a refusal it already knows about.
    */
   enabled = true,
 ): UseQueryResult<QuoteOutputDto> {

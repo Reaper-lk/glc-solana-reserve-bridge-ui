@@ -66,22 +66,30 @@ describe("BridgeOverviewStats", () => {
     expect(labels).not.toContain("GLC L1 → GLC on Robinhood");
   });
 
-  it("never presents SolToRhn or RhnToSol as executable", async () => {
+  it("names the cross routes on the reserve that pays each of them", async () => {
     renderWithQueryClient(<BridgeOverviewStats />);
     const labels = (await cardLabels()).join(" | ");
 
-    // Neither has a `Direction` value on either side, so no settlement
-    // function can be called with them and no volume can ever accrue.
+    // Both used to be excluded here, correctly: neither had a `Direction`
+    // value, so no settlement function could be called with them and no
+    // volume could accrue. Both settle now, and each belongs to the pool
+    // that PAYS it — `RhnToSol` onto Solana, `SolToRhn` onto Robinhood.
+    expect(labels).toContain("GLC on Robinhood → GLC on Solana");
+    // `SolToRhn` settles onto the Robinhood reserve, which publishes no
+    // settled-volume counter at all — so, like `GlcToRhn`, there is no card
+    // to name it on. Absent because the FIGURE is absent, never because the
+    // route is.
     expect(labels).not.toContain("GLC on Solana → GLC on Robinhood");
-    expect(labels).not.toContain("GLC on Robinhood → GLC on Solana");
   });
 
   it("groups by the reserve that pays out, not by route", async () => {
     renderWithQueryClient(<BridgeOverviewStats />);
     const labels = await cardLabels();
 
+    // Two routes per reserve now, and one counter each. Naming both on the
+    // card is what stops a shared figure from reading as one route's.
     expect(labels.filter((label) => label.startsWith("Settled into"))).toEqual([
-      "Settled into Solana — GLC L1 → GLC on Solana",
+      "Settled into Solana — GLC L1 → GLC on Solana · GLC on Robinhood → GLC on Solana",
       "Settled into Goldcoin — GLC on Solana → GLC L1 · GLC on Robinhood → GLC L1",
     ]);
   });
@@ -190,15 +198,16 @@ describe("BridgeOverviewStats", () => {
   });
 
   it("drops the scope line once every executable family is counted", async () => {
-    // A backend that stopped implementing the Robinhood routes would leave
-    // nothing uncounted — and the caveat would then be noise, not honesty.
+    // A backend implementing only the two routes `/stats` reports a
+    // DirectionStats member for leaves nothing uncounted — and the caveat
+    // would then be noise, not honesty.
     const base = fixtures.chainsFixture(now);
     getChains.mockResolvedValue({
       ...base,
       routes: base.routes.map((route) =>
-        route.id === "GlcToRhn" || route.id === "RhnToGlc"
-          ? { ...route, implemented: false }
-          : route,
+        route.id === "GlcToSol" || route.id === "SolToGlc"
+          ? route
+          : { ...route, implemented: false },
       ),
     });
     renderWithQueryClient(<BridgeOverviewStats />);

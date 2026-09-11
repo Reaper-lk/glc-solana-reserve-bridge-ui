@@ -211,7 +211,7 @@ describe("the three availability predicates", () => {
 describe("routeAvailabilitySummary", () => {
   it("does not count a route the backend reports as unavailable", () => {
     const open = fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true });
-    expect(routeAvailabilitySummary(open)).toEqual({ open: 4, total: 6 });
+    expect(routeAvailabilitySummary(open)).toEqual({ open: 6, total: 6 });
     const gated = fixtures.chainsFixture(() => new Date(), {
       robinhoodOpen: true,
       robinhoodAvailable: false,

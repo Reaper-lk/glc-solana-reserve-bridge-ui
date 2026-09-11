@@ -64,9 +64,15 @@ export type RouteAvailability =
    */
   | { readonly kind: "unavailable"; readonly reason: string; readonly view: RouteViewDto }
   /**
-   * Structurally non-executable in this build (`implemented: false`) —
-   * `SolToRhn`/`RhnToSol`. Distinct from `closed` because no operator
-   * action opens it: there is no settlement machinery behind it at all.
+   * Structurally non-executable in this build (`implemented: false`).
+   * Distinct from `closed` because no operator action opens it: there is no
+   * settlement machinery behind it at all.
+   *
+   * No route the backend ships today reports this — all six are
+   * implemented. It is kept because `implemented` is a published field and
+   * a deployment is entitled to report it `false`, and because the
+   * alternative is reading that case as `closed`, which would tell an
+   * operator to go looking for a switch that does not exist.
    */
   | {
       readonly kind: "unimplemented";

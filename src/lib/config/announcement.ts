@@ -1,5 +1,6 @@
 import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import { routeAvailability } from "@/lib/bridge/route-availability";
+import { routesTouchingChain } from "@/lib/bridge/route-resolution";
 
 /**
  * The network integration strip.
@@ -17,8 +18,7 @@ import { routeAvailability } from "@/lib/bridge/route-availability";
  * announced did not exist — there was no live state it could read. That is
  * no longer true, and a hand-edited marketing line about a live route is
  * exactly the thing that goes stale silently. So the strip now reports
- * what `GET /chains` says about the two Robinhood routes, and nothing
- * else.
+ * what `GET /chains` says about the Robinhood routes, and nothing else.
  *
  * # It still is not the operational strip
  *
@@ -29,12 +29,23 @@ import { routeAvailability } from "@/lib/bridge/route-availability";
  * cause-agnostic sentence per route, and /status renders each one beside
  * the route it belongs to.
  *
+ * # The route list is derived, not written
+ *
+ * It used to be the literal pair `["GlcToRhn", "RhnToGlc"]`, which was the
+ * whole Robinhood integration at the time. It is now every route with
+ * Robinhood on either side, read off the one pair→route table — so the
+ * strip could not keep reporting on half the integration once the two
+ * cross routes shipped.
+ *
  * Turning the strip off is a one-line edit to `enabled` below, and every
  * string it renders lives here rather than in the component.
  */
 
-/** The two routes this strip reports on. */
-const ROBINHOOD_ROUTES = ["GlcToRhn", "RhnToGlc"] as const;
+/**
+ * The routes this strip reports on: every route touching Robinhood, in the
+ * route table's own order. Four today.
+ */
+const ROBINHOOD_ROUTES = routesTouchingChain("robinhood");
 
 /**
  * What the strip is reporting, derived from route availability.
@@ -95,7 +106,7 @@ export const ANNOUNCEMENT_STATUS_LABEL: Record<NetworkAnnouncementStatus, string
 export const ANNOUNCEMENT_STATUS_DESCRIPTION: Record<NetworkAnnouncementStatus, string> =
   {
     available:
-      "GLC bridging to and from Robinhood Network is available in both directions right now.",
+      "Every GLC bridge route to and from Robinhood Network is available right now.",
     partial: "Some Robinhood Network bridge routes are temporarily unavailable.",
     unavailable: "Robinhood Network bridge routes are not available right now.",
     unknown: "Checking Robinhood Network route availability…",

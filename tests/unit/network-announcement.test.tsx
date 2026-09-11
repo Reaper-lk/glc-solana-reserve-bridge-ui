@@ -345,9 +345,10 @@ describe("beside the global trust strip", () => {
       </>,
     );
 
-    // The bridge-wide strip counts every executable route; the integration
-    // strip speaks only for Robinhood's two. Neither is the other.
-    expect(await screen.findByText("4 of 4 routes available.")).toBeInTheDocument();
+    // The bridge-wide strip counts every executable route — all six; the
+    // integration strip speaks only for the four touching Robinhood.
+    // Neither is the other.
+    expect(await screen.findByText("6 of 6 routes available.")).toBeInTheDocument();
     expect(
       within(banner()).getByText(ANNOUNCEMENT_STATUS_LABEL.available),
     ).toBeInTheDocument();
