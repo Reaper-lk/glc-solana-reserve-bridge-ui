@@ -41,7 +41,7 @@ const DEPLOYMENT = {
   chainName: "Robinhood Network",
   rpcUrl: "https://rpc.example.invalid",
   bridgeAddress: ROBINHOOD_V2_BRIDGE_ADDRESS,
-  tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+  tokenAddress: "0xaf0172DDEa4ce60dB3EBab05748A00B14fC8e433",
 } as const;
 
 /** A wallet reporting Robinhood Network, as EIP-1193 spells it. */

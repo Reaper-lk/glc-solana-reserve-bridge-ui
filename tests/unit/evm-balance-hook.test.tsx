@@ -6,6 +6,9 @@ import type { Address, EIP1193Provider } from "viem";
 import {
   evmWalletQueryKeys,
   useRobinhoodGlcBalance,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_GLC_TOKEN_ADDRESS,
+  ROBINHOOD_V2_BRIDGE_ADDRESS,
   type EvmWalletState,
 } from "@/lib/evm";
 
@@ -25,12 +28,25 @@ vi.mock("@/lib/evm/balance", () => ({
 }));
 
 const DEPLOYMENT = {
-  chainId: 4663,
+  chainId: ROBINHOOD_CHAIN_ID,
   chainName: "Robinhood Chain",
   rpcUrl: "https://rpc.example.invalid",
-  bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed" as Address,
-  tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359" as Address,
+  // The pinned production target. A fixture naming anything else is
+  // refused before any read is attempted.
+  bridgeAddress: ROBINHOOD_V2_BRIDGE_ADDRESS as Address,
+  tokenAddress: ROBINHOOD_GLC_TOKEN_ADDRESS as Address,
 };
+
+/**
+ * The network identity — always resolvable, and what the wallet control
+ * reads. Separate from the deposit deployment on purpose: connecting a
+ * wallet touches no contract.
+ */
+const NETWORK = {
+  chainId: ROBINHOOD_CHAIN_ID,
+  chainName: DEPLOYMENT.chainName,
+  rpcUrl: DEPLOYMENT.rpcUrl,
+} as const;
 
 const ACCOUNT = "0xdD870fA1b7C4700F2BD7f44238821C26f7392148" as Address;
 
@@ -43,6 +59,7 @@ function wallet(overrides: Partial<EvmWalletState> = {}): EvmWalletState {
     address: ACCOUNT,
     chainId: DEPLOYMENT.chainId,
     connecting: false,
+    network: NETWORK,
     deployment: DEPLOYMENT,
     onExpectedChain: true,
     connect: vi.fn(),

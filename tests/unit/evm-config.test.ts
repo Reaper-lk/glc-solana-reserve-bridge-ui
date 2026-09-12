@@ -9,9 +9,12 @@ import {
   isRetiredRobinhoodV1BridgeAddress,
   isRobinhoodV2BridgeAddress,
   ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_DEFAULT_RPC_URL,
+  ROBINHOOD_GLC_TOKEN_ADDRESS,
   ROBINHOOD_V1_BRIDGE_ADDRESS,
   ROBINHOOD_V2_BRIDGE_ADDRESS,
 } from "@/lib/evm/robinhood-target";
+import { robinhoodNetwork } from "@/lib/evm/config";
 
 /**
  * The Robinhood deposit's fail-closed gate.
@@ -28,7 +31,7 @@ const DEPLOYMENT: RobinhoodDeployment = {
   chainName: "Robinhood Network",
   rpcUrl: "https://rpc.example.invalid",
   bridgeAddress: ROBINHOOD_V2_BRIDGE_ADDRESS,
-  tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+  tokenAddress: "0xaf0172DDEa4ce60dB3EBab05748A00B14fC8e433",
 };
 
 /** Everything satisfied — the only shape that yields `available: true`. */
@@ -194,20 +197,62 @@ describe("checkRobinhoodTarget", () => {
     }
   });
 
-  it("refuses missing configuration, naming which half is missing", () => {
-    expect(
-      checkRobinhoodTarget({ bridgeAddress: undefined, chainId: 4663 }),
-    ).toMatchObject({ ok: false, problem: "bridge-address-missing" });
-    expect(checkRobinhoodTarget({ bridgeAddress: "", chainId: 4663 })).toMatchObject({
-      ok: false,
-      problem: "bridge-address-missing",
-    });
-    expect(checkRobinhoodTarget({ bridgeAddress: V2, chainId: undefined })).toMatchObject(
-      { ok: false, problem: "chain-id-missing" },
-    );
+  it("RESOLVES with no configuration at all — the pins answer for it", () => {
+    // The production case, and the fix for a real regression: requiring
+    // presence disabled the whole Robinhood surface on a deployment that
+    // had simply set nothing, over values that are compile-time
+    // constants.
+    const result = checkRobinhoodTarget();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.bridgeAddress).toBe(ROBINHOOD_V2_BRIDGE_ADDRESS);
+      expect(result.chainId).toBe(4663);
+      expect(result.tokenAddress).toBe(ROBINHOOD_GLC_TOKEN_ADDRESS);
+    }
   });
 
-  it("never resolves a target for any address other than V2", () => {
+  it("treats an absent or blank value as 'use the pin', never as an error", () => {
+    for (const config of [
+      { bridgeAddress: undefined, chainId: undefined, tokenAddress: undefined },
+      { bridgeAddress: "", chainId: undefined, tokenAddress: "" },
+      { bridgeAddress: "   ", chainId: undefined, tokenAddress: "  " },
+      { bridgeAddress: V2, chainId: undefined },
+      { bridgeAddress: undefined, chainId: 4663 },
+    ]) {
+      expect(checkRobinhoodTarget(config).ok).toBe(true);
+    }
+  });
+
+  it("resolves the pinned token when none is configured", () => {
+    const result = checkRobinhoodTarget({ bridgeAddress: V2, chainId: 4663 });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.tokenAddress).toBe(ROBINHOOD_GLC_TOKEN_ADDRESS);
+  });
+
+  it("REFUSES a token the contract does not hold", () => {
+    // An approval granted on the wrong token is a standing claim on a
+    // user's balance for nothing, and a deposit that reverts.
+    const result = checkRobinhoodTarget({
+      bridgeAddress: V2,
+      chainId: 4663,
+      tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.problem).toBe("token-address-unexpected");
+      expect(result.message).toContain(ROBINHOOD_GLC_TOKEN_ADDRESS);
+    }
+  });
+
+  it("accepts the pinned token in any casing", () => {
+    expect(
+      checkRobinhoodTarget({
+        tokenAddress: ROBINHOOD_GLC_TOKEN_ADDRESS.toLowerCase(),
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("never resolves a target for any CONFIGURED address other than V2", () => {
     // A property, not a sample: nothing in this module can be configured
     // into returning ok for a non-V2 address.
     const candidates = [
@@ -263,5 +308,46 @@ describe("robinhoodDepositCapability — the chain id is the pin, not the config
     );
     expect(capability.available).toBe(false);
     expect(capability.message).toContain(ROBINHOOD_V1_BRIDGE_ADDRESS);
+  });
+});
+
+/**
+ * The NETWORK identity — what connecting a wallet needs, and the surface
+ * the production regression appeared on.
+ *
+ * A user on production saw "Robinhood Network is not configured for this
+ * deployment, so a wallet cannot be connected here" while the backend was
+ * healthy and merely paused. The cause was this: the wallet control read
+ * the DEPOSIT deployment, which required four environment variables, so
+ * an unset optional token address or RPC URL removed the connect button
+ * entirely — on a chain whose id and contract are compile-time constants.
+ *
+ * These tests pin the separation. Connecting a wallet touches no
+ * contract, so nothing about contract configuration — or about a route
+ * being paused — may decide whether it is offered.
+ */
+describe("robinhoodNetwork — always resolvable", () => {
+  it("resolves with no environment configuration at all", () => {
+    // The test environment sets no NEXT_PUBLIC_ROBINHOOD_* values, which
+    // is exactly the case that used to disable wallet connection.
+    const network = robinhoodNetwork();
+    expect(network.chainId).toBe(ROBINHOOD_CHAIN_ID);
+    expect(network.chainId).toBe(4663);
+  });
+
+  it("defaults the RPC endpoint to the public production one", () => {
+    expect(robinhoodNetwork().rpcUrl).toBe(ROBINHOOD_DEFAULT_RPC_URL);
+    expect(robinhoodNetwork().rpcUrl).toBe("https://rpc.mainnet.chain.robinhood.com");
+  });
+
+  it("names the chain, so a wallet's switch prompt is never blank", () => {
+    expect(robinhoodNetwork().chainName).toBe("Robinhood Network");
+  });
+
+  it("reports the PINNED chain id, whatever configuration says", () => {
+    // The value a wallet is asked to switch to is never configuration's
+    // to choose. A conflicting env var fails the DEPOSIT closed
+    // (checkRobinhoodTarget above); it does not redirect the wallet.
+    expect(robinhoodNetwork().chainId).toBe(ROBINHOOD_CHAIN_ID);
   });
 });

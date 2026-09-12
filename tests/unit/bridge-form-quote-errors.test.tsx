@@ -107,6 +107,14 @@ vi.mock("@/lib/evm", async (importOriginal) => {
     ...actual,
     robinhoodDeployment: () => null,
     useEvmWallet: () => ({
+      // The NETWORK identity, which the real hook always resolves: it is
+      // what the wallet control reads, and it never depends on contract
+      // configuration or on a route being open.
+      network: {
+        chainId: 4663,
+        chainName: "Robinhood Network",
+        rpcUrl: "https://rpc.mainnet.chain.robinhood.com",
+      },
       wallets: [],
       hasInjectedWallet: false,
       address: null,

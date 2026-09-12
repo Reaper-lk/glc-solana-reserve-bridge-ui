@@ -22,9 +22,17 @@ import { robinhoodAddressUrl } from "@/lib/config/links";
  * someone presses a button.
  *
  * Every unusable state names its own cause instead of collapsing into one
- * disabled control — an unconfigured deployment, no wallet installed, and
- * a wallet on the wrong network are three different problems with three
- * different answers, and only one of them is the user's to fix.
+ * disabled control — no wallet installed and a wallet on the wrong
+ * network are different problems with different answers.
+ *
+ * What this control deliberately does NOT speak for is the contract. It
+ * reads `wallet.network` — the pinned chain identity, which always
+ * resolves — never the deposit deployment. Whether a deposit can be built
+ * (contract configuration, route availability, the rolling-24h windows)
+ * is stated at the deposit action, where it applies. Connecting a wallet
+ * moves nothing, and refusing to offer it because a route is paused or an
+ * optional variable is unset tells a user their wallet is unsupported
+ * when it is not.
  */
 export function RobinhoodWalletConnect({ wallet }: { wallet: EvmWalletState }) {
   const [error, setError] = useState<string | null>(null);
@@ -42,20 +50,25 @@ export function RobinhoodWalletConnect({ wallet }: { wallet: EvmWalletState }) {
     }
   };
 
-  if (!wallet.deployment) {
-    return (
-      <p className="text-body-sm text-ink-500">
-        Robinhood Network is not configured for this deployment, so a wallet cannot be
-        connected here.
-      </p>
-    );
-  }
-
+  // There is deliberately no "this network is not configured" branch.
+  //
+  // `wallet.network` is the pinned chain id, its name and an RPC URL with
+  // a production default — it always resolves, because connecting a
+  // wallet touches no contract. This control used to gate on
+  // `wallet.deployment`, which additionally required a bridge address, a
+  // token address and an RPC URL from the environment; a deployment that
+  // had not set the optional ones therefore refused to offer a connect
+  // button at all, on a chain whose identity is a compile-time constant.
+  //
+  // A deployment whose CONTRACT configuration is refused still connects a
+  // wallet, and so does a paused or unavailable route. Both of those are
+  // stated where they apply — at the deposit action — rather than here,
+  // because neither is a reason a wallet cannot be connected.
   if (!wallet.hasInjectedWallet) {
     return (
       <p className="text-body-sm text-ink-500">
         No browser wallet was detected. Install an EVM wallet extension to deposit from{" "}
-        {wallet.deployment.chainName}.
+        {wallet.network.chainName}.
       </p>
     );
   }
@@ -123,8 +136,8 @@ export function RobinhoodWalletConnect({ wallet }: { wallet: EvmWalletState }) {
       {!wallet.onExpectedChain && (
         <div className="flex flex-col gap-2">
           <p className="text-body-sm text-ink-600">
-            This wallet is on a different network. Switch it to{" "}
-            {wallet.deployment.chainName} before depositing.
+            This wallet is on a different network. Switch it to {wallet.network.chainName}{" "}
+            before depositing.
           </p>
           <div>
             <Button
@@ -133,7 +146,7 @@ export function RobinhoodWalletConnect({ wallet }: { wallet: EvmWalletState }) {
               loading={busy}
               onClick={() => void run(wallet.switchChain)}
             >
-              Switch to {wallet.deployment.chainName}
+              Switch to {wallet.network.chainName}
             </Button>
           </div>
         </div>

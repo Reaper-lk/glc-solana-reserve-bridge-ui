@@ -3,39 +3,55 @@ import { env } from "@/lib/config/env";
 import {
   checkRobinhoodTarget,
   ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_CHAIN_NAME,
+  ROBINHOOD_DEFAULT_RPC_URL,
   type RobinhoodTargetProblem,
   type RobinhoodTargetResult,
 } from "./robinhood-target";
 
 /**
- * The Robinhood Network deployment this build talks to — resolved only
- * when configuration agrees with the PINNED V2 target.
+ * The Robinhood Network deployment this build talks to.
+ *
+ * # Two questions, deliberately not one
+ *
+ * {@link robinhoodNetwork} is the network identity — chain id, name, RPC
+ * — and it ALWAYS resolves, because every part of it is pinned or
+ * defaulted. It is what connecting a wallet needs, and connecting a
+ * wallet touches no contract.
+ *
+ * {@link resolveRobinhoodDeployment} adds the two addresses a transaction
+ * names, and refuses when configuration DISAGREES with a pin.
+ *
+ * Collapsing the two is what broke production. `robinhoodDeployment()`
+ * demanded four environment variables and returned `null` if any was
+ * absent; the wallet control read that `null` as "Robinhood Network is
+ * not configured for this deployment" and offered no connect button — on
+ * a chain whose id, contract and token are compile-time constants, over
+ * an optional RPC URL and an optional token address that the pins
+ * already answer for.
  *
  * # Configuration is checked, never believed
  *
- * `./robinhood-target` compiles in the one chain id and the one custody
- * contract a production transaction may name. This module's job is to
- * refuse everything else: an unset variable, the retired V1 contract, an
- * unrecognised address, the wrong chain. Every one of those resolves to
- * `null` here, which every caller already treats as "this route cannot be
- * used", so a misconfigured deployment disables the Robinhood routes
- * instead of signing into the wrong contract.
+ * `./robinhood-target` compiles in the chain id, the custody contract and
+ * the token. Configuration may only AGREE with them: the retired V1
+ * contract is denylisted by name, an unrecognised contract is refused, a
+ * wrong chain is refused, a token the contract does not hold is refused,
+ * and the value that reaches calldata is always the pin rather than
+ * whatever an env var spelled.
  *
- * There is no default, no well-known address, and no "probably this
- * chain" fallback — and, specifically, no path by which a V2 miss falls
- * back to V1. A guessed chain id signs a transaction for the wrong
- * network; a wrong contract address sends real GLC somewhere that will
- * never settle. Both are unrecoverable, and neither failure is visible
- * until after the user has signed.
+ * What is NOT refused any more is silence. An absent optional variable
+ * means "use the pin", because presence was never what made these values
+ * correct.
  *
  * # Configured is still not open
  *
- * Resolving a deployment says this UI COULD build a deposit. Whether it
+ * Resolving anything here says this UI COULD build a deposit. Whether it
  * may is decided elsewhere and always: by `GET /chains`' `available` for
  * the route, by the backend's rolling-24h wallet eligibility, and — for
  * anything that actually touches the contract — by the contract's own
- * `isRouteLive`, read live immediately before use. Nothing in this file is
- * an availability signal.
+ * `isRouteLive`, read live immediately before use. Nothing in this file
+ * is an availability signal, and nothing in this file is affected by a
+ * route being paused.
  */
 
 export interface RobinhoodDeployment {
@@ -47,85 +63,110 @@ export interface RobinhoodDeployment {
 }
 
 /**
- * The configured target checked against the pinned V2 deployment, in full
- * — the resolved deployment on success, the named problem on failure.
+ * The deposit deployment, in full — resolved on success, the named
+ * problem on failure.
  *
  * Exported alongside `robinhoodDeployment` because the two answer
- * different questions. Callers that only need "can this route run"
- * (every gate, every capability check) want the `null` that
- * `robinhoodDeployment` gives them. Callers that must TELL a user why
- * need the reason, and reconstructing it from `null` would mean
- * re-implementing the check.
- *
- * All-or-nothing on purpose: a chain id without a contract address, or a
- * contract without the token it holds, cannot produce a valid deposit, and
- * a partially-configured deployment that looked usable would fail at the
- * wallet instead of at the form.
+ * different questions. Callers that only need "can this route run" want
+ * the `null` that `robinhoodDeployment` gives them; callers that must
+ * TELL a user why need the reason, and reconstructing it from `null`
+ * would mean re-implementing the check.
  */
 export type RobinhoodDeploymentResolution =
   | { readonly ok: true; readonly deployment: RobinhoodDeployment }
   | {
       readonly ok: false;
-      readonly problem: RobinhoodTargetProblem | "rpc-url-missing" | "token-missing";
+      readonly problem: RobinhoodTargetProblem;
       readonly message: string;
     };
 
-export function resolveRobinhoodDeployment(): RobinhoodDeploymentResolution {
-  const {
-    robinhoodChainId,
-    robinhoodRpcUrl,
-    robinhoodBridgeAddress,
-    robinhoodTokenAddress,
-  } = env;
+/**
+ * The NETWORK IDENTITY — everything needed to connect a wallet and, if it
+ * has never heard of this chain, to offer to add it.
+ *
+ * # Why this is separate from the deployment, and why it cannot fail
+ *
+ * Connecting a wallet touches no contract. It needs a chain id to compare
+ * against, a name to show in the prompt, and an RPC URL for
+ * `wallet_addEthereumChain` — and all three are pinned or defaulted, so
+ * this always resolves.
+ *
+ * It is separate because conflating the two caused a production
+ * regression: `robinhoodDeployment()` required four environment variables
+ * and returned `null` if any was absent, and the wallet control read that
+ * `null` as "this network is not configured here" and refused to offer a
+ * connect button at all. A deployment that had simply not set an optional
+ * token address or RPC URL therefore could not connect MetaMask — on a
+ * chain whose id and contract are compile-time constants.
+ *
+ * Route state is likewise nothing to do with this. A paused or
+ * unavailable route still connects a wallet; `GET /chains` gates the
+ * transfer, and a user cannot be told why their wallet will not connect
+ * when the real answer is that the route is closed.
+ */
+export interface RobinhoodNetwork {
+  readonly chainId: typeof ROBINHOOD_CHAIN_ID;
+  readonly chainName: string;
+  readonly rpcUrl: string;
+}
 
-  // The pinned target first: an operator pointed at the wrong contract
-  // needs to hear THAT, not that their RPC URL is also unset.
+export function robinhoodNetwork(): RobinhoodNetwork {
+  return {
+    // The pin, never configuration. An env var may disagree with it —
+    // which `resolveRobinhoodDeployment` refuses for the DEPOSIT — but a
+    // wallet is always asked for the one chain this build is about.
+    chainId: ROBINHOOD_CHAIN_ID,
+    chainName: env.robinhoodChainName ?? ROBINHOOD_CHAIN_NAME,
+    rpcUrl: env.robinhoodRpcUrl ?? ROBINHOOD_DEFAULT_RPC_URL,
+  };
+}
+
+/**
+ * The full deposit deployment: the network plus the two addresses a
+ * transaction names.
+ *
+ * Resolves by default — every value is pinned or defaulted — and refuses
+ * only when configuration explicitly DISAGREES with a pin. That is the
+ * one remaining `null` case, and it is a real deployment fault worth
+ * blocking a deposit on: a deployment naming the retired V1 contract, an
+ * unrecognised contract, the wrong chain, or a token the contract does
+ * not hold.
+ *
+ * All-or-nothing on purpose, as before: a partially-trusted deployment
+ * that looked usable would fail at the wallet instead of at the form.
+ */
+export function resolveRobinhoodDeployment(): RobinhoodDeploymentResolution {
   const target: RobinhoodTargetResult = checkRobinhoodTarget({
-    bridgeAddress: robinhoodBridgeAddress,
-    chainId: robinhoodChainId,
+    bridgeAddress: env.robinhoodBridgeAddress,
+    chainId: env.robinhoodChainId,
+    tokenAddress: env.robinhoodTokenAddress,
   });
   if (!target.ok) {
     return { ok: false, problem: target.problem, message: target.message };
   }
-  if (robinhoodRpcUrl === undefined) {
-    return {
-      ok: false,
-      problem: "rpc-url-missing",
-      message:
-        "No Robinhood Network RPC endpoint is configured for this deployment, so the pre-deposit checks cannot run. This is a deployment configuration problem, not something you can fix — please report it.",
-    };
-  }
-  if (robinhoodTokenAddress === undefined) {
-    return {
-      ok: false,
-      problem: "token-missing",
-      message:
-        "No Robinhood Network GLC token address is configured for this deployment. This is a deployment configuration problem, not something you can fix — please report it.",
-    };
-  }
-
+  const network = robinhoodNetwork();
   return {
     ok: true,
     deployment: {
       // From the PIN, not from configuration. Configuration agreed with
-      // it or we never reached this line, so carrying the env var's own
-      // values forward would only create a second spelling free to drift.
+      // it or we never reached this line, so carrying an env var's own
+      // spelling forward would only create a second one free to drift.
       chainId: target.chainId,
-      chainName: env.robinhoodChainName ?? "Robinhood Network",
-      rpcUrl: robinhoodRpcUrl,
+      chainName: network.chainName,
+      rpcUrl: network.rpcUrl,
       bridgeAddress: target.bridgeAddress,
-      tokenAddress: robinhoodTokenAddress as Address,
+      tokenAddress: target.tokenAddress,
     },
   };
 }
 
 /**
- * The resolved deployment, or `null` when configuration is missing OR
- * disagrees with the pinned V2 target.
+ * The resolved deployment, or `null` when configuration disagrees with a
+ * pin.
  *
- * Unchanged signature, deliberately: every existing caller already fails
- * closed on `null`, so pinning the target tightened all of them at once
- * without a single call site having to opt in.
+ * Unchanged signature, deliberately: every caller already fails closed on
+ * `null`. What changed is which inputs produce one — an absent optional
+ * variable no longer does.
  */
 export function robinhoodDeployment(): RobinhoodDeployment | null {
   const resolution = resolveRobinhoodDeployment();
@@ -133,9 +174,9 @@ export function robinhoodDeployment(): RobinhoodDeployment | null {
 }
 
 /**
- * Why the deployment did not resolve, or `null` when it did — the message
- * a form shows in place of "not configured for this deployment" when the
- * real cause is a retired or unrecognised contract.
+ * Why the deployment did not resolve, or `null` when it did — so a form
+ * can name a retired or unrecognised contract instead of saying the
+ * generic "not configured".
  */
 export function robinhoodDeploymentProblem(): string | null {
   const resolution = resolveRobinhoodDeployment();

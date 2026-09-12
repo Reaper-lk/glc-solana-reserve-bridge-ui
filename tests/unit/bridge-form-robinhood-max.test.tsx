@@ -109,7 +109,7 @@ const DEPLOYMENT = {
   chainName: "Robinhood Chain",
   rpcUrl: "https://rpc.example.invalid",
   bridgeAddress: "0xbaEdFFdAC19fC9c1F025f8F6F74e633aB2708DBf",
-  tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+  tokenAddress: "0xaf0172DDEa4ce60dB3EBab05748A00B14fC8e433",
 };
 
 vi.mock("@/lib/evm", async (importOriginal) => {
@@ -119,12 +119,20 @@ vi.mock("@/lib/evm", async (importOriginal) => {
     chainName: "Robinhood Chain",
     rpcUrl: "https://rpc.example.invalid",
     bridgeAddress: "0xbaEdFFdAC19fC9c1F025f8F6F74e633aB2708DBf",
-    tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+    tokenAddress: "0xaf0172DDEa4ce60dB3EBab05748A00B14fC8e433",
   };
   return {
     ...actual,
     robinhoodDeployment: () => deployment,
     useEvmWallet: () => ({
+      // The NETWORK identity, which the real hook always resolves: it is
+      // what the wallet control reads, and it never depends on contract
+      // configuration or on a route being open.
+      network: {
+        chainId: DEPLOYMENT.chainId,
+        chainName: DEPLOYMENT.chainName,
+        rpcUrl: DEPLOYMENT.rpcUrl,
+      },
       wallets: [],
       hasInjectedWallet: true,
       address: null,
