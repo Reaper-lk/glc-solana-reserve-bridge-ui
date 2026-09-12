@@ -26,6 +26,21 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: false,
   },
 
+  async rewrites() {
+    return [
+      /*
+       * `/favicon.ico` returned the 404 page. The app declares its icon with
+       * `<link rel="icon" href="/icon.png">`, which is what browsers use, but
+       * the legacy well-known path is still requested unprompted — by older
+       * clients, by link unfurlers, and by the automated reviewers that fetch
+       * a signing surface's standard assets before deciding what it is. A
+       * rewrite serves the same 512px mark there rather than an HTML error
+       * page; it is not a redirect, so nothing observes a second origin.
+       */
+      { source: "/favicon.ico", destination: "/icon.png" },
+    ];
+  },
+
   async headers() {
     return [
       {
