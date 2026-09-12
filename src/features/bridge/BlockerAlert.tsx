@@ -2,17 +2,13 @@
 
 import { Alert, ButtonLink } from "@/components/ui";
 import {
+  ELIGIBILITY_UNAVAILABLE_NEXT,
+  ELIGIBILITY_UNAVAILABLE_TITLE,
   QUOTA_EXHAUSTED_BODY,
   QUOTA_EXHAUSTED_TITLE,
   QUOTA_PAUSED_BODY,
   QUOTA_PAUSED_NEXT,
   QUOTA_PAUSED_TITLE,
-  RECIPIENT_RATE_LIMIT_TITLE,
-  ROBINHOOD_ELIGIBILITY_UNKNOWN_NEXT,
-  ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
-  ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
-  ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE,
-  SOURCE_WALLET_RATE_LIMIT_TITLE,
 } from "@/lib/bridge";
 import { routes } from "@/lib/config/links";
 
@@ -32,17 +28,15 @@ export type Blocker =
   | "insufficient-liquidity"
   | "quota-exhausted"
   | "quota-paused"
-  | "recipient-rate-limited"
-  | "source-wallet-rate-limited"
-  | "robinhood-recipient-rate-limited"
-  | "robinhood-source-wallet-rate-limited"
-  | "robinhood-eligibility-unknown";
+  | "eligibility-blocked"
+  | "eligibility-unavailable";
 
 export function BlockerAlert({
   blocker,
   directionLabel,
   reason,
   detail,
+  title,
 }: {
   blocker: Blocker;
   directionLabel: string;
@@ -53,12 +47,18 @@ export function BlockerAlert({
    */
   reason: string;
   /**
-   * The "you can try again in about N hours" line, for the blockers that
-   * have one. Empty or absent for every blocker whose approved copy is a
-   * single sentence — including the two SolToGlc rate limits, whose
-   * product decision is that no retry time is shown at all.
+   * The blocker's own extra line, for the blockers that have one: the
+   * backend's reopen time for a wallet inside its rolling window. Empty
+   * or absent everywhere else — a window nobody published a time for is
+   * never guessed at.
    */
   detail?: string;
+  /**
+   * The blocked title, for `eligibility-blocked` — which side is inside
+   * its window is a fact about the verdict, not about this component, so
+   * it is passed in rather than re-derived here.
+   */
+  title?: string;
 }) {
   const copy: Record<Blocker, { title: string; funds: string }> = {
     "route-closed": {
@@ -92,65 +92,53 @@ export function BlockerAlert({
       title: QUOTA_PAUSED_TITLE,
       funds: `${QUOTA_PAUSED_BODY} Nothing you enter below will submit — no funds move.`,
     },
-    // Unlike every blocker above, these two are specific to the ADDRESS
-    // typed or the WALLET connected, not to the bridge or the route. Each
-    // shows exactly one sentence: empty `funds`/`next` render nothing, and
-    // the status-page link (which would show a perfectly healthy bridge)
-    // is omitted. The retry-after time the backend returns is deliberately
-    // not displayed.
-    "recipient-rate-limited": { title: RECIPIENT_RATE_LIMIT_TITLE, funds: "" },
-    "source-wallet-rate-limited": { title: SOURCE_WALLET_RATE_LIMIT_TITLE, funds: "" },
-    /*
-     * The RhnToGlc pre-deposit gate. Three blockers of its own rather
-     * than a reuse of the four above, because what is at stake differs:
-     * a Robinhood deposit is irreversible and unrefused — the contract
-     * takes the GLC and the bridge parks the obligation — so each of
-     * these states what has NOT happened yet, which the one-sentence
-     * SolToGlc copy deliberately omits.
-     */
     "route-unavailable": {
       // The backend's `unavailable_reason`, verbatim.
       title: reason || `${directionLabel} is temporarily unavailable.`,
       funds:
         "Nothing you enter below will submit while this route is unavailable — no deposit is created and no funds move.",
     },
-    "robinhood-recipient-rate-limited": {
-      title: ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
+    /*
+     * The two rolling-24h wallet states, which — unlike every blocker
+     * above — are specific to the WALLETS in play rather than to the
+     * bridge or the route.
+     *
+     * Both state plainly that nothing has been sent. On a contract-
+     * sourced route that is the whole point: a deposit made while a
+     * window is open is not refused, it is folded and held with the GLC
+     * already committed, so "nothing has been sent" is the fact a user
+     * needs and the one a bare rate-limit sentence leaves out.
+     */
+    "eligibility-blocked": {
+      title: title || `${directionLabel} cannot accept this transfer right now.`,
       funds:
-        "A deposit sent now would not be refused — it would be held for manual review with your GLC already in the bridge contract. Nothing has been sent.",
+        "Nothing has been sent, and nothing you enter below will submit while this window is open — no funds move.",
     },
-    "robinhood-source-wallet-rate-limited": {
-      title: ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE,
-      funds:
-        "A deposit sent now would not be refused — it would be held for manual review with your GLC already in the bridge contract. Nothing has been sent.",
-    },
-    "robinhood-eligibility-unknown": {
-      title: ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
+    "eligibility-unavailable": {
+      title: ELIGIBILITY_UNAVAILABLE_TITLE,
       funds: "No funds have moved. Nothing has been sent.",
     },
   };
 
-  const isRateLimited =
-    blocker === "recipient-rate-limited" || blocker === "source-wallet-rate-limited";
-  const isRobinhoodRateLimited =
-    blocker === "robinhood-recipient-rate-limited" ||
-    blocker === "robinhood-source-wallet-rate-limited";
+  // A wallet-scoped blocker gets no status-page link: the status page
+  // would show a perfectly healthy bridge, which is not the answer to
+  // "why can I not send".
+  const isWalletScoped =
+    blocker === "eligibility-blocked" || blocker === "eligibility-unavailable";
   const next =
     blocker === "quota-paused"
       ? QUOTA_PAUSED_NEXT
       : blocker === "quota-exhausted"
         ? "See the current status page for live capacity."
-        : isRateLimited
-          ? ""
-          : isRobinhoodRateLimited
-            ? // The backend's own reopen time when it published one, and
-              // nothing at all when it did not — never a guessed window.
-              (detail ?? "")
-            : blocker === "robinhood-eligibility-unknown"
-              ? ROBINHOOD_ELIGIBILITY_UNKNOWN_NEXT
-              : blocker === "route-closed" || blocker === "route-unavailable"
-                ? "You can still select another network pair."
-                : "Check your connection and try again, or see the current status.";
+        : blocker === "eligibility-blocked"
+          ? // The backend's own reopen time when it published one, and
+            // nothing at all when it did not — never a guessed window.
+            (detail ?? "")
+          : blocker === "eligibility-unavailable"
+            ? ELIGIBILITY_UNAVAILABLE_NEXT
+            : blocker === "route-closed" || blocker === "route-unavailable"
+              ? "You can still select another network pair."
+              : "Check your connection and try again, or see the current status.";
 
   return (
     <Alert
@@ -159,7 +147,7 @@ export function BlockerAlert({
       funds={copy[blocker].funds}
       next={next}
       actions={
-        isRateLimited || isRobinhoodRateLimited ? undefined : (
+        isWalletScoped ? undefined : (
           <ButtonLink href={routes.status} variant="secondary" size="sm">
             View status
           </ButtonLink>

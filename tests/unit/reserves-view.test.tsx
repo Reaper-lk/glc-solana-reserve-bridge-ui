@@ -8,7 +8,10 @@ const getReserve = vi.fn();
 const getStats = vi.fn();
 const listReserveHistory = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getReserve: (...args: unknown[]) => getReserve(...args),
     getStats: (...args: unknown[]) => getStats(...args),

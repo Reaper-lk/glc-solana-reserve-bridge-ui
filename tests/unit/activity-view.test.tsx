@@ -6,7 +6,10 @@ import { ActivityView } from "@/features/activity/ActivityView";
 import * as fixtures from "@/lib/api/mock/fixtures";
 
 const listTransfers = vi.fn();
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: { listTransfers: (...args: unknown[]) => listTransfers(...args) },
 }));
 

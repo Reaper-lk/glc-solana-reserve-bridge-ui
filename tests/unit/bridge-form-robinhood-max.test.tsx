@@ -43,6 +43,9 @@ const getSolToGlcRecipientEligibility = vi.fn();
 const getRhnToGlcRecipientEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStatus: (...a: unknown[]) => getStatus(...a),
     getChains: (...a: unknown[]) => getChains(...a),
@@ -57,9 +60,6 @@ vi.mock("@/lib/api", async () => ({
     getRhnToGlcRecipientEligibility: (...a: unknown[]) =>
       getRhnToGlcRecipientEligibility(...a),
   },
-  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
-  sourceWalletRateLimitedError: (await import("@/lib/api/errors"))
-    .sourceWalletRateLimitedError,
 }));
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -93,7 +93,7 @@ const DEPLOYMENT = {
   chainId: 4663,
   chainName: "Robinhood Chain",
   rpcUrl: "https://rpc.example.invalid",
-  bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+  bridgeAddress: "0xbaEdFFdAC19fC9c1F025f8F6F74e633aB2708DBf",
   tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
 };
 
@@ -103,7 +103,7 @@ vi.mock("@/lib/evm", async (importOriginal) => {
     chainId: 4663,
     chainName: "Robinhood Chain",
     rpcUrl: "https://rpc.example.invalid",
-    bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+    bridgeAddress: "0xbaEdFFdAC19fC9c1F025f8F6F74e633aB2708DBf",
     tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
   };
   return {

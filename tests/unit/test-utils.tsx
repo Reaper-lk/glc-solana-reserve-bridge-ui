@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import type userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
+import { ELIGIBILITY_UNAVAILABLE_TITLE } from "@/lib/bridge/eligibility";
 
 /**
  * Shared render helper for component tests.
@@ -94,4 +95,28 @@ export function primaryCta(): HTMLElement {
       name: /^(Bridge GLC|Route unavailable|Connect wallet|Enter destination|Enter an amount|Choose networks)$/i,
     },
   );
+}
+
+/**
+ * Asserts the form accepted everything it validates locally, and is held
+ * shut only by the rolling-24h eligibility gate.
+ *
+ * # Why this is a real assertion and not a weaker `toBeDisabled`
+ *
+ * `computeGate` is ORDERED: the route, availability, the amount bounds,
+ * the canonical-precision check, the destination address and the source
+ * wallet's capability are all decided BEFORE eligibility is consulted. So
+ * a form reporting the eligibility blocker has necessarily passed every
+ * one of those — which is exactly what a test about minimum amounts, or
+ * about a quote, means by "accepted".
+ *
+ * It exists because four of the six routes cannot currently clear
+ * eligibility at all: the backend publishes no endpoint for them yet, and
+ * every route now requires an authoritative verdict before a wallet may
+ * be opened. Tests whose subject is not eligibility assert up to this
+ * point rather than asserting an enabled button they can no longer reach.
+ */
+export async function expectHeldOnlyByEligibility() {
+  await waitFor(() => expect(primaryCta()).toBeDisabled());
+  expect(screen.getAllByText(ELIGIBILITY_UNAVAILABLE_TITLE).length).toBeGreaterThan(0);
 }

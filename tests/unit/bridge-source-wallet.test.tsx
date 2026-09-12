@@ -27,6 +27,9 @@ const listTransfers = vi.fn();
 const getSolToGlcRecipientEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getChains: (...args: unknown[]) => getChains(...args),
@@ -38,9 +41,6 @@ vi.mock("@/lib/api", async () => ({
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
   },
-  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
-  sourceWalletRateLimitedError: (await import("@/lib/api/errors"))
-    .sourceWalletRateLimitedError,
 }));
 
 vi.mock("next/navigation", () => ({

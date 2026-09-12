@@ -23,7 +23,10 @@ import type { TransferViewDto } from "@/lib/api/schemas/transfer";
 const listExplorerEvents = vi.fn();
 const getTransfer = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     listExplorerEvents: (...args: unknown[]) => listExplorerEvents(...args),
     getTransfer: (...args: unknown[]) => getTransfer(...args),

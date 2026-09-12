@@ -1,10 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { bytesToHex, getAddress } from "viem";
+import { getAddress } from "viem";
 import { PublicKey } from "@solana/web3.js";
 import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
+import { ELIGIBILITY_UNAVAILABLE_TITLE } from "@/lib/bridge/eligibility";
 import type * as EnvModule from "@/lib/config/env";
 import type * as EvmModule from "@/lib/evm";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
@@ -56,6 +57,9 @@ const getRhnToGlcRecipientEligibility = vi.fn();
 const getChainsDirect = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getChains: (...args: unknown[]) => getChainsDirect(...args),
@@ -69,10 +73,6 @@ vi.mock("@/lib/api", async () => ({
     getRhnToGlcRecipientEligibility: (...args: unknown[]) =>
       getRhnToGlcRecipientEligibility(...args),
   },
-  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
-  sourceWalletRateLimitedError: (await import("@/lib/api/errors"))
-    .sourceWalletRateLimitedError,
-  robinhoodPredepositError: (await import("@/lib/api/errors")).robinhoodPredepositError,
 }));
 
 const push = vi.fn();
@@ -146,7 +146,7 @@ const DEPLOYMENT = {
   chainId: 4663,
   chainName: "Robinhood Chain",
   rpcUrl: "https://rpc.example.invalid",
-  bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+  bridgeAddress: "0xbaEdFFdAC19fC9c1F025f8F6F74e633aB2708DBf",
   tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
 };
 
@@ -231,114 +231,68 @@ beforeEach(() => {
   });
 });
 
-/** Fills and submits a `SolToRhn` transfer: Solana source, EVM destination. */
-async function submitSolToRhn(
-  user: ReturnType<typeof userEvent.setup>,
-  destination: string = EVM_RECIPIENT,
-) {
-  await selectNetwork(user, "Source network", /Solana/);
-  await selectNetwork(user, "Destination network", /Robinhood/);
-  await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
-  await user.type(
-    screen.getByLabelText("Robinhood Chain recipient address"),
-    destination,
-  );
-  await waitFor(() => expect(primaryCta()).toBeEnabled());
-  await user.click(primaryCta());
-}
-
-/** Fills and submits an `RhnToSol` transfer: Robinhood source, Solana destination. */
-async function submitRhnToSol(
-  user: ReturnType<typeof userEvent.setup>,
-  options: { destination?: string; beforeClick?: () => void } = {},
-) {
-  await selectNetwork(user, "Source network", /Robinhood/);
-  await selectNetwork(user, "Destination network", /Solana/);
-  await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
-  await user.type(
-    screen.getByLabelText("Solana recipient address"),
-    options.destination ?? SOLANA_RECIPIENT,
-  );
-  await waitFor(() => expect(primaryCta()).toBeEnabled());
-  // Anything that should be true of the FRESH read but not the cached one
-  // is applied here: after the gate has opened, before the click.
-  options.beforeClick?.();
-  await user.click(primaryCta());
-}
-
-describe("SolToRhn — the Solana deposit that selects Robinhood", () => {
-  it("submits with the checksummed EVM address as the payload", async () => {
+/**
+ * # The two cross routes are currently GATED, not broken
+ *
+ * `SolToRhn` and `RhnToSol` are fully implemented here — the payload
+ * encodings, the route ids and the funding paths are all in place and
+ * pinned by `cross-route-destination.test.ts` (the encoders, byte for
+ * byte) and `evm-deposit.test.ts` (the calldata `deposit()` actually
+ * names, including that `RhnToSol` sends route `0x04` with the 32 raw
+ * pubkey bytes to the V2 contract).
+ *
+ * What they do NOT have is a published rolling-24h eligibility endpoint.
+ * Every route now requires an authoritative both-sides verdict before a
+ * wallet may be opened, so both cross routes refuse at that gate. These
+ * tests assert the refusal is total: nothing signed, nothing created,
+ * and no substitution of one of the two Goldcoin-payout endpoints for a
+ * question they do not answer.
+ *
+ * When the backend's route-agnostic endpoint lands, these expectations
+ * invert and the submission assertions this block replaced come back —
+ * which is why the encodings are pinned at the unit level, where the gate
+ * cannot hide a regression in them.
+ */
+describe("SolToRhn — refused until its eligibility endpoint exists", () => {
+  it("never opens the wallet, and never asks a Goldcoin-payout endpoint", async () => {
     const user = userEvent.setup({ delay: null });
     renderWithQueryClient(<BridgeCard />);
-    await submitSolToRhn(user);
+    await selectNetwork(user, "Source network", /Solana/);
+    await selectNetwork(user, "Destination network", /Robinhood/);
+    await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
+    await user.type(
+      screen.getByLabelText("Robinhood Chain recipient address"),
+      EVM_RECIPIENT,
+    );
 
-    await waitFor(() => expect(solanaDeposit).toHaveBeenCalledTimes(1));
-    const call = solanaDeposit.mock.calls[0]![0] as {
-      destination: string;
-      amountAtomic: bigint;
-      obligationIndex: number;
-    };
-    // THE payload. `parse_robinhood_destination` does `str::from_utf8` then
-    // `EvmAddress::from_str`, and the production rehearsal deposits with
-    // `to_checksum_string().as_bytes()`.
-    expect(call.destination).toBe(EVM_RECIPIENT);
-    // 500 GLC at the mint's 6 decimals.
-    expect(call.amountAtomic).toBe(500_000_000n);
-    expect(typeof call.obligationIndex).toBe("number");
-  });
+    expect(
+      (await screen.findAllByText(ELIGIBILITY_UNAVAILABLE_TITLE)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() => expect(primaryCta()).toBeDisabled());
+    await user.click(primaryCta());
 
-  it("never sends a Goldcoin-shaped payload on this route", async () => {
-    // The expensive failure: such a payload does not fail, it folds as
-    // `SolToGlc` and pays out on Goldcoin.
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await submitSolToRhn(user);
-
-    await waitFor(() => expect(solanaDeposit).toHaveBeenCalledTimes(1));
-    const { destination } = solanaDeposit.mock.calls[0]![0] as { destination: string };
-    // `0` is not in the base58 alphabet, so this prefix is exactly what the
-    // backend's classifier keys on and exactly what a Goldcoin address can
-    // never have.
-    expect(destination.startsWith("0x")).toBe(true);
-    expect(destination).toHaveLength(42);
-  });
-
-  it("normalises a lowercase paste to the checksummed payload", async () => {
-    // The same destination must produce the same bytes however it was
-    // pasted — and the checksummed spelling is the one the service can
-    // verify on arrival, which an all-lowercase one carries no means to do.
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await submitSolToRhn(user, EVM_RECIPIENT.toLowerCase());
-
-    await waitFor(() => expect(solanaDeposit).toHaveBeenCalledTimes(1));
-    const { destination } = solanaDeposit.mock.calls[0]![0] as { destination: string };
-    expect(destination).toBe(EVM_RECIPIENT);
-    expect(destination).not.toBe(EVM_RECIPIENT.toLowerCase());
-  });
-
-  it("asks for no Goldcoin-payout eligibility", async () => {
-    // The rolling 24-hour windows are GOLDCOIN-payout policy, and the
-    // backend publishes exactly two eligibility endpoints, both `*-to-glc`.
-    // Asking the `sol-to-glc` one about a Robinhood-bound transfer would be
-    // asking about a limit that does not govern it.
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await submitSolToRhn(user);
-
-    await waitFor(() => expect(solanaDeposit).toHaveBeenCalledTimes(1));
+    expect(solanaDeposit).not.toHaveBeenCalled();
+    // Asking `/recipients/sol-to-glc/eligibility` about a Robinhood-bound
+    // transfer would be asking about a window that does not govern it.
     expect(getSolToGlcRecipientEligibility).not.toHaveBeenCalled();
+    expect(getRhnToGlcRecipientEligibility).not.toHaveBeenCalled();
   });
 
-  it("quotes the route it is about to submit", async () => {
+  it("still quotes the route it is about to be refused on", async () => {
+    // The quote is not gated on eligibility: a user is entitled to see
+    // the fee and the received figure for the transfer they cannot yet
+    // make, and pricing the WRONG route would be its own defect.
     const user = userEvent.setup({ delay: null });
     renderWithQueryClient(<BridgeCard />);
-    await submitSolToRhn(user);
+    await selectNetwork(user, "Source network", /Solana/);
+    await selectNetwork(user, "Destination network", /Robinhood/);
+    await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
 
-    await waitFor(() => expect(solanaDeposit).toHaveBeenCalled());
-    expect(getQuote).toHaveBeenCalledWith(
-      expect.objectContaining({ direction: "SolToRhn" }),
-      expect.anything(),
+    await waitFor(() =>
+      expect(getQuote).toHaveBeenCalledWith(
+        expect.objectContaining({ direction: "SolToRhn" }),
+        expect.anything(),
+      ),
     );
     expect(getQuote).not.toHaveBeenCalledWith(
       expect.objectContaining({ direction: "SolToGlc" }),
@@ -346,7 +300,7 @@ describe("SolToRhn — the Solana deposit that selects Robinhood", () => {
     );
   });
 
-  it("sends nothing at all when the route is closed", async () => {
+  it("sends nothing at all when the route is closed either", async () => {
     // Fail-closed is unchanged by any of the above: availability still
     // comes from `/chains` alone, and a closed route cannot be submitted.
     getChains.mockResolvedValue(fixtures.chainsFixture(() => new Date()));
@@ -361,131 +315,38 @@ describe("SolToRhn — the Solana deposit that selects Robinhood", () => {
   });
 });
 
-describe("RhnToSol — the custody deposit that names route 0x04", () => {
-  it("submits on the RhnToSol route with the 32 raw pubkey bytes", async () => {
+describe("RhnToSol — refused until its eligibility endpoint exists", () => {
+  it("never builds an EVM transaction, whatever else is open", async () => {
     const user = userEvent.setup({ delay: null });
     renderWithQueryClient(<BridgeCard />);
-    await submitRhnToSol(user);
+    await selectNetwork(user, "Source network", /Robinhood/);
+    await selectNetwork(user, "Destination network", /Solana/);
+    await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
+    await user.type(screen.getByLabelText("Solana recipient address"), SOLANA_RECIPIENT);
 
-    await waitFor(() => expect(robinhoodDeposit).toHaveBeenCalledTimes(1));
-    const call = robinhoodDeposit.mock.calls[0]![0] as {
-      route: string;
-      destination: string;
-      amountRaw: bigint;
-    };
-    // The route is an explicit contract argument and the one thing a
-    // deposit cannot recover afterwards.
-    expect(call.route).toBe("RhnToSol");
-    // `validate_solana_destination` reads the raw form FIRST, by length.
-    // This is the payload the production rehearsal deposits with.
-    expect(call.destination).toBe(bytesToHex(new PublicKey(SOLANA_RECIPIENT).toBytes()));
-    expect((call.destination.length - 2) / 2).toBe(32);
-    // 500 GLC at Robinhood's 18 decimals, an exact canonical multiple.
-    expect(call.amountRaw).toBe(500_000_000_000_000_000_000n);
-  });
+    expect(
+      (await screen.findAllByText(ELIGIBILITY_UNAVAILABLE_TITLE)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() => expect(primaryCta()).toBeDisabled());
+    await user.click(primaryCta());
 
-  it("never sends the Goldcoin text payload on this route", async () => {
-    // The sibling route's encoding. The contract accepts either without
-    // complaint; the service would park this one undeliverable, refundable
-    // only by an operator, with the deposit already made.
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await submitRhnToSol(user);
-
-    await waitFor(() => expect(robinhoodDeposit).toHaveBeenCalledTimes(1));
-    const { destination } = robinhoodDeposit.mock.calls[0]![0] as { destination: string };
-    // A UTF-8 base58 payload would be 43–44 bytes, not 32.
-    expect((destination.length - 2) / 2).not.toBe(SOLANA_RECIPIENT.length);
-  });
-
-  it("asks for no Goldcoin-payout eligibility", async () => {
-    // `RhnToSol` pays out on Solana, and there is no `rhn-to-sol`
-    // eligibility endpoint to ask — requiring an answer would be a gate
-    // nothing could satisfy.
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await submitRhnToSol(user);
-
-    await waitFor(() => expect(robinhoodDeposit).toHaveBeenCalledTimes(1));
+    expect(robinhoodDeposit).not.toHaveBeenCalled();
     expect(getRhnToGlcRecipientEligibility).not.toHaveBeenCalled();
+    expect(getSolToGlcRecipientEligibility).not.toHaveBeenCalled();
   });
 
-  it("still re-reads availability fresh before opening the wallet", async () => {
-    // The half of the pre-deposit gate that DOES apply. The deposit is
-    // irreversible, so a route that closed since the button enabled must
-    // stop it — read from `/chains` directly, not from the cache.
+  it("quotes the route it is about to be refused on", async () => {
     const user = userEvent.setup({ delay: null });
     renderWithQueryClient(<BridgeCard />);
-    await submitRhnToSol(user);
-
-    await waitFor(() => expect(robinhoodDeposit).toHaveBeenCalledTimes(1));
-    expect(getChainsDirect).toHaveBeenCalled();
-  });
-
-  it("refuses when that fresh read says the route is no longer available", async () => {
-    // The race this exists for: the route closes between the button
-    // enabling and the click — another tab, an operator closing admission —
-    // and the next thing that would happen is an irreversible deposit.
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    let callsBeforeClick = 0;
-    await submitRhnToSol(user, {
-      beforeClick: () => {
-        callsBeforeClick = getChainsDirect.mock.calls.length;
-        const base = OPEN_CHAINS();
-        getChainsDirect.mockResolvedValue({
-          ...base,
-          routes: base.routes.map((route) =>
-            route.id === "RhnToSol"
-              ? {
-                  ...route,
-                  available: false,
-                  unavailable_reason: fixtures.DIRECTION_UNAVAILABLE_MESSAGE,
-                }
-              : route,
-          ),
-        });
-      },
-    });
-
-    // The submit DID run and DID re-read — otherwise "no deposit" would be
-    // true for the uninteresting reason that nothing happened at all.
-    await waitFor(() =>
-      expect(getChainsDirect.mock.calls.length).toBeGreaterThan(callsBeforeClick),
-    );
-    expect(robinhoodDeposit).not.toHaveBeenCalled();
-  });
-
-  it("refuses when the fresh read itself fails", async () => {
-    // Unreadable availability is unknown availability, and unknown is a
-    // refusal — the deposit cannot be taken back. This is the opposite
-    // disposition to `SolToGlc`'s advisory re-check, which fails OPEN
-    // because the backend's own admission check is a real floor there.
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    let callsBeforeClick = 0;
-    await submitRhnToSol(user, {
-      beforeClick: () => {
-        callsBeforeClick = getChainsDirect.mock.calls.length;
-        getChainsDirect.mockRejectedValue(new Error("chains unavailable"));
-      },
-    });
+    await selectNetwork(user, "Source network", /Robinhood/);
+    await selectNetwork(user, "Destination network", /Solana/);
+    await user.type(screen.getByLabelText(/Amount in GLC/i), "500");
 
     await waitFor(() =>
-      expect(getChainsDirect.mock.calls.length).toBeGreaterThan(callsBeforeClick),
-    );
-    expect(robinhoodDeposit).not.toHaveBeenCalled();
-  });
-
-  it("quotes the route it is about to submit", async () => {
-    const user = userEvent.setup({ delay: null });
-    renderWithQueryClient(<BridgeCard />);
-    await submitRhnToSol(user);
-
-    await waitFor(() => expect(robinhoodDeposit).toHaveBeenCalled());
-    expect(getQuote).toHaveBeenCalledWith(
-      expect.objectContaining({ direction: "RhnToSol" }),
-      expect.anything(),
+      expect(getQuote).toHaveBeenCalledWith(
+        expect.objectContaining({ direction: "RhnToSol" }),
+        expect.anything(),
+      ),
     );
     expect(getQuote).not.toHaveBeenCalledWith(
       expect.objectContaining({ direction: "RhnToGlc" }),

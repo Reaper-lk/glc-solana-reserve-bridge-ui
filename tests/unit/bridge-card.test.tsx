@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
+import {
+  expectHeldOnlyByEligibility,
+  primaryCta,
+  renderWithQueryClient,
+  selectNetwork,
+} from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
 
@@ -22,6 +27,9 @@ const listTransfers = vi.fn();
 const getSolToGlcRecipientEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getChains: (...args: unknown[]) => getChains(...args),
@@ -33,9 +41,6 @@ vi.mock("@/lib/api", async () => ({
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
   },
-  // BridgeCard imports this error factory alongside bridgeApi; the real
-  // implementation is pure copy/shaping, so pass it through unmocked.
-  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
 }));
 
 const push = vi.fn();
@@ -263,11 +268,25 @@ describe("BridgeCard — reserve capacity and pause gating", () => {
 });
 
 describe("BridgeCard — transfer submission", () => {
-  it("creates a GlcToSol transfer and shows the unique deposit address and exact amount, with no OP_RETURN", async () => {
-    createTransfer.mockResolvedValue({
-      request_id: 4242,
-      deposit_address: "GLCVau1t111111111111111111111111111111111",
-    });
+  /**
+   * # Why there is no end-to-end GlcToSol submission test here any more
+   *
+   * Every route now requires an authoritative rolling-24h verdict for
+   * BOTH wallets before a transfer may be submitted, and the backend
+   * publishes no eligibility endpoint for the Goldcoin-sourced routes
+   * yet. `GlcToSol` therefore cannot be submitted from this UI, and a
+   * test asserting it could would be asserting a hole in the gate.
+   *
+   * The Goldcoin deposit-address flow itself (`POST /transfers`, the
+   * unique address, the exact amount, no OP_RETURN) is unchanged — it is
+   * simply unreachable until that endpoint lands, at which point these
+   * assertions come back.
+   *
+   * What stays covered here is the part that still matters: the form
+   * accepts the amount and the address, gets as far as eligibility, and
+   * then creates NOTHING.
+   */
+  it("refuses a GlcToSol transfer, and creates nothing, while eligibility cannot be established", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeCard />);
 
@@ -278,26 +297,20 @@ describe("BridgeCard — transfer submission", () => {
       VALID_SOLANA_ADDRESS,
     );
 
-    const submit = primaryCta();
-    await waitFor(() => expect(submit).toBeEnabled());
-    await user.click(submit);
+    // The amount and the address both cleared — the gate reached
+    // eligibility, which is ordered after them.
+    await expectHeldOnlyByEligibility();
 
-    expect(await screen.findByText(/Send your deposit/i)).toBeInTheDocument();
-    expect(screen.getByText(/Send exactly/i)).toBeInTheDocument();
-    expect(screen.getByText(/1,000\.00/)).toBeInTheDocument();
-    expect(screen.queryByText(/OP_RETURN/i)).not.toBeInTheDocument();
-    // `route` is sent explicitly even though `GlcToSol` is the backend's
-    // own default for an absent field: what a request creates is stated by
-    // the caller rather than inherited from a server-side default.
-    expect(createTransfer).toHaveBeenCalledWith({
-      amount_atomic: "100000000000",
-      recipient: VALID_SOLANA_ADDRESS,
-      route: "GlcToSol",
-    });
+    await user.click(primaryCta());
+    expect(createTransfer).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Send your deposit/i)).not.toBeInTheDocument();
   });
 
-  it("surfaces a submission failure as an error state without fabricating success", async () => {
-    createTransfer.mockRejectedValue(new Error("boom"));
+  it("never asks a Goldcoin-payout endpoint about a Goldcoin-SOURCED route", async () => {
+    // `GlcToSol` pays out on Solana. Substituting
+    // `/recipients/sol-to-glc/eligibility` would be asking about the
+    // wrong window, which is why the route table has no entry for it
+    // rather than a near-enough one.
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeCard />);
 
@@ -308,12 +321,8 @@ describe("BridgeCard — transfer submission", () => {
       VALID_SOLANA_ADDRESS,
     );
 
-    const submit = primaryCta();
-    await waitFor(() => expect(submit).toBeEnabled());
-    await user.click(submit);
-
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(screen.queryByText(/Send your deposit/i)).not.toBeInTheDocument();
+    await expectHeldOnlyByEligibility();
+    expect(getSolToGlcRecipientEligibility).not.toHaveBeenCalled();
   });
 });
 

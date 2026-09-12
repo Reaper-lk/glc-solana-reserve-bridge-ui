@@ -129,11 +129,18 @@ export interface BridgeApiClient {
    * window (`GET /recipients/sol-to-glc/eligibility`). `wallet` is the
    * connected wallet's base58 pubkey, or `null` before a wallet is
    * connected — omitting it simply means the source-wallet leg is not
-   * checked yet, the recipient leg still is. Advisory: the backend
-   * re-checks both rules authoritatively at admission time; the UI calls
-   * this to warn BEFORE the wallet is invoked, and again immediately
-   * before submission so a stale form-time answer never reaches the
-   * wallet.
+   * checked yet, the recipient leg still is.
+   *
+   * Call it through `fetchRouteEligibility` (`./eligibility-request`)
+   * rather than directly: that is the one place which endpoint answers
+   * for which route is decided, and it normalises both responses into the
+   * single by-SIDE shape `@/lib/bridge/eligibility` gates submission on.
+   *
+   * The backend re-checks both rules authoritatively at admission time
+   * and remains the enforcement. The UI's use of this is nonetheless NOT
+   * advisory: an answer that does not positively clear both sides
+   * disables submission, because a deposit the bridge would hold back
+   * cannot be reversed once it is sent.
    */
   getSolToGlcRecipientEligibility(
     address: string,
@@ -154,12 +161,14 @@ export interface BridgeApiClient {
    * contract's own recorded depositor, and is never charged against a
    * Solana wallet's window or vice versa.
    *
-   * Unlike its Solana twin this is not merely advisory to the caller. A
-   * Robinhood deposit reaches the custody contract with no
+   * A Robinhood deposit reaches the custody contract with no
    * `POST /transfers` in front of it, so this call is the last refusal
    * available before the funds are committed — a failed read disables the
-   * deposit rather than being skipped. The backend still re-checks
-   * authoritatively at fold time and remains the enforcement.
+   * deposit rather than being skipped. Every route now treats an
+   * unreadable verdict the same way; this is the route where the cost of
+   * not doing so was a user's GLC parked in `ManualReview`. The backend
+   * still re-checks authoritatively at fold time and remains the
+   * enforcement.
    */
   getRhnToGlcRecipientEligibility(
     address: string,
