@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  isSameEvmAddress,
+  isRetiredRobinhoodV1BridgeAddress,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_GLC_TOKEN_ADDRESS,
+  ROBINHOOD_V1_BRIDGE_ADDRESS,
+  ROBINHOOD_V2_BRIDGE_ADDRESS,
+} from "@/lib/evm/robinhood-target";
 
 /**
  * Public runtime configuration.
@@ -205,16 +213,22 @@ const envSchema = z
      * which involves neither. Presence was standing in for correctness on
      * values whose correctness is already known.
      *
-     * # Set them and they must AGREE with the pin
+     * # Set them and they must AGREE with the pin — checked HERE
      *
      * `robinhoodBridgeAddress`, `robinhoodChainId` and
-     * `robinhoodTokenAddress` are checked against the pins by
-     * `checkRobinhoodTarget`, and any disagreement fails the DEPOSIT
-     * closed with the reason named — the retired V1 contract by name,
-     * an unrecognised contract, the wrong chain, a token the contract does
-     * not hold. Guessing either would build a transaction against the
-     * wrong chain or the wrong contract, and both cost the user their
-     * funds, so nothing here is ever believed over the pin.
+     * `robinhoodTokenAddress` are identity. Each is pinned in code, so
+     * configuration may only ever agree with it, and a disagreement is a
+     * deployment fault rather than a deployment choice. The `superRefine`
+     * below refuses one — naming the retired V1 contract explicitly —
+     * which makes it a failure the operator sees at build time.
+     *
+     * `checkRobinhoodTarget` refuses the same values again at the form,
+     * and that is deliberate duplication rather than redundancy: it is
+     * the guarantee that no transaction can name the wrong contract even
+     * if a bad value somehow reached a running build. Guessing either
+     * value would build a transaction against the wrong chain or the
+     * wrong contract, and both cost the user their funds, so nothing here
+     * is ever believed over the pin.
      *
      * `robinhoodChainName` and `robinhoodRpcUrl` are presentation and
      * transport rather than identity: they are used as given, because a
@@ -303,6 +317,100 @@ const envSchema = z
           "shared Solana RPC endpoint — it rejects many browser-origin " +
           "requests and must not be used for a mainnet-beta deployment. " +
           "Use a dedicated RPC provider instead — see .env.example.",
+      });
+    }
+    /*
+     * The Robinhood IDENTITY trio, checked against the pins here — at
+     * configuration time — and not only at the form.
+     *
+     * # Why this rule exists
+     *
+     * `checkRobinhoodTarget` already refuses a disagreeing value, and it
+     * stays: it is what guarantees no transaction can ever name the
+     * retired V1 contract. But it refuses at the LAST possible moment —
+     * a user who has picked a route, connected a wallet and typed an
+     * amount, reading a red paragraph about a contract they have never
+     * heard of. A deployment carrying a stale
+     * `NEXT_PUBLIC_ROBINHOOD_BRIDGE_ADDRESS` therefore built cleanly,
+     * started cleanly, served every page, and had its entire Robinhood
+     * surface dead with no signal to the operator at all. That is a
+     * production outage discoverable only by user report, and it
+     * happened.
+     *
+     * A retired address that can never be correct is exactly what the
+     * `RETIRED_RESERVE_PROGRAM_IDS` rule above already refuses at
+     * startup for Solana. This is the same rule for the same class of
+     * value: an identity that is pinned in code, where configuration may
+     * only ever agree, so a disagreement is a deployment fault and never
+     * a deployment CHOICE. Failing here makes it a build failure the
+     * operator sees, instead of a silent one their users see.
+     *
+     * # Why this does not weaken anything
+     *
+     * It adds a gate, earlier. Everything downstream is untouched: the
+     * pins are still what reaches calldata, V1 is still denylisted by
+     * name in `./robinhood-target`, the deposit path still re-asserts the
+     * target and the chain id immediately before approval and before
+     * `deposit()`, and a build that somehow reached production with a
+     * bad value would still be refused at the form exactly as today.
+     *
+     * Presentation values (`robinhoodChainName`, `robinhoodRpcUrl`) are
+     * deliberately NOT checked: they are not identity, a wrong one cannot
+     * redirect funds, and failing a deployment over a display name would
+     * be the false alarm this file already warns about.
+     */
+    if (value.robinhoodBridgeAddress !== undefined) {
+      if (isRetiredRobinhoodV1BridgeAddress(value.robinhoodBridgeAddress)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["robinhoodBridgeAddress"],
+          message:
+            `NEXT_PUBLIC_ROBINHOOD_BRIDGE_ADDRESS ${value.robinhoodBridgeAddress} ` +
+            `is the RETIRED V1 Robinhood bridge contract (${ROBINHOOD_V1_BRIDGE_ADDRESS}). ` +
+            "Nothing indexes it any more, so a deposit to it is never settled " +
+            `and never refunded. The active contract is ${ROBINHOOD_V2_BRIDGE_ADDRESS} — ` +
+            "unset this variable to use the pinned value, or set it to that address.",
+        });
+      } else if (
+        !isSameEvmAddress(value.robinhoodBridgeAddress, ROBINHOOD_V2_BRIDGE_ADDRESS)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["robinhoodBridgeAddress"],
+          message:
+            `NEXT_PUBLIC_ROBINHOOD_BRIDGE_ADDRESS ${value.robinhoodBridgeAddress} ` +
+            "is not the Robinhood bridge contract this build targets " +
+            `(${ROBINHOOD_V2_BRIDGE_ADDRESS}). This value is an optional override of a ` +
+            "pinned address and may only agree with it — unset it to use the pin.",
+        });
+      }
+    }
+    if (
+      value.robinhoodTokenAddress !== undefined &&
+      !isSameEvmAddress(value.robinhoodTokenAddress, ROBINHOOD_GLC_TOKEN_ADDRESS)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["robinhoodTokenAddress"],
+        message:
+          `NEXT_PUBLIC_ROBINHOOD_TOKEN_ADDRESS ${value.robinhoodTokenAddress} is not the ` +
+          `GLC token the Robinhood bridge contract holds (${ROBINHOOD_GLC_TOKEN_ADDRESS}). ` +
+          "This value is an optional override of a pinned address and may only " +
+          "agree with it — unset it to use the pin.",
+      });
+    }
+    if (
+      value.robinhoodChainId !== undefined &&
+      value.robinhoodChainId !== ROBINHOOD_CHAIN_ID
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["robinhoodChainId"],
+        message:
+          `NEXT_PUBLIC_ROBINHOOD_CHAIN_ID ${value.robinhoodChainId} is not Robinhood ` +
+          `Network (${ROBINHOOD_CHAIN_ID}), where the bridge contract lives. This value ` +
+          "is an optional override of a pinned chain id and may only agree with it — " +
+          "unset it to use the pin.",
       });
     }
   });
