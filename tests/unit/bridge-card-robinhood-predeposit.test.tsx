@@ -127,7 +127,7 @@ const DEPLOYMENT = {
   // The PINNED V2 contract. A fixture naming anything else is refused
   // before the gate under test is reached, which is the point of the pin.
   bridgeAddress: ROBINHOOD_V2_BRIDGE_ADDRESS,
-  tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+  tokenAddress: "0xaf0172DDEa4ce60dB3EBab05748A00B14fC8e433",
 };
 
 /** The connected EVM wallet, as a browser reports it: EIP-55 mixed case. */
@@ -150,6 +150,14 @@ vi.mock("@/lib/evm", async (importOriginal) => {
     ...actual,
     robinhoodDeployment: () => DEPLOYMENT,
     useEvmWallet: () => ({
+      // The NETWORK identity, which the real hook always resolves: it is
+      // what the wallet control reads, and it never depends on contract
+      // configuration or on a route being open.
+      network: {
+        chainId: DEPLOYMENT.chainId,
+        chainName: DEPLOYMENT.chainName,
+        rpcUrl: DEPLOYMENT.rpcUrl,
+      },
       wallets: [],
       hasInjectedWallet: true,
       address: evm.address,

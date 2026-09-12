@@ -43,7 +43,7 @@ const DEPLOYMENT = {
   chainName: "Robinhood Chain",
   rpcUrl: "https://rpc.example.invalid",
   bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
-  tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+  tokenAddress: "0xaf0172DDEa4ce60dB3EBab05748A00B14fC8e433",
 } as const;
 
 const ACCOUNT = "0xdD870fA1b7C4700F2BD7f44238821C26f7392148" as const;

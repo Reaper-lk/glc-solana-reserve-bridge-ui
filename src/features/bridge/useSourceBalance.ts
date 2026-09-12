@@ -65,10 +65,13 @@ export function useSourceBalance(
     }
 
     case "robinhood": {
-      // No deployment means no token address, so no read is attempted at
-      // all. The form's own capability message already explains that this
-      // build cannot reach the network; a second "balance unavailable"
-      // line would only repeat it.
+      // The deposit deployment, not the network: a balance read needs the
+      // TOKEN address, which only the deployment carries. It is pinned, so
+      // this resolves by default — a `null` here means configuration
+      // explicitly disagrees with a pin, and no read is attempted against
+      // a contract this build will not transact with. The form's own
+      // capability message already names that; a second "balance
+      // unavailable" line would only repeat it.
       if (!evmWallet.deployment) return { kind: "unsupported" };
       if (!evmWallet.address) return { kind: "disconnected" };
       // A balance read against the wrong network returns a real number for

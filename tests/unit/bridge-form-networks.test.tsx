@@ -426,25 +426,54 @@ describe("BridgeForm — GlcToRhn once the backend opens the route", () => {
   });
 });
 
-describe("BridgeForm — RhnToGlc stays fail-closed without a deployed contract", () => {
+describe("BridgeForm — RhnToGlc with no environment configuration at all", () => {
   beforeEach(() => {
     getChains.mockResolvedValue(
       fixtures.chainsFixture(() => new Date(), { robinhoodOpen: true }),
     );
   });
 
-  it("offers the route but refuses the deposit, naming the missing configuration", async () => {
+  /**
+   * The regression this replaced.
+   *
+   * This test used to assert that an unconfigured deployment said
+   * "Robinhood Network is not configured for this deployment" — and
+   * production said exactly that, on a healthy backend, because the chain
+   * id, the custody contract and the token are compile-time constants
+   * while the resolver still demanded all four environment variables be
+   * present. An unset optional RPC URL removed the connect control
+   * entirely.
+   *
+   * No environment variable is set in this suite, which is precisely the
+   * production case. The deployment must therefore RESOLVE, and the
+   * deposit must still be refused — by the gates that actually govern it.
+   */
+  it("never claims the network is unconfigured when nothing is configured", async () => {
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
 
     await selectNetwork(user, "Source network", /Robinhood Chain/);
 
-    // The custody contract is not deployed, so no env names it.
     expect(
-      await screen.findByText(/Robinhood Network is not configured for this deployment/i),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: /Route unavailable/i })).toBeDisabled();
+      screen.queryByText(/Robinhood Network is not configured for this deployment/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/a wallet cannot be connected here/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still refuses the deposit — by the route and wallet gates, not by config", async () => {
+    const user = userEvent.setup();
+    renderWithQueryClient(<BridgeForm />);
+    await waitForRouteVerdict();
+
+    await selectNetwork(user, "Source network", /Robinhood Chain/);
+
+    // Fail-closed is unchanged: no wallet is connected in this suite, so
+    // the form asks for one rather than offering a transfer. What it no
+    // longer does is call the network unsupported.
+    await waitFor(() => expect(primaryCta()).toBeDisabled());
   });
 
   it("asks for a Goldcoin destination and carries the exchange-address warning", async () => {

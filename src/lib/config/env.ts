@@ -188,34 +188,57 @@ const envSchema = z
     goldcoinRpcUrl: urlSchema.optional(),
 
     /**
-     * Robinhood Network (EVM) deployment parameters.
+     * Robinhood Network (EVM) parameters — optional OVERRIDES of values
+     * that are pinned in code.
      *
-     * ALL of these are optional and ALL of them are absent today: the
-     * `GlcRobinhoodBridge` custody contract is not deployed, and its
-     * address, EIP-155 chain id and start block are recorded as unknown
-     * in the backend's own docs/32-robinhood-settlement-phase-f.md. The
-     * UI therefore ships knowing how to build the Robinhood deposit and
-     * knowing it cannot: `robinhoodDepositCapability()` refuses with a
-     * stated reason whenever any of them is missing, exactly as
-     * `reserveProgramId` already gates the Solana deposit.
+     * # Absent is a legitimate state, and the normal one
      *
-     * Nothing here is a fallback or a default. There is deliberately no
-     * "well-known" Robinhood chain id or contract address in this
-     * codebase — guessing either would build a transaction against the
+     * The chain id, the custody contract and the GLC token are compile-time
+     * constants in `src/lib/evm/robinhood-target.ts`, and the RPC endpoint
+     * has a production default there too. A deployment that sets none of
+     * these is fully configured — `robinhoodNetwork()` resolves, a wallet
+     * connects, and `robinhoodDeployment()` resolves for deposits.
+     *
+     * These used to be REQUIRED, and that was a production bug: a
+     * deployment missing an optional token address or RPC URL had its
+     * entire Robinhood surface disabled, including connecting a wallet,
+     * which involves neither. Presence was standing in for correctness on
+     * values whose correctness is already known.
+     *
+     * # Set them and they must AGREE with the pin
+     *
+     * `robinhoodBridgeAddress`, `robinhoodChainId` and
+     * `robinhoodTokenAddress` are checked against the pins by
+     * `checkRobinhoodTarget`, and any disagreement fails the DEPOSIT
+     * closed with the reason named — the retired V1 contract by name,
+     * an unrecognised contract, the wrong chain, a token the contract does
+     * not hold. Guessing either would build a transaction against the
      * wrong chain or the wrong contract, and both cost the user their
-     * funds. Absent means disabled, never assumed.
+     * funds, so nothing here is ever believed over the pin.
+     *
+     * `robinhoodChainName` and `robinhoodRpcUrl` are presentation and
+     * transport rather than identity: they are used as given, because a
+     * wrong RPC can only make a read fail or succeed — it cannot redirect
+     * funds, which the pinned chain id and contract decide.
      *
      * These are also NOT an availability signal. A fully configured
      * deployment still shows the route as closed until `GET /chains`
      * says otherwise — the backend's RouteGate and the contract's own
-     * `routeEnabled` are the gates, not this config.
+     * `routeEnabled` are the gates, not this config — and a closed route
+     * never prevents a wallet from connecting.
      */
     robinhoodChainId: chainIdSchema.optional(),
     robinhoodChainName: z.string().min(1).optional(),
     robinhoodRpcUrl: urlSchema.optional(),
-    /** `GlcRobinhoodBridge` — the custody contract `deposit()` is called on. */
+    /**
+     * `GlcRobinhoodBridge` — the custody contract `deposit()` is called
+     * on. Optional; must equal `ROBINHOOD_V2_BRIDGE_ADDRESS` when set.
+     */
     robinhoodBridgeAddress: evmAddressSchema.optional(),
-    /** The ERC-20 GLC token the custody contract holds. 18 decimals, asserted backend-side. */
+    /**
+     * The ERC-20 GLC token the custody contract holds, 18 decimals.
+     * Optional; must equal `ROBINHOOD_GLC_TOKEN_ADDRESS` when set.
+     */
     robinhoodTokenAddress: evmAddressSchema.optional(),
     robinhoodExplorerTxUrl: templateSchema.optional(),
     robinhoodExplorerAddressUrl: templateSchema.optional(),

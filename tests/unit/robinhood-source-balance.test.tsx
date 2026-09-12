@@ -40,7 +40,7 @@ vi.hoisted(() => {
   process.env.NEXT_PUBLIC_ROBINHOOD_BRIDGE_ADDRESS =
     "0xbaEdFFdAC19fC9c1F025f8F6F74e633aB2708DBf";
   process.env.NEXT_PUBLIC_ROBINHOOD_TOKEN_ADDRESS =
-    "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359";
+    "0xaf0172DDEa4ce60dB3EBab05748A00B14fC8e433";
 });
 
 const getStatus = vi.fn();

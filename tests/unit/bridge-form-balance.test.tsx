@@ -10,6 +10,7 @@ import {
 } from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import type * as EvmModule from "@/lib/evm";
+import { ROBINHOOD_CHAIN_ID } from "@/lib/evm/robinhood-target";
 import { BridgeForm } from "@/features/bridge/BridgeForm";
 
 /**
@@ -126,8 +127,17 @@ vi.mock("@/lib/evm", async (importOriginal) => {
       address: evm.address,
       chainId: evm.chainId,
       connecting: false,
+      // Mirrors the real hook: the NETWORK identity always resolves, and
+      // `onExpectedChain` compares against the PINNED chain id rather
+      // than the deposit deployment — so a wallet on the right network
+      // reads as such even while contract configuration is refused.
+      network: {
+        chainId: ROBINHOOD_CHAIN_ID,
+        chainName: "Robinhood Chain",
+        rpcUrl: "https://rpc.example.invalid",
+      },
       deployment: evm.deployment,
-      onExpectedChain: evm.deployment !== null && evm.chainId === evm.deployment.chainId,
+      onExpectedChain: evm.chainId === ROBINHOOD_CHAIN_ID,
       connect: vi.fn(),
       disconnect: vi.fn(),
       switchChain: vi.fn(),
@@ -143,7 +153,7 @@ const DEPLOYMENT = {
   chainName: "Robinhood Chain",
   rpcUrl: "https://rpc.example.invalid",
   bridgeAddress: "0xbaEdFFdAC19fC9c1F025f8F6F74e633aB2708DBf",
-  tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+  tokenAddress: "0xaf0172DDEa4ce60dB3EBab05748A00B14fC8e433",
 };
 
 const SOLANA_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";

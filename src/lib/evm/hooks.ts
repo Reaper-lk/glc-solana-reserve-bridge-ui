@@ -6,7 +6,12 @@ import { numberToHex, type Address, type EIP1193Provider, type Hex } from "viem"
 import { evmSendError } from "@/lib/api/errors";
 import { fetchRobinhoodGlcBalance, type EvmTokenBalance } from "./balance";
 import { isEvmAddress } from "./address";
-import { robinhoodDeployment, type RobinhoodDeployment } from "./config";
+import {
+  robinhoodDeployment,
+  robinhoodNetwork,
+  type RobinhoodDeployment,
+  type RobinhoodNetwork,
+} from "./config";
 import {
   subscribeToInjectedWallets,
   type InjectedWallet,
@@ -44,12 +49,24 @@ export interface EvmWalletState {
   /** The chain the wallet is currently on. Null until known. */
   readonly chainId: number | null;
   readonly connecting: boolean;
+  /**
+   * The network identity — pinned chain id, display name, RPC URL. Never
+   * null: connecting a wallet touches no contract, so it must not depend
+   * on contract configuration resolving. This is what the wallet control
+   * reads.
+   */
+  readonly network: RobinhoodNetwork;
+  /**
+   * The DEPOSIT deployment, or `null` when configuration disagrees with a
+   * pin. Only the deposit path needs this; a `null` here disables
+   * depositing and nothing else.
+   */
   readonly deployment: RobinhoodDeployment | null;
-  /** Whether the wallet is on the deployment's chain. False when either is unknown. */
+  /** Whether the wallet is on the pinned Robinhood chain. False until known. */
   readonly onExpectedChain: boolean;
   readonly connect: (uuid?: string) => Promise<void>;
   readonly disconnect: () => void;
-  /** Asks the wallet to switch to the deployment's chain, adding it if unknown. */
+  /** Asks the wallet to switch to the pinned Robinhood chain, adding it if unknown. */
   readonly switchChain: () => Promise<void>;
   /**
    * The selected EIP-1193 provider, for the hooks in this module alone —
@@ -91,6 +108,7 @@ export function useEvmWallet(): EvmWalletState {
   // subscribe to, and re-rendering on it would churn those subscriptions.
   const providerRef = useRef<EIP1193Provider | null>(null);
 
+  const network = useMemo(() => robinhoodNetwork(), []);
   const deployment = useMemo(() => robinhoodDeployment(), []);
 
   useEffect(() => subscribeToInjectedWallets(setWallets), []);
@@ -198,8 +216,12 @@ export function useEvmWallet(): EvmWalletState {
 
   const switchChain = useCallback(async () => {
     const provider = providerRef.current;
-    if (!provider || !deployment) return;
-    const chainIdHex = numberToHex(deployment.chainId);
+    // Driven by the NETWORK, not the deposit deployment: a wallet must be
+    // able to reach the right chain even on a deployment whose contract
+    // configuration is being refused, and the chain it is asked for is
+    // the pinned one either way.
+    if (!provider) return;
+    const chainIdHex = numberToHex(network.chainId);
     try {
       await provider.request({
         method: "wallet_switchEthereumChain",
@@ -215,14 +237,14 @@ export function useEvmWallet(): EvmWalletState {
         params: [
           {
             chainId: chainIdHex,
-            chainName: deployment.chainName,
-            rpcUrls: [deployment.rpcUrl],
+            chainName: network.chainName,
+            rpcUrls: [network.rpcUrl],
             nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
           },
         ],
       });
     }
-  }, [deployment]);
+  }, [network]);
 
   // Derived rather than stored: a wallet that is no longer selected has no
   // address and no chain, whatever the last one read.
@@ -235,11 +257,13 @@ export function useEvmWallet(): EvmWalletState {
     address: activeAddress,
     chainId: activeChainId,
     connecting,
+    network,
     deployment,
-    onExpectedChain:
-      deployment !== null &&
-      activeChainId !== null &&
-      activeChainId === deployment.chainId,
+    // Against the PINNED chain id, not the deployment's — so a wallet on
+    // the right network reads as such even while contract configuration
+    // is being refused. The signing path re-asserts the same number
+    // against the live wallet regardless.
+    onExpectedChain: activeChainId !== null && activeChainId === network.chainId,
     connect,
     disconnect,
     switchChain,
