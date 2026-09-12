@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { __envSchemaForTests as envSchema } from "@/lib/config/env";
+import {
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_GLC_TOKEN_ADDRESS,
+  ROBINHOOD_V1_BRIDGE_ADDRESS,
+  ROBINHOOD_V2_BRIDGE_ADDRESS,
+} from "@/lib/evm/robinhood-target";
 
 /**
  * Configuration is a safety control: a misconfigured explorer template or a
@@ -205,5 +211,182 @@ describe("public environment schema", () => {
     expect(envSchema.safeParse({ ...base, glcAddressVersions: "32, abc" }).success).toBe(
       false,
     );
+  });
+});
+
+describe("Robinhood identity configuration must agree with the pins", () => {
+  /**
+   * The production incident this block exists for.
+   *
+   * `.env.production` carried `NEXT_PUBLIC_ROBINHOOD_BRIDGE_ADDRESS` set
+   * to the RETIRED V1 custody contract. Everything built, everything
+   * started, every page served — and every Robinhood route refused at
+   * the form with a message about a contract the operator never saw,
+   * because nothing checked the value until a user had already picked a
+   * route and connected a wallet.
+   *
+   * The chain id, the custody contract and the token are pinned in code.
+   * Configuration may only ever AGREE with a pin, so a disagreement is a
+   * deployment fault and is refused here, where it is a build failure
+   * rather than a silent outage. `checkRobinhoodTarget` still refuses the
+   * same values at the form — that duplication is the guarantee, not
+   * redundancy.
+   */
+
+  it("accepts silence — an absent variable means the pin", () => {
+    const result = envSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.robinhoodBridgeAddress).toBeUndefined();
+      expect(result.data.robinhoodChainId).toBeUndefined();
+      expect(result.data.robinhoodTokenAddress).toBeUndefined();
+    }
+  });
+
+  it("REFUSES the retired V1 bridge contract, and names it", () => {
+    const result = envSchema.safeParse({
+      ...base,
+      robinhoodBridgeAddress: ROBINHOOD_V1_BRIDGE_ADDRESS,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) =>
+        i.path.includes("robinhoodBridgeAddress"),
+      );
+      expect(issue?.message).toContain("RETIRED V1");
+      // Actionable: the operator is told what to use instead.
+      expect(issue?.message).toContain(ROBINHOOD_V2_BRIDGE_ADDRESS);
+    }
+  });
+
+  it("refuses the retired V1 contract in any casing", () => {
+    // An address is 20 bytes; EIP-55 casing is a checksum, not identity.
+    // A lowercase stale value is the same stale value.
+    for (const spelling of [
+      ROBINHOOD_V1_BRIDGE_ADDRESS.toLowerCase(),
+      ROBINHOOD_V1_BRIDGE_ADDRESS.toUpperCase().replace("0X", "0x"),
+    ]) {
+      const result = envSchema.safeParse({
+        ...base,
+        robinhoodBridgeAddress: spelling,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it("refuses an unrecognised bridge contract", () => {
+    const result = envSchema.safeParse({
+      ...base,
+      robinhoodBridgeAddress: "0x000000000000000000000000000000000000dEaD",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) =>
+        i.path.includes("robinhoodBridgeAddress"),
+      );
+      expect(issue?.message).toContain(ROBINHOOD_V2_BRIDGE_ADDRESS);
+    }
+  });
+
+  it("accepts the pinned V2 address, in any casing", () => {
+    for (const spelling of [
+      ROBINHOOD_V2_BRIDGE_ADDRESS,
+      ROBINHOOD_V2_BRIDGE_ADDRESS.toLowerCase(),
+    ]) {
+      expect(
+        envSchema.safeParse({ ...base, robinhoodBridgeAddress: spelling }).success,
+      ).toBe(true);
+    }
+  });
+
+  it("refuses a chain id that is not Robinhood Network", () => {
+    const result = envSchema.safeParse({ ...base, robinhoodChainId: "1" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.find((i) => i.path.includes("robinhoodChainId"))?.message,
+      ).toContain(String(ROBINHOOD_CHAIN_ID));
+    }
+  });
+
+  it("accepts the pinned chain id", () => {
+    const result = envSchema.safeParse({
+      ...base,
+      robinhoodChainId: String(ROBINHOOD_CHAIN_ID),
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.robinhoodChainId).toBe(ROBINHOOD_CHAIN_ID);
+  });
+
+  it("refuses a token the bridge contract does not hold", () => {
+    const result = envSchema.safeParse({
+      ...base,
+      robinhoodTokenAddress: "0x000000000000000000000000000000000000dEaD",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.find((i) => i.path.includes("robinhoodTokenAddress"))
+          ?.message,
+      ).toContain(ROBINHOOD_GLC_TOKEN_ADDRESS);
+    }
+  });
+
+  it("accepts the pinned token, in any casing", () => {
+    for (const spelling of [
+      ROBINHOOD_GLC_TOKEN_ADDRESS,
+      ROBINHOOD_GLC_TOKEN_ADDRESS.toLowerCase(),
+    ]) {
+      expect(
+        envSchema.safeParse({ ...base, robinhoodTokenAddress: spelling }).success,
+      ).toBe(true);
+    }
+  });
+
+  it("does not police PRESENTATION values", () => {
+    // A display name and an RPC endpoint are not identity. A wrong RPC
+    // can only make a read fail or succeed — it cannot redirect funds,
+    // which the pinned chain id and contract decide. Failing a
+    // deployment over a display name would be a false alarm.
+    expect(
+      envSchema.safeParse({
+        ...base,
+        robinhoodChainName: "Robinhood Chain",
+        robinhoodRpcUrl: "https://rpc.example.test",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("reproduces the exact production configuration, and refuses it", () => {
+    // What `.env.production` actually carried: the chain id and token
+    // correct, the bridge address stale. One wrong variable out of three
+    // is still a refusal — the trio is checked independently, so a
+    // correct-looking neighbour never vouches for a stale one.
+    const result = envSchema.safeParse({
+      ...base,
+      bridgeApiMode: "http",
+      bridgeApiUrl: "https://bridge.goldcoinproject.org/api/bridge",
+      robinhoodChainId: "4663",
+      robinhoodChainName: "Robinhood Chain",
+      robinhoodTokenAddress: ROBINHOOD_GLC_TOKEN_ADDRESS,
+      robinhoodBridgeAddress: ROBINHOOD_V1_BRIDGE_ADDRESS,
+    });
+    expect(result.success).toBe(false);
+
+    // And the same configuration with that ONE variable corrected — or
+    // simply removed — is accepted.
+    for (const fixed of [{ robinhoodBridgeAddress: ROBINHOOD_V2_BRIDGE_ADDRESS }, {}]) {
+      expect(
+        envSchema.safeParse({
+          ...base,
+          bridgeApiMode: "http",
+          bridgeApiUrl: "https://bridge.goldcoinproject.org/api/bridge",
+          robinhoodChainId: "4663",
+          robinhoodChainName: "Robinhood Chain",
+          robinhoodTokenAddress: ROBINHOOD_GLC_TOKEN_ADDRESS,
+          ...fixed,
+        }).success,
+      ).toBe(true);
+    }
   });
 });
