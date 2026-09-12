@@ -9,22 +9,57 @@ import { QueryProvider } from "@/lib/query/provider";
 import { SolanaProvider } from "@/lib/solana";
 import { loadInitialStatus } from "@/lib/api/initial-status";
 import { env } from "@/lib/config/env";
+import { siteIdentity } from "@/lib/config/site-identity";
 import { buildPrePaintScript } from "@/lib/theme/pre-paint-script";
 
+/*
+ * Identity, not decoration.
+ *
+ * A Wallet Standard dApp hands the wallet no metadata object: Phantom and the
+ * domain reputation services behind it read the page. Declaring the canonical
+ * origin, the site name and the icon is how this deployment states which app
+ * it is; omitting them leaves a bridge that asks for signatures looking, to an
+ * automated reviewer, exactly like an unidentified clone of one. Every value
+ * comes from `NEXT_PUBLIC_APP_URL` via `siteIdentity`, so it is the operator's
+ * configured origin or nothing — never a hardcoded or guessed domain.
+ */
 export const metadata: Metadata = {
   metadataBase: new URL(env.appUrl),
+  applicationName: siteIdentity.name,
   title: {
-    default: "Goldcoin Reserve Bridge",
-    template: "%s · Goldcoin Reserve Bridge",
+    default: siteIdentity.name,
+    template: `%s · ${siteIdentity.name}`,
   },
-  description:
-    "Move existing GLC between the Goldcoin blockchain and other supported rails using pre-funded reserves.",
+  description: siteIdentity.description,
   robots: { index: true, follow: true },
+  // Relative, and therefore resolved against `metadataBase`: the canonical
+  // URL must name the configured origin and can never name whichever host
+  // happened to serve the response.
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: siteIdentity.name,
+    title: siteIdentity.name,
+    description: siteIdentity.description,
+    url: "/",
+    images: [
+      { url: siteIdentity.iconPath, width: 512, height: 512, alt: siteIdentity.name },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: siteIdentity.name,
+    description: siteIdentity.description,
+    images: [siteIdentity.iconPath],
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Matches `--color-surface`, so the browser chrome agrees with the page
+  // rather than flashing a default white bar over a dark ground.
+  themeColor: siteIdentity.themeColor,
   // Zoom is never disabled: pinch-zoom is an accessibility requirement, and on
   // this product it is how people read an address before sending funds.
   maximumScale: 5,
