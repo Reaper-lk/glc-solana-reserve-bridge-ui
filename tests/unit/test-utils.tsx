@@ -6,7 +6,7 @@ import type { ReactElement } from "react";
 import {
   EligibilityEndpointUnpublishedError,
   normalizeRecipientEligibility,
-  normalizeRouteEligibility,
+  normalizeRouteWalletEligibility,
   ELIGIBILITY_UNAVAILABLE_TITLE,
 } from "@/lib/bridge/eligibility";
 
@@ -139,13 +139,13 @@ export async function expectHeldOnlyByEligibility() {
  * would be a dozen copies of the rule free to drift from
  * `HttpBridgeClient`'s.
  *
- * So this mirrors the real client exactly: the two landed per-route
- * endpoints are asked through the supplied mocks and normalised by the
- * production normaliser, and every other route rejects with
- * `EligibilityEndpointUnpublishedError` — the behaviour of a backend that
- * does not serve `GET /eligibility`, which is the state these component
- * tests describe. A test that wants a route-agnostic answer supplies
- * `generic` instead.
+ * So this mirrors the real client exactly: the two per-route endpoints
+ * are asked through the supplied mocks and normalised by the production
+ * normaliser, and a route the test supplied no `generic` handler for
+ * rejects with `EligibilityEndpointUnpublishedError` — a deployment that
+ * does not answer, which is how a test asks for the fail-closed path. A
+ * test that wants the route-generic answer supplies `generic`, whose
+ * return value is the real `GET /routes/{route}/eligibility` body.
  */
 export function routeEligibilityFrom(handlers: {
   SolToGlc?: (address: string, wallet: string | null) => unknown;
@@ -165,9 +165,9 @@ export function routeEligibilityFrom(handlers: {
     }
     if (!handlers.generic) throw new EligibilityEndpointUnpublishedError(route);
     const dto = await handlers.generic(route, source, destination);
-    return normalizeRouteEligibility(
-      dto as Parameters<typeof normalizeRouteEligibility>[0],
-      route as Parameters<typeof normalizeRouteEligibility>[1],
+    return normalizeRouteWalletEligibility(
+      dto as Parameters<typeof normalizeRouteWalletEligibility>[0],
+      route as Parameters<typeof normalizeRouteWalletEligibility>[1],
     );
   };
 }

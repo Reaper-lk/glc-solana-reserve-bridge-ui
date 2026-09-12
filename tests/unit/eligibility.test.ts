@@ -9,18 +9,25 @@ import {
   hasAuthoritativeEligibility,
   isEligibilityRoute,
   normalizeRecipientEligibility,
-  normalizeRouteEligibility,
+  normalizeRouteWalletEligibility,
   remainingSecondsFor,
   routeEligibilityVerdict,
   ELIGIBILITY_BACKEND_DEPENDENCY,
   ELIGIBILITY_BLOCKED_BOTH_TITLE,
   ELIGIBILITY_BLOCKED_TITLE,
   ELIGIBILITY_ROUTES,
+  sourceWalletKnownInBrowser,
   type EligibilityRoute,
   type RouteEligibility,
 } from "@/lib/bridge/eligibility";
-import { recipientEligibilitySchema } from "@/lib/api/schemas/eligibility";
-import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
+import {
+  recipientEligibilitySchema,
+  routeWalletEligibilitySchema,
+} from "@/lib/api/schemas/eligibility";
+import type {
+  RecipientEligibilityDto,
+  RouteWalletEligibilityDto,
+} from "@/lib/api/schemas/eligibility";
 
 /**
  * The rolling 24-hour wallet eligibility model, as pure functions.
@@ -65,6 +72,43 @@ function dto(overrides: Partial<RecipientEligibilityDto> = {}): RecipientEligibi
   });
 }
 
+/** A leg of the route-generic answer, through the real schema. */
+function leg(
+  address: string,
+  overrides: Partial<NonNullable<RouteWalletEligibilityDto["source"]>> = {},
+) {
+  return {
+    address,
+    eligible: true,
+    reason: null,
+    retry_after: null,
+    retry_after_seconds: null,
+    ...overrides,
+  };
+}
+
+/**
+ * A `GET /routes/{route}/eligibility` body, validated by the real schema
+ * so a test cannot assert against a shape the backend does not serve.
+ */
+function routeDto(
+  overrides: Partial<RouteWalletEligibilityDto> = {},
+): RouteWalletEligibilityDto {
+  return routeWalletEligibilitySchema.parse({
+    route: "GlcToRhn",
+    source: null,
+    destination: leg(EVM_WALLET.toLowerCase()),
+    eligible: true,
+    blocked_reason: null,
+    blocked_reasons: [],
+    retry_after: null,
+    retry_after_seconds: null,
+    window_seconds: WINDOW,
+    as_of: NOW,
+    ...overrides,
+  });
+}
+
 function verdictFor(
   answer: RouteEligibility | null,
   overrides: {
@@ -101,23 +145,17 @@ describe("the route table", () => {
     expect(isEligibilityRoute("NotARoute")).toBe(false);
   });
 
-  it("names the two routes the backend answers for today, and the four it does not", () => {
-    // A record of a BACKEND dependency, not a UI choice. When the
-    // route-agnostic endpoint ships, `pending` empties and nothing else
-    // in the UI changes.
-    expect([...ELIGIBILITY_BACKEND_DEPENDENCY.covered].sort()).toEqual([
-      "RhnToGlc",
-      "SolToGlc",
-    ]);
-    expect([...ELIGIBILITY_BACKEND_DEPENDENCY.pending].sort()).toEqual([
-      "GlcToRhn",
-      "GlcToSol",
-      "RhnToSol",
-      "SolToRhn",
-    ]);
+  it("has an endpoint for every one of the six routes", () => {
+    expect([...ELIGIBILITY_BACKEND_DEPENDENCY.covered].sort()).toEqual(
+      [...ELIGIBILITY_ROUTES].sort(),
+    );
+    expect(ELIGIBILITY_BACKEND_DEPENDENCY.pending).toEqual([]);
+    for (const route of ELIGIBILITY_ROUTES) {
+      expect(hasAuthoritativeEligibility(route)).toBe(true);
+    }
   });
 
-  it("maps the two covered routes to the backend's real paths and spellings", () => {
+  it("maps the two per-route endpoints to the backend's real paths and spellings", () => {
     expect(eligibilityEndpointFor("SolToGlc")).toEqual({
       route: "SolToGlc",
       path: "/recipients/sol-to-glc/eligibility",
@@ -134,10 +172,26 @@ describe("the route table", () => {
 
   it("never falls back to a Goldcoin-payout endpoint for a route that pays out elsewhere", () => {
     // Asking `/recipients/sol-to-glc/eligibility` about `SolToRhn` would
-    // be asking about a window that does not govern it.
+    // be asking about a window that does not govern it. The four routes
+    // that endpoint cannot answer for go to the route-generic path, in
+    // the spelling the backend's own router matches on.
     for (const route of ["GlcToSol", "GlcToRhn", "SolToRhn", "RhnToSol"] as const) {
-      expect(eligibilityEndpointFor(route)).toBeNull();
-      expect(hasAuthoritativeEligibility(route)).toBe(false);
+      expect(eligibilityEndpointFor(route).path).toBe(`/routes/${route}/eligibility`);
+    }
+  });
+
+  it("names the Goldcoin-funded routes as the ones whose source the browser cannot know", () => {
+    // Derived from the direction table's funding kind, not restated here
+    // — a route whose funding changes must not end up exempt in one place
+    // and gated in another.
+    expect([...ELIGIBILITY_BACKEND_DEPENDENCY.sourceEnforcedAtAdmission].sort()).toEqual([
+      "GlcToRhn",
+      "GlcToSol",
+    ]);
+    expect(sourceWalletKnownInBrowser("GlcToSol")).toBe(false);
+    expect(sourceWalletKnownInBrowser("GlcToRhn")).toBe(false);
+    for (const route of ["SolToGlc", "RhnToGlc", "SolToRhn", "RhnToSol"] as const) {
+      expect(sourceWalletKnownInBrowser(route)).toBe(true);
     }
   });
 });
@@ -384,25 +438,21 @@ describe("routeEligibilityVerdict — every branch fails closed", () => {
     });
   });
 
-  it("clears a route whose source side the BACKEND reports as out of scope", () => {
-    // The one case a Goldcoin-sourced route requires: funded by sending
-    // to an address the backend issues, so no source wallet exists in
-    // the browser and that side is enforced at fold time. The exemption
-    // is the backend's statement — nothing here grants it.
-    const answer = normalizeRouteEligibility(
-      {
-        route: "GlcToSol",
-        source: null,
-        destination: SOL_RECIPIENT,
-        eligible: true,
-        source_eligibility: { eligible: true, applicable: false },
-        destination_eligibility: { eligible: true, applicable: true },
-        as_of: NOW,
-        window_seconds: WINDOW,
-      },
+  it("clears a Goldcoin-funded route the backend evaluated no source leg for", () => {
+    // The one case a Goldcoin-sourced route requires. The user sends to
+    // an address the backend issues, so no source wallet exists in the
+    // browser, the client sends no `?source=`, and the backend answers
+    // `source: null`. That is not a clearance for the source window — it
+    // is the absence of a wallet to ask about, and the backend enforces
+    // that window at admission against the wallet the deposit really
+    // came from.
+    const answer = normalizeRouteWalletEligibility(
+      routeDto({ route: "GlcToSol", source: null, destination: leg(SOL_RECIPIENT) }),
       "GlcToSol",
     );
     expect(answer.sourceSide.applicable).toBe(false);
+    expect(answer.source).toBeNull();
+    expect(answer.destinationSide).toMatchObject({ evaluated: true, eligible: true });
     expect(
       routeEligibilityVerdict({
         route: "GlcToSol",
@@ -414,53 +464,120 @@ describe("routeEligibilityVerdict — every branch fails closed", () => {
     ).toBe("eligible");
   });
 
-  it("refuses when an out-of-scope claim is ABSENT rather than false", () => {
-    // An omitted `applicable` must read as applicable: a backend that
-    // forgets the field gets the strict rule, never a silent exemption.
-    const answer = normalizeRouteEligibility(
-      {
-        route: "GlcToSol",
-        source: null,
-        destination: SOL_RECIPIENT,
-        eligible: true,
-        source_eligibility: { eligible: true },
-        destination_eligibility: { eligible: true },
-        as_of: NOW,
-        window_seconds: WINDOW,
-      },
-      "GlcToSol",
+  it("clears GlcToRhn the same way, on a destination-only check", () => {
+    // The production symptom this whole path exists to fix: route
+    // Available, both wallet rows "Unavailable", and the submit button
+    // held by a check that never had a question to ask.
+    const answer = normalizeRouteWalletEligibility(
+      routeDto({ route: "GlcToRhn", source: null, destination: leg(EVM_WALLET) }),
+      "GlcToRhn",
     );
-    expect(answer.sourceSide.applicable).toBe(true);
+    expect(answer.sourceSide.applicable).toBe(false);
     expect(
       routeEligibilityVerdict({
-        route: "GlcToSol",
+        route: "GlcToRhn",
         source: null,
-        destination: SOL_RECIPIENT,
+        destination: EVM_WALLET,
         pending: false,
         answer,
-      }),
-    ).toEqual({ kind: "unavailable", detail: "source-unknown" });
+      }).kind,
+    ).toBe("eligible");
   });
 
-  it("still refuses a BLOCKED side the backend reports as in scope", () => {
-    // `applicable` exempts a side from the question; it never answers it.
-    const answer = normalizeRouteEligibility(
-      {
+  it("REFUSES a null source leg on a route whose source wallet the browser does know", () => {
+    // The exemption is narrow on purpose: it is about a wallet that
+    // cannot exist, never about one the check simply failed to ask about.
+    // `SolToRhn` has a connected Solana wallet, so an unevaluated source
+    // is half an answer to a two-sided policy.
+    const answer = normalizeRouteWalletEligibility(
+      routeDto({ route: "SolToRhn", source: null, destination: leg(EVM_WALLET) }),
+      "SolToRhn",
+    );
+    expect(answer.sourceSide).toMatchObject({ evaluated: false, applicable: true });
+    expect(answer.eligible).toBe(false);
+    expect(
+      routeEligibilityVerdict({
         route: "SolToRhn",
         source: SOL_WALLET,
         destination: EVM_WALLET,
-        eligible: false,
-        source_eligibility: {
+        pending: false,
+        answer,
+      }),
+    ).toEqual({ kind: "unavailable", detail: "answer-stale" });
+  });
+
+  it("REFUSES a null DESTINATION leg on every route, Goldcoin-funded included", () => {
+    // The destination window is the one this check exists to establish.
+    // No exemption reaches it.
+    for (const route of ["GlcToSol", "GlcToRhn"] as const) {
+      const answer = normalizeRouteWalletEligibility(
+        routeDto({ route, source: null, destination: null }),
+        route,
+      );
+      expect(answer.destinationSide).toMatchObject({
+        evaluated: false,
+        applicable: true,
+      });
+      expect(answer.eligible).toBe(false);
+      expect(
+        routeEligibilityVerdict({
+          route,
+          source: null,
+          destination: SOL_RECIPIENT,
+          pending: false,
+          answer,
+        }).kind,
+      ).toBe("unavailable");
+    }
+  });
+
+  it("never clears a side the backend reported as blocked, whatever `eligible` says", () => {
+    // `eligible` is ANDed, never copied: the stricter of the top-level
+    // flag and the legs wins.
+    const answer = normalizeRouteWalletEligibility(
+      routeDto({
+        route: "GlcToRhn",
+        source: null,
+        destination: leg(EVM_WALLET, {
           eligible: false,
-          retry_at: NOW + 3_600,
-          remaining_seconds: 3_600,
-          reason: "source_wallet_rate_limited",
-          applicable: true,
-        },
-        destination_eligibility: { eligible: true, applicable: true },
-        as_of: NOW,
-        window_seconds: WINDOW,
-      },
+          reason: "wallet_destination_24h_limit",
+          retry_after: NOW + 3_600,
+          retry_after_seconds: 3_600,
+        }),
+        eligible: true,
+      }),
+      "GlcToRhn",
+    );
+    expect(answer.eligible).toBe(false);
+    const verdict = routeEligibilityVerdict({
+      route: "GlcToRhn",
+      source: null,
+      destination: EVM_WALLET,
+      pending: false,
+      answer,
+    });
+    expect(verdict.kind).toBe("blocked");
+    if (verdict.kind === "blocked") expect(verdict.sides).toEqual(["destination"]);
+    expect(answer.destinationSide).toMatchObject({
+      reason: "wallet_destination_24h_limit",
+      retryAt: NOW + 3_600,
+      remainingSeconds: 3_600,
+    });
+  });
+
+  it("still refuses a BLOCKED source side on a route that has one", () => {
+    const answer = normalizeRouteWalletEligibility(
+      routeDto({
+        route: "SolToRhn",
+        source: leg(SOL_WALLET, {
+          eligible: false,
+          reason: "wallet_source_24h_limit",
+          retry_after: NOW + 3_600,
+          retry_after_seconds: 3_600,
+        }),
+        destination: leg(EVM_WALLET),
+        eligible: false,
+      }),
       "SolToRhn",
     );
     const verdict = routeEligibilityVerdict({
@@ -472,6 +589,49 @@ describe("routeEligibilityVerdict — every branch fails closed", () => {
     });
     expect(verdict.kind).toBe("blocked");
     if (verdict.kind === "blocked") expect(verdict.sides).toEqual(["source"]);
+  });
+
+  it("accepts the backend's canonicalized echo of an EVM address it was sent mixed-case", () => {
+    // The backend lowercases an EVM address before keying its window, so
+    // its echo never matches the EIP-55 spelling a wallet reports as raw
+    // text. Comparing them as text rejected the backend's answer to the
+    // question the form had just asked.
+    const answer = normalizeRouteWalletEligibility(
+      routeDto({
+        route: "RhnToSol",
+        source: leg(EVM_WALLET.toLowerCase()),
+        destination: leg(SOL_RECIPIENT),
+      }),
+      "RhnToSol",
+    );
+    expect(eligibilityMatchesInputs(answer, "RhnToSol", EVM_WALLET, SOL_RECIPIENT)).toBe(
+      true,
+    );
+    expect(
+      routeEligibilityVerdict({
+        route: "RhnToSol",
+        source: EVM_WALLET,
+        destination: SOL_RECIPIENT,
+        pending: false,
+        answer,
+      }).kind,
+    ).toBe("eligible");
+  });
+
+  it("still compares a base58 address by case, where case IS the identity", () => {
+    // Two base58 strings differing only in case are two different
+    // pubkeys, not two spellings of one.
+    const answer = normalizeRouteWalletEligibility(
+      routeDto({
+        route: "SolToRhn",
+        source: leg(SOL_WALLET),
+        destination: leg(EVM_WALLET.toLowerCase()),
+      }),
+      "SolToRhn",
+    );
+    expect(
+      eligibilityMatchesInputs(answer, "SolToRhn", SOL_WALLET.toLowerCase(), EVM_WALLET),
+    ).toBe(false);
   });
 
   it("refuses when no destination has been entered", () => {

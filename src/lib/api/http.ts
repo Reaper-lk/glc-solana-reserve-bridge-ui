@@ -31,13 +31,13 @@ import { reserveHistoryListSchema } from "./schemas/reserves";
 import { quoteOutputSchema } from "./schemas/quote";
 import {
   recipientEligibilitySchema,
-  routeEligibilitySchema,
+  routeWalletEligibilitySchema,
 } from "./schemas/eligibility";
 import {
   EligibilityEndpointUnpublishedError,
   isEligibilityRoute,
   normalizeRecipientEligibility,
-  normalizeRouteEligibility,
+  normalizeRouteWalletEligibility,
   type RouteEligibility,
 } from "@/lib/bridge/eligibility";
 import {
@@ -152,23 +152,40 @@ export class HttpBridgeClient implements BridgeApiClient {
 
   /**
    * The rolling-24h verdict for one route, from whichever endpoint this
-   * backend actually serves.
+   * backend serves for it.
    *
-   * # A per-route endpoint where one exists; an attempt otherwise
+   * # Which endpoint, and why
    *
-   * `SolToGlc` and `RhnToGlc` have their own published endpoints and are
-   * asked directly. Every other route is asked through the route-agnostic
-   * `GET /eligibility`, which today's backend does not serve — so it
-   * 404s, this raises `EligibilityEndpointUnpublishedError`, and the form
-   * refuses that route. That is the current, intended behaviour.
+   * `SolToGlc` and `RhnToGlc` are asked through their own
+   * `/recipients/*` endpoints, which are the paths in production service
+   * today. Every other route is asked through the route-generic
+   * `GET /routes/{route}/eligibility`, which carries the route in the
+   * PATH and takes `?source=`/`?destination=` spelled in their own
+   * chains' notations.
    *
-   * Attempting it rather than refusing without asking is what makes the
-   * backend shipping it a backend-only change: no frontend deploy, no
-   * table to edit, nothing to forget. And attempting it cannot produce a
-   * false clearance — only a real 200 with a body this schema accepts
-   * does, which is precisely the case where the answer is authoritative.
-   * Every other outcome (404, 5xx, timeout, malformed body) throws, and
-   * every throw is a refusal upstream.
+   * This used to call `GET /eligibility?route=…`, an endpoint that was
+   * expected and never shipped. Every request 404'd, which surfaced as
+   * `EligibilityEndpointUnpublishedError` and put all four of those
+   * routes permanently in "eligibility check temporarily unavailable".
+   * The path below is verified against the deployed backend
+   * (`service/src/api.rs`, `parse_route_wallet_eligibility_query`).
+   *
+   * # Either leg may be omitted, and omission is not a clearance
+   *
+   * The backend requires at least one of the two and evaluates only what
+   * it is given, returning `null` for the other. That is what lets a
+   * Goldcoin-SOURCED route be asked about its destination alone: the page
+   * never learns the Goldcoin wallet a user will send from, so there is
+   * nothing to send and nothing is invented. What an omitted leg means
+   * for the verdict is decided by `normalizeRouteWalletEligibility`, not
+   * here, and it defaults to refusing.
+   *
+   * # A refusal is every outcome except a real answer
+   *
+   * Only a 200 whose body this schema accepts can produce a clearance.
+   * 404, 5xx, timeout, malformed body — all throw, and every throw is a
+   * refusal upstream. The 404 is singled out solely to choose which
+   * sentence an operator reads.
    */
   async getRouteEligibility(
     route: string,
@@ -193,14 +210,23 @@ export class HttpBridgeClient implements BridgeApiClient {
       // than asked about with an unknown discriminator.
       throw new EligibilityEndpointUnpublishedError(route);
     }
-    const query: Record<string, string> = { route, destination };
+    const query: Record<string, string> = { destination };
     // Omitted rather than sent empty, matching the per-route endpoints'
-    // treatment of `?wallet=`: a blank value is not "no wallet", it is a
-    // value the backend's address parsers would have to reject.
+    // treatment of `?wallet=`: the backend reads a blank value as "not
+    // given", and an empty string is the one spelling its address parsers
+    // would have to reject.
     if (source) query.source = source;
     let dto;
     try {
-      dto = await this.request("/eligibility", routeEligibilitySchema, query, signal);
+      dto = await this.request(
+        // The route is a path SEGMENT here. Encoded even though every
+        // member of `EligibilityRoute` is plain ASCII, so the guarantee
+        // is the encoding rather than the shape of today's route names.
+        `/routes/${encodeURIComponent(route)}/eligibility`,
+        routeWalletEligibilitySchema,
+        query,
+        signal,
+      );
     } catch (cause) {
       // A 404 is the ONE outcome that means "this deployment does not
       // serve this check", which deserves its own message. Everything
@@ -212,7 +238,7 @@ export class HttpBridgeClient implements BridgeApiClient {
       }
       throw cause;
     }
-    return normalizeRouteEligibility(dto, route);
+    return normalizeRouteWalletEligibility(dto, route);
   }
 
   getTransfer(id: number, signal?: AbortSignal) {

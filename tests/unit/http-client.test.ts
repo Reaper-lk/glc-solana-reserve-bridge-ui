@@ -401,6 +401,42 @@ describe("HttpBridgeClient — timeout composition", () => {
 describe("HttpBridgeClient — rolling-24h eligibility", () => {
   const GLC = "GdKQNBb8CVhFxKC1kBi1AjgTQTgLPvVp7c";
   const SOL_WALLET = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+  const EVM_CHECKSUMMED = "0xdD870fA1b7C4700F2BD7f44238821C26f7392148";
+  /** How the backend echoes it back — canonicalized before the window is keyed. */
+  const EVM_LOWER = EVM_CHECKSUMMED.toLowerCase();
+
+  /** One leg of a `RouteWalletEligibilityView`, as the backend serves it. */
+  function legBody(address: string, overrides: Record<string, unknown> = {}) {
+    return {
+      address,
+      eligible: true,
+      reason: null,
+      retry_after: null,
+      retry_after_seconds: null,
+      ...overrides,
+    };
+  }
+
+  /** A `GET /routes/{route}/eligibility` body. A `null` leg was not evaluated. */
+  function routeBody(
+    route: string,
+    source: ReturnType<typeof legBody> | null,
+    destination: ReturnType<typeof legBody> | null,
+    eligible = true,
+  ) {
+    return {
+      route,
+      source,
+      destination,
+      eligible,
+      blocked_reason: null,
+      blocked_reasons: [],
+      retry_after: null,
+      retry_after_seconds: null,
+      window_seconds: 86_400,
+      as_of: 1_787_000_000,
+    };
+  }
 
   function recipientBody(direction: "SolToGlc" | "RhnToGlc", wallet: string | null) {
     return {
@@ -446,51 +482,85 @@ describe("HttpBridgeClient — rolling-24h eligibility", () => {
     expect(String(url)).toContain("/recipients/rhn-to-glc/eligibility");
   });
 
-  it("ATTEMPTS the route-agnostic endpoint for a route with no per-route one", async () => {
-    // Attempting rather than refusing unasked is what makes the backend
-    // shipping this a backend-only change.
-    respondOk({
-      route: "RhnToSol",
-      source: "0xdd870fa1b7c4700f2bd7f44238821c26f7392148",
-      destination: SOL_WALLET,
-      eligible: true,
-      source_eligibility: { eligible: true, applicable: true },
-      destination_eligibility: { eligible: true, applicable: true },
-      as_of: 1_787_000_000,
-      window_seconds: 86_400,
-    });
+  it("asks the route-generic endpoint, with the route in the PATH", async () => {
+    // The bug this replaces: the client asked `GET /eligibility?route=…`,
+    // an endpoint that never shipped. Every request 404'd, which the form
+    // reported as "eligibility check temporarily unavailable" on all four
+    // routes with no `/recipients/*` path.
+    respondOk(routeBody("RhnToSol", legBody(EVM_LOWER), legBody(SOL_WALLET)));
     const answer = await new HttpBridgeClient(BASE).getRouteEligibility(
       "RhnToSol",
-      "0xdd870fa1b7c4700f2bd7f44238821c26f7392148",
+      EVM_CHECKSUMMED,
       SOL_WALLET,
     );
     const [url] = vi.mocked(fetch).mock.calls[0] ?? [];
-    expect(String(url)).toContain("/eligibility?");
-    expect(String(url)).toContain("route=RhnToSol");
+    expect(String(url)).toContain("/routes/RhnToSol/eligibility?");
+    expect(String(url)).not.toContain("route=RhnToSol");
     expect(String(url)).toContain(`destination=${SOL_WALLET}`);
+    expect(String(url)).toContain(`source=${EVM_CHECKSUMMED}`);
     expect(answer.eligible).toBe(true);
     expect(answer.asOf).toBe(1_787_000_000);
+  });
+
+  it("asks GlcToRhn about the DESTINATION ONLY, and reads the answer as eligible", async () => {
+    // A Goldcoin-funded route: the user sends to an address the backend
+    // issues, so the browser never learns the source wallet and must not
+    // invent one. The backend answers `source: null`, and that is a side
+    // with no question rather than a failed check.
+    respondOk(routeBody("GlcToRhn", null, legBody(EVM_LOWER)));
+    const answer = await new HttpBridgeClient(BASE).getRouteEligibility(
+      "GlcToRhn",
+      null,
+      EVM_CHECKSUMMED,
+    );
+    const [url] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(String(url)).toContain("/routes/GlcToRhn/eligibility?");
+    expect(String(url)).not.toContain("source=");
+    expect(answer.sourceSide).toMatchObject({ applicable: false });
+    expect(answer.source).toBeNull();
+    expect(answer.destinationSide).toMatchObject({ evaluated: true, eligible: true });
+    expect(answer.eligible).toBe(true);
+  });
+
+  it("asks GlcToSol about the destination only, the same way", async () => {
+    respondOk(routeBody("GlcToSol", null, legBody(SOL_WALLET)));
+    const answer = await new HttpBridgeClient(BASE).getRouteEligibility(
+      "GlcToSol",
+      null,
+      SOL_WALLET,
+    );
+    const [url] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(String(url)).toContain("/routes/GlcToSol/eligibility?");
+    expect(String(url)).not.toContain("source=");
+    expect(answer.eligible).toBe(true);
+    expect(answer.sourceSide.applicable).toBe(false);
   });
 
   it("omits ?source= entirely rather than sending it blank", async () => {
     // A blank value is not "no wallet"; it is the one spelling the
     // backend's address parsers would have to reject.
-    respondOk({
-      route: "GlcToSol",
-      source: null,
-      destination: SOL_WALLET,
-      eligible: true,
-      source_eligibility: { eligible: true, applicable: false },
-      destination_eligibility: { eligible: true, applicable: true },
-      window_seconds: 86_400,
-    });
+    respondOk(routeBody("GlcToSol", null, legBody(SOL_WALLET)));
     await new HttpBridgeClient(BASE).getRouteEligibility("GlcToSol", null, SOL_WALLET);
     const [url] = vi.mocked(fetch).mock.calls[0] ?? [];
     expect(String(url)).not.toContain("source=");
   });
 
-  it("REFUSES when the deployment does not serve the route-agnostic endpoint", async () => {
-    // Today's backend. A 404 is not an answer, and the form refuses.
+  it("REFUSES a null source leg on a route whose source wallet the browser DOES know", async () => {
+    // Fails closed: the exemption above is about a wallet that cannot
+    // exist, never about one the check merely failed to ask about.
+    respondOk(routeBody("SolToRhn", null, legBody(EVM_LOWER)));
+    const answer = await new HttpBridgeClient(BASE).getRouteEligibility(
+      "SolToRhn",
+      SOL_WALLET,
+      EVM_CHECKSUMMED,
+    );
+    expect(answer.sourceSide).toMatchObject({ evaluated: false, applicable: true });
+    expect(answer.eligible).toBe(false);
+  });
+
+  it("REFUSES when the deployment does not serve the route-generic endpoint", async () => {
+    // A deployment predating it. A 404 is not an answer, and the form
+    // refuses.
     respondError(404, "not found");
     await expect(
       new HttpBridgeClient(BASE).getRouteEligibility("SolToRhn", SOL_WALLET, GLC),
@@ -516,6 +586,25 @@ describe("HttpBridgeClient — rolling-24h eligibility", () => {
     ).rejects.toSatisfy((error: unknown) => isApiError(error));
   });
 
+  it("refuses a 200 carrying the OLD expected shape, which no backend serves", async () => {
+    // `source_eligibility`/`destination_eligibility` beside string echoes
+    // was this client's guess at an endpoint that shipped differently.
+    // Reading it would mean accepting a body the real service cannot
+    // produce.
+    respondOk({
+      route: "SolToRhn",
+      source: SOL_WALLET,
+      destination: EVM_LOWER,
+      eligible: true,
+      source_eligibility: { eligible: true, applicable: true },
+      destination_eligibility: { eligible: true, applicable: true },
+      window_seconds: 86_400,
+    });
+    await expect(
+      new HttpBridgeClient(BASE).getRouteEligibility("SolToRhn", SOL_WALLET, EVM_LOWER),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error));
+  });
+
   it("refuses a route this build has no eligibility model for", async () => {
     respondOk({});
     await expect(
@@ -525,32 +614,30 @@ describe("HttpBridgeClient — rolling-24h eligibility", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("never synthesises a clearance from a blocked per-side answer", async () => {
-    respondOk({
-      route: "SolToRhn",
-      source: SOL_WALLET,
-      destination: GLC,
-      eligible: false,
-      source_eligibility: {
-        eligible: false,
-        retry_at: 1_787_003_600,
-        remaining_seconds: 3_600,
-        reason: "source_wallet_rate_limited",
-        applicable: true,
-      },
-      destination_eligibility: { eligible: true, applicable: true },
-      window_seconds: 86_400,
-    });
+  it("never synthesises a clearance from a blocked per-leg answer", async () => {
+    respondOk(
+      routeBody(
+        "SolToRhn",
+        legBody(SOL_WALLET, {
+          eligible: false,
+          reason: "wallet_source_24h_limit",
+          retry_after: 1_787_003_600,
+          retry_after_seconds: 3_600,
+        }),
+        legBody(EVM_LOWER),
+        false,
+      ),
+    );
     const answer = await new HttpBridgeClient(BASE).getRouteEligibility(
       "SolToRhn",
       SOL_WALLET,
-      GLC,
+      EVM_LOWER,
     );
     expect(answer.eligible).toBe(false);
     expect(answer.sourceSide).toMatchObject({
       eligible: false,
       applicable: true,
-      reason: "source_wallet_rate_limited",
+      reason: "wallet_source_24h_limit",
     });
   });
 });

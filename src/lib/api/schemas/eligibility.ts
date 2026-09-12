@@ -86,70 +86,94 @@ export const recipientEligibilitySchema = z.object({
 export type RecipientEligibilityDto = z.infer<typeof recipientEligibilitySchema>;
 
 /**
- * One wallet's side of the ROUTE-AGNOSTIC eligibility answer.
+ * One wallet's leg of the route-generic eligibility answer —
+ * `WalletLegView` in the backend's `service/src/api.rs`.
  *
- * `applicable` is how the BACKEND says a side is not part of this route's
- * rule — and it is the only way that can be said. The case it exists for
- * is real and structural: `GlcToSol`/`GlcToRhn` are funded by sending GLC
- * to an address the backend issues, so no source wallet is connected in
- * the browser and this UI never learns which address the user will send
- * from. The source side of those routes can only be enforced backend-side
- * at fold time.
- *
- * Absent means **applicable**, deliberately. A backend that ships this
- * endpoint without the field gets the strict reading — the side must be
- * evaluated and eligible — so forgetting it fails closed rather than
- * silently exempting a wallet.
+ * A leg is present only for a wallet the caller actually asked about. The
+ * absence of a leg is the backend saying "I evaluated nothing here",
+ * which is never the same as "I checked and it is clear" — see
+ * {@link routeWalletEligibilitySchema}.
  */
-export const routeEligibilitySideSchema = z.object({
-  /** `true` only when this side is outside its rolling window right now. */
-  eligible: z.boolean(),
-  /** Absolute unix second the window reopens; `null` when not blocked. */
-  retry_at: z.number().int().nullable().optional(),
-  /** The same wait in seconds (>= 0); `null` when not blocked. */
-  remaining_seconds: z.number().int().nonnegative().nullable().optional(),
-  /** The backend's machine-readable reason; `null` when clear. */
-  reason: z.string().nullable().optional(),
+export const walletLegSchema = z.object({
   /**
-   * Whether this side's window governs this route at all. Absent reads as
-   * `true` — see the type docs; an omitted field must never exempt a side.
+   * The address AS CANONICALIZED by the backend — the exact spelling the
+   * ledger keys this wallet's window on, echoed so a caller racing form
+   * edits can discard an answer about a superseded address.
+   *
+   * Canonical is not always the spelling that was sent: an EVM address
+   * comes back lowercase however it was typed. The caller's stale-answer
+   * check compares by address FORM for that reason
+   * (`eligibilityMatchesInputs`), never as raw bytes of text.
    */
-  applicable: z.boolean().optional(),
+  address: z.string().min(1),
+  /** `true` only when this wallet is outside its rolling window right now. */
+  eligible: z.boolean(),
+  /** The backend's machine-readable reason when blocked; `null` when clear. */
+  reason: z.string().nullable().optional(),
+  /** Absolute unix second the window reopens; `null` when not blocked. */
+  retry_after: z.number().int().nullable().optional(),
+  /** The same wait as seconds from `as_of` (>= 0); `null` when not blocked. */
+  retry_after_seconds: z.number().int().nonnegative().nullable().optional(),
 });
 
 /**
- * `GET /eligibility?route=<Route>&source=<address>&destination=<address>`
- * — the route-agnostic endpoint this UI expects for the four routes the
- * two per-route `/recipients/*` endpoints do not cover.
+ * `GET /routes/{route}/eligibility?source=<address>&destination=<address>`
+ * — the route-generic rolling-24h wallet check, served for all six
+ * routes (`RouteWalletEligibilityView`, service/src/api.rs).
  *
- * # Attempted, not assumed
+ * # The shape is the backend's, verified against it
  *
- * This shape is a stated expectation, not a landed contract. The HTTP
- * client ATTEMPTS this endpoint for any route with no per-route endpoint
- * and treats a 404 as "not published", which disables submission on that
- * route — the behaviour against today's backend. Nothing is presumed to
- * exist, and nothing is presumed eligible; the endpoint appearing later is
- * what turns the refusal into an answer, with no frontend change.
+ * This schema was previously written against an EXPECTED endpoint
+ * (`GET /eligibility?route=…`, with `source_eligibility` /
+ * `destination_eligibility` objects beside string echoes). That endpoint
+ * never shipped under that name or that shape. The one that did puts the
+ * route in the PATH and answers with a nullable leg OBJECT per side. A
+ * frontend holding the wrong contract cannot tell a 404 or a parse
+ * failure from a real refusal, so it reported every route as
+ * "temporarily unavailable" — which is exactly what this replaces.
  *
- * `source`/`destination` are echoed back for the same reason the per-route
- * endpoints echo theirs: an in-flight answer about a superseded address is
- * not a weaker answer, it is an answer to a different question, and it
- * must be discardable rather than actionable.
+ * # An omitted leg is `null`, and `null` is not a clearance
+ *
+ * Each of `?source=`/`?destination=` is optional and at least one must be
+ * given. A leg that was not asked about comes back `null` and was not
+ * evaluated. Whether an unevaluated leg still blocks the transfer is not
+ * decided here — it is decided by `normalizeRouteWalletEligibility` and
+ * defaults to blocking; the sole exception is a route whose source wallet
+ * cannot exist in the browser at all, which that module documents.
+ *
+ * # Deliberately minimal disclosure
+ *
+ * Per leg: a boolean, a reason and a reopen time. Never which request is
+ * blocking, its amount, or anything else about the wallet's history.
  */
-export const routeEligibilitySchema = z.object({
+export const routeWalletEligibilitySchema = z.object({
+  /** The route asked about, echoed in `Route::as_str` spelling. */
   route: z.string().min(1),
-  /** Echoed back; `null` when the caller sent none. */
-  source: z.string().nullable(),
-  destination: z.string().min(1),
-  /** `true` only when every applicable side is clear. */
+  /** The source leg, or `null` when `?source=` was omitted. */
+  source: walletLegSchema.nullable(),
+  /** The destination leg, or `null` when `?destination=` was omitted. */
+  destination: walletLegSchema.nullable(),
+  /** `true` only when NO evaluated leg is inside its window. */
   eligible: z.boolean(),
-  source_eligibility: routeEligibilitySideSchema,
-  destination_eligibility: routeEligibilitySideSchema,
+  /**
+   * The single limit to show when one or both apply, source first. The
+   * per-leg `reason` is what this UI renders; this is carried for
+   * diagnostics and is deliberately NOT an enum — the backend's
+   * vocabulary may grow, and a new spelling must not turn a real refusal
+   * into a parse failure.
+   */
+  blocked_reason: z.string().nullable().optional(),
+  /** EVERY blocking limit, source first; `[]` when eligible. */
+  blocked_reasons: z.array(z.string()).optional(),
+  /** The aggregate reopen instant for `blocked_reason`; `null` when eligible. */
+  retry_after: z.number().int().nullable().optional(),
+  /** The same instant as seconds from `as_of`; `null` when eligible. */
+  retry_after_seconds: z.number().int().nonnegative().nullable().optional(),
+  /** The rolling window itself (86,400) — so copy/logic never hardcodes it. */
+  window_seconds: z.number().int().positive(),
   /** When the backend computed this, in unix seconds. */
   as_of: z.number().int().nullable().optional(),
-  /** The rolling window itself, so copy/logic never hardcodes 24 hours. */
-  window_seconds: z.number().int().positive(),
 });
 
-export type RouteEligibilitySideDto = z.infer<typeof routeEligibilitySideSchema>;
-export type RouteEligibilityDto = z.infer<typeof routeEligibilitySchema>;
+export type WalletLegDto = z.infer<typeof walletLegSchema>;
+export type RouteWalletEligibilityDto = z.infer<typeof routeWalletEligibilitySchema>;
