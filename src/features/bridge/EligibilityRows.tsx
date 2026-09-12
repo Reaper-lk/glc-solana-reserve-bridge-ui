@@ -1,17 +1,25 @@
 "use client";
 
-import { CircleAlert, CircleCheck, CircleDashed, CircleX } from "lucide-react";
+import {
+  CircleAlert,
+  CircleCheck,
+  CircleDashed,
+  CircleSlash,
+  CircleX,
+} from "lucide-react";
 import { StatusDot } from "@/components/ui";
 import type { StatusDescriptor } from "@/lib/status";
 import {
   ELIGIBILITY_BLOCKED_LABEL,
   ELIGIBILITY_CHECKING_LABEL,
   ELIGIBILITY_ELIGIBLE_LABEL,
+  ELIGIBILITY_NOT_APPLICABLE_LABEL,
   ELIGIBILITY_SIDE_LABEL,
   ELIGIBILITY_UNAVAILABLE_LABEL,
   formatEligibilityCooldown,
   type EligibilitySide,
   type EligibilityVerdict,
+  type RouteEligibility,
   type WalletEligibility,
 } from "@/lib/bridge/eligibility";
 
@@ -62,10 +70,43 @@ const UNAVAILABLE: StatusDescriptor = {
   icon: CircleX,
 };
 
+/**
+ * A side with no wallet for the browser to ask about — the source of a
+ * route funded by sending to an address the backend issues.
+ *
+ * Neutral, and worded as WHEN the check happens rather than as a pass.
+ * "Eligible" here would claim a verdict about a wallet nobody has named
+ * yet; "Unavailable" would report a fault where there is none and send a
+ * user looking for a problem to fix. The rule still applies — the backend
+ * enforces it against the wallet the deposit really arrives from — and
+ * this row says exactly that.
+ */
+const NOT_APPLICABLE: StatusDescriptor = {
+  label: ELIGIBILITY_NOT_APPLICABLE_LABEL,
+  tone: "neutral",
+  icon: CircleSlash,
+};
+
+/**
+ * The answer behind a verdict, for the two kinds that carry one.
+ *
+ * `checking` and `unavailable` hold no answer, so no side of theirs can
+ * be reported as out of scope — which is the strict reading: a check that
+ * did not complete stays "Unavailable" on both rows.
+ */
+function answerOf(verdict: EligibilityVerdict): RouteEligibility | null {
+  if (verdict.kind === "eligible" || verdict.kind === "blocked") return verdict.answer;
+  return null;
+}
+
 function descriptorFor(
   verdict: EligibilityVerdict,
   side: EligibilitySide,
 ): StatusDescriptor {
+  const answer = answerOf(verdict);
+  if (answer !== null && !sideOfAnswer(answer, side).applicable) {
+    return NOT_APPLICABLE;
+  }
   switch (verdict.kind) {
     case "eligible":
       return ELIGIBLE;
@@ -81,12 +122,16 @@ function descriptorFor(
   }
 }
 
+function sideOfAnswer(answer: RouteEligibility, side: EligibilitySide) {
+  return side === "source" ? answer.sourceSide : answer.destinationSide;
+}
+
 function sideOf(
   verdict: EligibilityVerdict,
   side: EligibilitySide,
 ): WalletEligibility | null {
   if (verdict.kind !== "blocked") return null;
-  return side === "source" ? verdict.answer.sourceSide : verdict.answer.destinationSide;
+  return sideOfAnswer(verdict.answer, side);
 }
 
 export function EligibilityRows({

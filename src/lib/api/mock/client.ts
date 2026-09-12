@@ -19,13 +19,13 @@ import { reserveHistoryListSchema } from "../schemas/reserves";
 import { quoteOutputSchema, type QuoteOutputDto } from "../schemas/quote";
 import {
   recipientEligibilitySchema,
-  routeEligibilitySchema,
+  routeWalletEligibilitySchema,
 } from "../schemas/eligibility";
 import {
   EligibilityEndpointUnpublishedError,
   isEligibilityRoute,
   normalizeRecipientEligibility,
-  normalizeRouteEligibility,
+  normalizeRouteWalletEligibility,
 } from "@/lib/bridge/eligibility";
 import {
   createTransferOutputSchema,
@@ -39,6 +39,20 @@ import {
 import * as fixtures from "./fixtures";
 import type { SettlementRoute } from "../schemas/common";
 import { directions } from "@/lib/bridge/direction";
+
+/**
+ * The spelling the real backend echoes for an address it evaluated.
+ *
+ * It canonicalizes before keying a wallet's window, which for an EVM
+ * address means lowercase however the caller spelled it; base58 and
+ * Base58Check are already canonical and are echoed verbatim. Reproduced
+ * here so the fixtures exercise the caller's stale-answer check against
+ * the same mismatch the real service produces, rather than a friendlier
+ * one that would hide a regression in it.
+ */
+function canonicalMockAddress(address: string): string {
+  return address.startsWith("0x") ? address.toLowerCase() : address;
+}
 
 export type MockScenario =
   | "operational"
@@ -343,35 +357,44 @@ export class MockBridgeClient implements BridgeApiClient {
       throw new EligibilityEndpointUnpublishedError(route);
     }
     return this.delay(
-      normalizeRouteEligibility(
-        routeEligibilitySchema.parse({
+      normalizeRouteWalletEligibility(
+        routeWalletEligibilitySchema.parse({
           route,
-          // Echoed back exactly as the backend does, so the caller's
-          // stale-answer check is exercised rather than defeated.
-          source: source ?? null,
-          destination: destination.trim(),
+          // A leg per side ASKED about, `null` for a side that was not —
+          // the real backend's shape. A Goldcoin-sourced route is funded
+          // by sending to an address the backend issues, so the client
+          // sends no `?source=` and the source leg comes back `null`.
+          // Modelled rather than short-circuited, so the caller's
+          // handling of a null leg is exercised here exactly as it is
+          // against the real service.
+          source:
+            source === null
+              ? null
+              : {
+                  // Echoed back canonicalized, as the backend does: an EVM
+                  // address comes back lowercase whatever was sent. That
+                  // is what exercises the caller's stale-answer check
+                  // rather than defeating it.
+                  address: canonicalMockAddress(source),
+                  eligible: true,
+                  reason: null,
+                  retry_after: null,
+                  retry_after_seconds: null,
+                },
+          destination: {
+            address: canonicalMockAddress(destination.trim()),
+            eligible: true,
+            reason: null,
+            retry_after: null,
+            retry_after_seconds: null,
+          },
           eligible: true,
-          source_eligibility: {
-            eligible: true,
-            retry_at: null,
-            remaining_seconds: null,
-            reason: null,
-            // A Goldcoin-sourced route is funded by sending to an address
-            // the backend issues: no source wallet exists in the browser,
-            // so its source window can only be enforced at fold time.
-            // Said here because the BACKEND says it — the UI never
-            // exempts a side on its own.
-            applicable: route !== "GlcToSol" && route !== "GlcToRhn",
-          },
-          destination_eligibility: {
-            eligible: true,
-            retry_at: null,
-            remaining_seconds: null,
-            reason: null,
-            applicable: true,
-          },
-          as_of: Math.floor(this.now().getTime() / 1000),
+          blocked_reason: null,
+          blocked_reasons: [],
+          retry_after: null,
+          retry_after_seconds: null,
           window_seconds: 86_400,
+          as_of: Math.floor(this.now().getTime() / 1000),
         }),
         route,
       ),

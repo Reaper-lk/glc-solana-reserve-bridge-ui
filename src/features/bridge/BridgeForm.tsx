@@ -453,14 +453,27 @@ export function BridgeForm() {
    * form asks one question and reads one answer whatever pair is
    * selected.
    *
-   * The backend publishes an authoritative endpoint for two of the six
-   * today (`SolToGlc`, `RhnToGlc`). For the other four the query rejects,
-   * `routeEligibilityVerdict` reports `unavailable`, and submission is
-   * disabled. That is deliberate and is a stated backend dependency —
-   * see `ELIGIBILITY_BACKEND_DEPENDENCY`. Nothing here synthesises an
-   * eligible verdict for a route the backend has not answered about, and
-   * nothing here keeps a local record of what a wallet did: a
-   * client-side window would be neither authoritative nor tamper-proof.
+   * The backend answers for all six: `SolToGlc` and `RhnToGlc` through
+   * their own `/recipients/*` endpoints, the rest through the
+   * route-generic `GET /routes/{route}/eligibility`. A route whose check
+   * does not return a readable answer is still refused — nothing here
+   * synthesises an eligible verdict for a route the backend has not
+   * answered about, and nothing here keeps a local record of what a
+   * wallet did: a client-side window would be neither authoritative nor
+   * tamper-proof.
+   *
+   * # The source wallet is never invented
+   *
+   * `sourceWalletForEligibility` is `null` on the Goldcoin-funded routes
+   * (`GlcToSol`, `GlcToRhn`) because there is no source wallet in the
+   * browser to name: the user sends to an address the backend issues, and
+   * which wallet they send from is unknowable here until the deposit is
+   * observed on-chain. The check asks about the destination alone, the
+   * backend answers `source: null`, and that side is enforced backend-side
+   * at admission — see `sourceWalletKnownInBrowser`. The alternative,
+   * putting some placeholder address on the wire, would buy a satisfiable
+   * gate at the price of an authoritative-looking clearance about a wallet
+   * no deposit will ever come from.
    *
    * # Refresh
    *

@@ -1,9 +1,10 @@
 import type { Route } from "@/lib/api/schemas/common";
 import type {
   RecipientEligibilityDto,
-  RouteEligibilityDto,
-  RouteEligibilitySideDto,
+  RouteWalletEligibilityDto,
+  WalletLegDto,
 } from "@/lib/api/schemas/eligibility";
+import { directions } from "./direction";
 import { isUsableRetryTimestamp } from "./robinhood-predeposit";
 
 /**
@@ -106,40 +107,42 @@ export type EligibilitySide = "source" | "destination";
 /**
  * Where the authoritative answer for a route comes from.
  *
- * # What has landed, and what has not
+ * # What the backend actually serves
  *
- * The backend (glc-solana-reserve-bridge, `service/src/api.rs`) publishes
- * exactly TWO eligibility endpoints today, both for routes whose payout
- * lands on Goldcoin:
+ * Three endpoints, all landed (glc-solana-reserve-bridge,
+ * `service/src/api.rs`):
  *
  * | route | endpoint | source param | destination param |
  * |---|---|---|---|
  * | `SolToGlc` | `GET /recipients/sol-to-glc/eligibility` | `?wallet=` (base58 Solana pubkey) | `?address=` (Goldcoin P2PKH) |
  * | `RhnToGlc` | `GET /recipients/rhn-to-glc/eligibility` | `?wallet=` (0x EVM address) | `?address=` (Goldcoin P2PKH) |
+ * | all six | `GET /routes/{route}/eligibility` | `?source=` (the route's source chain) | `?destination=` (the route's destination chain) |
  *
- * Both return the one `RecipientEligibility` shape, built by the same
- * `RecipientEligibility::from_windows`, carrying BOTH sides at once: the
- * `source_wallet_*` fields are this module's source side and the
+ * The two `/recipients/*` endpoints return `RecipientEligibility`, built
+ * by `RecipientEligibility::from_windows`, carrying both sides at once:
+ * the `source_wallet_*` fields are this module's source side and the
  * `recipient_*` fields are its destination side.
  *
- * The other four routes — `GlcToSol`, `GlcToRhn`, `SolToRhn`, `RhnToSol`
- * — have NO published endpoint. That is a backend dependency, tracked in
- * {@link ELIGIBILITY_BACKEND_DEPENDENCY}, and this module reports it as
- * `null` here rather than papering over it. A `null` endpoint is not
- * permission and not an absence of policy: it means no authoritative
- * answer can be obtained, which {@link routeEligibilityVerdict} resolves
- * to `unavailable` and the form treats as a refusal.
+ * The route-generic endpoint returns `RouteWalletEligibilityView`: one
+ * NULLABLE leg object per side, where a `null` leg means that side was
+ * not asked about and therefore not evaluated.
  *
- * # When the generic endpoint lands
+ * # Why the two per-route endpoints are still used where they exist
  *
- * The expected replacement is one route-agnostic endpoint —
- * `GET /eligibility?route=<Route>&source=<address>&destination=<address>`
- * — carrying an overall verdict plus a per-side verdict with
- * `retry_at`/`remaining_seconds`/`reason`, and an `as_of`. When it ships,
- * this table gains six entries and {@link normalizeRouteEligibility}
- * gains one more input shape. Nothing else in the UI changes: the form,
- * the submit gate and the display all read {@link RouteEligibility}
- * already, which is the entire reason this indirection exists.
+ * The route-generic endpoint covers all six and could replace them. It is
+ * not used for `SolToGlc`/`RhnToGlc` because those two paths are the ones
+ * in production service today, verified against the live deployment;
+ * moving them is a change with no defect behind it. The four routes that
+ * had no working path are the ones this table now points at
+ * `/routes/{route}/eligibility`.
+ *
+ * # What this table is NOT
+ *
+ * It is documentation and diagnostics. {@link routeEligibilityVerdict}
+ * deliberately never consults it: what gates a transfer is whether an
+ * authoritative answer actually ARRIVED, never a compile-time claim about
+ * what the backend ought to serve. A wrong entry here makes a doc wrong;
+ * it cannot make a refusal into a clearance.
  */
 export interface EligibilityEndpoint {
   readonly route: EligibilityRoute;
@@ -151,7 +154,7 @@ export interface EligibilityEndpoint {
   readonly destinationSpelling: "solana-base58" | "evm-hex" | "goldcoin-base58check";
 }
 
-const ENDPOINTS: { readonly [K in EligibilityRoute]: EligibilityEndpoint | null } = {
+const ENDPOINTS: { readonly [K in EligibilityRoute]: EligibilityEndpoint } = {
   SolToGlc: {
     route: "SolToGlc",
     path: "/recipients/sol-to-glc/eligibility",
@@ -164,38 +167,117 @@ const ENDPOINTS: { readonly [K in EligibilityRoute]: EligibilityEndpoint | null 
     sourceSpelling: "evm-hex",
     destinationSpelling: "goldcoin-base58check",
   },
-  // Awaiting the backend's route-agnostic endpoint. Never a fallback to
-  // one of the two above: those answer about GOLDCOIN payout windows and
-  // would be the wrong question on a route that pays out elsewhere.
-  GlcToSol: null,
-  GlcToRhn: null,
-  SolToRhn: null,
-  RhnToSol: null,
+  // The route-generic endpoint, for the four routes no `/recipients/*`
+  // path answers about. Never a fallback to one of the two above: those
+  // answer about GOLDCOIN payout windows and would be the wrong question
+  // on a route that pays out elsewhere.
+  GlcToSol: {
+    route: "GlcToSol",
+    path: "/routes/GlcToSol/eligibility",
+    sourceSpelling: "goldcoin-base58check",
+    destinationSpelling: "solana-base58",
+  },
+  GlcToRhn: {
+    route: "GlcToRhn",
+    path: "/routes/GlcToRhn/eligibility",
+    sourceSpelling: "goldcoin-base58check",
+    destinationSpelling: "evm-hex",
+  },
+  SolToRhn: {
+    route: "SolToRhn",
+    path: "/routes/SolToRhn/eligibility",
+    sourceSpelling: "solana-base58",
+    destinationSpelling: "evm-hex",
+  },
+  RhnToSol: {
+    route: "RhnToSol",
+    path: "/routes/RhnToSol/eligibility",
+    sourceSpelling: "evm-hex",
+    destinationSpelling: "solana-base58",
+  },
 };
 
-export function eligibilityEndpointFor(
-  route: EligibilityRoute,
-): EligibilityEndpoint | null {
+export function eligibilityEndpointFor(route: EligibilityRoute): EligibilityEndpoint {
   return ENDPOINTS[route];
 }
 
-/** Whether the backend publishes an authoritative answer for this route yet. */
+/**
+ * Whether an endpoint EXISTS for this route in the backend's API.
+ *
+ * Total over `EligibilityRoute` since the route-generic endpoint landed,
+ * which is why this reads from the type rather than probing the table:
+ * the compiler, not a runtime lookup, is what guarantees a seventh route
+ * cannot be added without an entry.
+ *
+ * This is a statement about the API, NOT about a deployment. An older
+ * deployment can still 404 the path, which is a runtime fact discovered
+ * by asking — `EligibilityEndpointUnpublishedError` — and it refuses.
+ * Nothing gates on this function; see {@link routeEligibilityVerdict}.
+ */
 export function hasAuthoritativeEligibility(route: EligibilityRoute): boolean {
-  return ENDPOINTS[route] !== null;
+  return isEligibilityRoute(route);
 }
 
-/** The routes still waiting on the backend, for docs and diagnostics. */
+/**
+ * Whether this route's SOURCE wallet can be known in the browser before
+ * the transfer exists — the one structural fact that decides whether an
+ * unevaluated source leg is a refusal or a non-question.
+ *
+ * # Why this is a route TOPOLOGY fact and not a permission
+ *
+ * `GlcToSol` and `GlcToRhn` are funded by sending GLC to a per-request
+ * address the backend issues (`funding: "goldcoin-deposit-address"`).
+ * There is no connected Goldcoin wallet, no signature, and no way for the
+ * page to learn which address the user will send from until the deposit
+ * is observed on-chain. Asking the backend about a source wallet on those
+ * routes is not a question that has an answer, and FABRICATING one to
+ * make the gate satisfiable would be strictly worse than not asking: it
+ * would produce an authoritative-looking clearance about an address no
+ * deposit will ever come from.
+ *
+ * So the pre-submit check asks about the destination only, and the source
+ * side is not a gate this UI can hold. The rule itself is untouched: the
+ * backend enforces the real Goldcoin source window at admission, against
+ * the wallets the deposit was REALLY funded from, and parks a violation
+ * in `ManualReview`. Nothing here can weaken that, and nothing here
+ * pretends to be it.
+ *
+ * # Read from the direction table, not restated
+ *
+ * The funding kind lives in `./direction` and is the same value the form
+ * uses to decide whether a source wallet exists to connect at all. Deriving
+ * it keeps one source of truth: a route whose funding changes cannot end
+ * up exempt here and gated there.
+ */
+export function sourceWalletKnownInBrowser(route: EligibilityRoute): boolean {
+  return directions[route].funding !== "goldcoin-deposit-address";
+}
+
+/** The endpoint coverage, for docs and diagnostics. */
 export const ELIGIBILITY_BACKEND_DEPENDENCY = {
-  /** Routes with a landed, authoritative endpoint. */
-  covered: ELIGIBILITY_ROUTES.filter((route) => ENDPOINTS[route] !== null),
-  /** Routes whose endpoint has not landed; submission is blocked on them. */
-  pending: ELIGIBILITY_ROUTES.filter((route) => ENDPOINTS[route] === null),
-  /** The shape this UI expects the route-agnostic endpoint to take. */
-  expected:
-    "GET /eligibility?route=<Route>&source=<address>&destination=<address> " +
-    "-> { route, source, destination, eligible, as_of, window_seconds, " +
-    "source: { eligible, retry_at, remaining_seconds, reason }, " +
-    "destination: { eligible, retry_at, remaining_seconds, reason } }",
+  /** Routes with a landed, authoritative endpoint — all six. */
+  covered: ELIGIBILITY_ROUTES.filter(hasAuthoritativeEligibility),
+  /**
+   * Routes whose endpoint has not landed. Empty: `ENDPOINTS` is total
+   * over the six. Kept so the shape of this record does not change if the
+   * bridge ever adds a route ahead of its endpoint.
+   */
+  pending: ELIGIBILITY_ROUTES.filter((route) => !hasAuthoritativeEligibility(route)),
+  /**
+   * Routes whose source wallet the browser cannot know pre-submit, so the
+   * pre-submit check sends `?destination=` only and the source window is
+   * enforced backend-side at admission.
+   */
+  sourceEnforcedAtAdmission: ELIGIBILITY_ROUTES.filter(
+    (route) => !sourceWalletKnownInBrowser(route),
+  ),
+  /** The route-generic shape, as served. */
+  generic:
+    "GET /routes/{route}/eligibility?source=<address>&destination=<address> " +
+    "-> { route, source: leg|null, destination: leg|null, eligible, " +
+    "blocked_reason, blocked_reasons, retry_after, retry_after_seconds, " +
+    "window_seconds, as_of }, leg = { address, eligible, reason, " +
+    "retry_after, retry_after_seconds }",
 } as const;
 
 /**
@@ -218,18 +300,22 @@ export interface WalletEligibility {
   /** The backend's own machine-readable reason, verbatim; `null` when clear. */
   readonly reason: string | null;
   /**
-   * Whether this side's window governs this route at all — **said by the
-   * backend, never decided here.**
+   * Whether this side's window is a gate the BROWSER can hold before the
+   * transfer is submitted.
    *
-   * `false` is not an exemption this UI grants itself. It is the backend
-   * reporting that a side is outside the rule, which one route family
-   * genuinely requires: `GlcToSol`/`GlcToRhn` are funded by sending GLC
-   * to an address the backend issues, so no source wallet exists in the
-   * browser and the source side can only be enforced at fold time. The
-   * alternative would be a gate no answer could ever satisfy.
+   * `false` is not an exemption from the rule and not a permission this
+   * UI grants a wallet. It marks the one case where there is no wallet to
+   * ask about: `GlcToSol`/`GlcToRhn` are funded by sending GLC to an
+   * address the backend issues, so no source wallet exists in the browser
+   * and none can be learned until the deposit is observed on-chain. The
+   * backend still enforces that window at admission, against the wallet
+   * the deposit was really funded from. See
+   * {@link sourceWalletKnownInBrowser}, which is the only thing that
+   * produces a `false` here, and only for the source side.
    *
-   * Defaults to `true` everywhere it is not explicitly published, so a
-   * backend that omits it gets the strict reading.
+   * `true` everywhere else, including every side either normaliser is
+   * unsure about — an unevaluated side is `applicable` and therefore
+   * fails the verdict closed.
    */
   readonly applicable: boolean;
 }
@@ -399,47 +485,74 @@ export function normalizeRecipientEligibility(
 }
 
 /**
- * Maps a route-agnostic `RouteEligibility` response onto the same
+ * Maps a `RouteWalletEligibilityView` response — the route-generic
+ * `GET /routes/{route}/eligibility` — onto the same
  * {@link RouteEligibility} shape the per-route endpoints produce.
  *
  * Two normalisers, one output type — which is the whole reason the form
  * reads a normalised verdict rather than a response. A caller cannot tell
  * which endpoint answered, and nothing downstream branches on it.
  *
- * `applicable` defaults to `true` when the field is absent: an omitted
- * flag must never exempt a side. `evaluated` is `true` for any side the
- * response carried, because this endpoint takes both addresses and
- * answers about both — unlike the per-route pair, whose `?wallet=` is
- * optional and whose omission is the "not evaluated" case.
+ * # A `null` leg, and the single exception
+ *
+ * The backend returns a leg object per side it evaluated and `null` for a
+ * side it was not asked about. `null` is NOT a clearance, so it maps to
+ * {@link NOT_EVALUATED}, which fails the whole verdict closed.
+ *
+ * The one exception is the source leg of a route whose source wallet
+ * cannot exist in the browser — see {@link sourceWalletKnownInBrowser}
+ * for why that is a structural fact about how the route is funded rather
+ * than an exemption granted here, and why the rule is still enforced,
+ * backend-side, against the wallet the deposit really came from. On those
+ * routes a `null` source is {@link NOT_APPLICABLE}: not a question this
+ * check can ask, and so not a gate it can hold.
+ *
+ * That exception is deliberately narrow. It applies only to the SOURCE
+ * side, only on routes the direction table marks
+ * `goldcoin-deposit-address`, and only when the backend confirms it
+ * evaluated nothing there. A `null` DESTINATION leg, or a `null` source
+ * on any other route, is still a refusal.
  */
-export function normalizeRouteEligibility(
-  dto: RouteEligibilityDto,
+export function normalizeRouteWalletEligibility(
+  dto: RouteWalletEligibilityDto,
   route: EligibilityRoute,
 ): RouteEligibility {
-  const side = (payload: RouteEligibilitySideDto): WalletEligibility => {
-    const applicable = payload.applicable ?? true;
-    if (!applicable) return NOT_APPLICABLE;
+  const leg = (
+    payload: WalletLegDto | null,
+    side: EligibilitySide,
+  ): WalletEligibility => {
+    if (payload === null) {
+      if (side === "source" && !sourceWalletKnownInBrowser(route)) {
+        return NOT_APPLICABLE;
+      }
+      return NOT_EVALUATED;
+    }
     if (payload.eligible) return CLEAR;
     return {
       evaluated: true,
       eligible: false,
-      retryAt: isUsableRetryTimestamp(payload.retry_at) ? payload.retry_at : null,
-      remainingSeconds:
-        payload.remaining_seconds === null || payload.remaining_seconds === undefined
-          ? null
-          : payload.remaining_seconds,
+      retryAt: isUsableRetryTimestamp(payload.retry_after) ? payload.retry_after : null,
+      remainingSeconds: payload.retry_after_seconds ?? null,
       reason: payload.reason ?? null,
       applicable: true,
     };
   };
 
-  const sourceSide = side(dto.source_eligibility);
-  const destinationSide = side(dto.destination_eligibility);
+  const sourceSide = leg(dto.source, "source");
+  const destinationSide = leg(dto.destination, "destination");
 
   return {
     route,
-    source: dto.source ?? null,
-    destination: dto.destination,
+    // The address the backend CANONICALIZED and echoed, not the one that
+    // was sent — `eligibilityMatchesInputs` compares the two by address
+    // form, so an EVM address that comes back lowercased still matches
+    // the checksummed spelling the form holds.
+    source: dto.source?.address ?? null,
+    // `""` when the backend evaluated no destination leg. That can never
+    // match the non-empty destination the form holds, so it resolves to
+    // `answer-stale` — a refusal, which is the right outcome for an
+    // answer that skipped the one side this check exists to establish.
+    destination: dto.destination?.address ?? "",
     // The stricter of "every applicable side is clear" and the backend's
     // own flag, exactly as the per-route normaliser does it.
     eligible:
@@ -455,13 +568,41 @@ export function normalizeRouteEligibility(
 }
 
 /**
+ * Whether two spellings name the same wallet.
+ *
+ * # Case matters on two of the three chains, and not on the third
+ *
+ * A `0x` prefix means an EVM address and nothing else: `0` is not in the
+ * base58 alphabet, so no Solana pubkey and no Goldcoin Base58Check
+ * address can begin with it (the backend dispatches on exactly this
+ * property, `parse_transfer_address_filter` in service/src/api.rs). EVM
+ * hex carries identity in its 20 bytes and only a checksum in its case,
+ * and the backend canonicalizes to lowercase while a browser wallet
+ * reports the EIP-55 mixed-case spelling of the same bytes — so those are
+ * compared case-INSENSITIVELY or a matching pair reads as a mismatch.
+ *
+ * Base58 and Base58Check encode information IN the case: two strings
+ * differing only in case are two different pubkeys, not two spellings of
+ * one. Those are compared exactly. Comparing them loosely would let an
+ * answer about one wallet be accepted as an answer about another.
+ */
+function sameWallet(a: string, b: string): boolean {
+  if (a.startsWith("0x") && b.startsWith("0x")) {
+    return a.toLowerCase() === b.toLowerCase();
+  }
+  return a === b;
+}
+
+/**
  * Whether a held answer is about the inputs being asked about right now.
  *
- * Wallet comparison is case-insensitive: the backend returns `0x`-prefixed
- * lowercase hex while a browser wallet reports the EIP-55 mixed-case
- * spelling of the same 20 bytes. Goldcoin and Solana addresses are
- * case-SENSITIVE (Base58Check and base58 both encode information in case),
- * so the destination is compared exactly.
+ * Both sides are compared through {@link sameWallet}, which is case
+ * sensitivity decided by ADDRESS FORM rather than by side. The destination
+ * used to be compared as raw text on the grounds that it was always a
+ * Goldcoin address; the route-generic endpoint answers about EVM and
+ * Solana destinations too, and canonicalizes an EVM one to lowercase, so
+ * a raw comparison rejected the backend's own echo of the address the
+ * user had just typed.
  */
 export function eligibilityMatchesInputs(
   answer: RouteEligibility,
@@ -470,13 +611,13 @@ export function eligibilityMatchesInputs(
   destination: string,
 ): boolean {
   if (answer.route !== route) return false;
-  if (answer.destination !== destination) return false;
+  if (!sameWallet(answer.destination, destination)) return false;
   // `== null` throughout: a malformed answer with the field absent is
   // indistinguishable from one that nulled it, and both must fail closed
   // rather than throw on a property read.
   if (source === null) return answer.source == null;
   if (answer.source == null) return false;
-  return answer.source.toLowerCase() === source.toLowerCase();
+  return sameWallet(answer.source, source);
 }
 
 /** Why submission is not permitted, or that it is. */
@@ -659,6 +800,17 @@ export const ELIGIBILITY_CHECKING_LABEL = "Checking…";
 export const ELIGIBILITY_ELIGIBLE_LABEL = "Eligible";
 export const ELIGIBILITY_BLOCKED_LABEL = "Used in last 24h";
 export const ELIGIBILITY_UNAVAILABLE_LABEL = "Unavailable";
+
+/**
+ * The row label for a side with no wallet the browser can ask about —
+ * the source of a Goldcoin-funded route.
+ *
+ * It names WHEN the check happens, not that it was waived. The 24-hour
+ * rule still governs that side; it is checked against the wallet the
+ * deposit actually arrives from, which is the first moment that wallet
+ * exists. Saying "Eligible" would claim a verdict nobody has given.
+ */
+export const ELIGIBILITY_NOT_APPLICABLE_LABEL = "Checked when your deposit arrives";
 
 /** The row labels for each side. */
 export const ELIGIBILITY_SIDE_LABEL: { readonly [K in EligibilitySide]: string } = {

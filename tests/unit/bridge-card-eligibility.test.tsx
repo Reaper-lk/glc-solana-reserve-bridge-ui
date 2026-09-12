@@ -10,8 +10,10 @@ import {
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { encodeBase58Check } from "@/lib/bridge/glc-address";
 import {
+  EligibilityEndpointUnpublishedError,
   ELIGIBILITY_BLOCKED_BOTH_TITLE,
   ELIGIBILITY_BLOCKED_TITLE,
+  ELIGIBILITY_NOT_APPLICABLE_LABEL,
   ELIGIBILITY_UNAVAILABLE_TITLE,
 } from "@/lib/bridge/eligibility";
 import { ROBINHOOD_V2_BRIDGE_ADDRESS } from "@/lib/evm/robinhood-target";
@@ -60,6 +62,8 @@ const createTransfer = vi.fn();
 const listTransfers = vi.fn();
 const getSolToGlcRecipientEligibility = vi.fn();
 const getRhnToGlcRecipientEligibility = vi.fn();
+/** `GET /routes/{route}/eligibility`, for the four routes it answers. */
+const getRouteGenericEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
   // The real error factories: BridgeForm imports them by name, and a
@@ -76,14 +80,16 @@ vi.mock("@/lib/api", async () => ({
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
     // The one method `fetchRouteEligibility` calls. Built from the
-    // per-route mocks above by the same rule `HttpBridgeClient` uses, so
-    // a route with no landed endpoint rejects here exactly as it would
-    // against the real backend.
+    // per-endpoint mocks above by the same rule `HttpBridgeClient` uses,
+    // so each route reaches the endpoint it really would against the
+    // deployed backend.
     getRouteEligibility: routeEligibilityFrom({
       SolToGlc: (address: string, wallet: string | null) =>
         getSolToGlcRecipientEligibility(address, wallet),
       RhnToGlc: (address: string, wallet: string | null) =>
         getRhnToGlcRecipientEligibility(address, wallet),
+      generic: (route: string, source: string | null, destination: string) =>
+        getRouteGenericEligibility(route, source, destination),
     }),
     getRhnToGlcRecipientEligibility: (...args: unknown[]) =>
       getRhnToGlcRecipientEligibility(...args),
@@ -350,6 +356,12 @@ beforeEach(() => {
     next_cursor: null,
     as_of: 1_700_000_000,
   });
+  // Default: a deployment that does not serve the route-generic
+  // endpoint, so every test starts from the refusing state and a test
+  // that wants an answer has to supply one.
+  getRouteGenericEligibility.mockImplementation((route: string) => {
+    throw new EligibilityEndpointUnpublishedError(route);
+  });
 });
 
 /* ==================================================================== */
@@ -604,19 +616,19 @@ describe("BridgeCard eligibility — RhnToGlc, keyed by the EVM wallet", () => {
   });
 });
 
-describe("BridgeCard eligibility — the four routes awaiting the backend", () => {
+describe("BridgeCard eligibility — a deployment that does not answer at all", () => {
   /**
    * `GlcToSol`, `GlcToRhn`, `SolToRhn` and `RhnToSol`.
    *
    * Each is fully open on `/chains` here, the amount and destination are
    * valid, and the wallet is connected — so eligibility is the only thing
-   * left, and it cannot be established because the backend publishes no
-   * endpoint for these routes. Submission is refused.
+   * left, and the route-generic endpoint 404s (the harness default). No
+   * authoritative answer exists, so submission is refused on all four.
    *
-   * When the route-agnostic endpoint lands, these four expectations
-   * invert. That is the intended shape of the change: one table entry per
-   * route in `@/lib/bridge/eligibility`, and these tests updated to
-   * assert the cleared path.
+   * This is the fail-closed path, not a backend gap: the endpoint IS
+   * served in production, and the describe below asserts the cleared
+   * path against it. Both matter — an endpoint that stops answering must
+   * refuse rather than fall open.
    */
   const cases = [
     {
@@ -650,7 +662,7 @@ describe("BridgeCard eligibility — the four routes awaiting the backend", () =
   ] as const;
 
   for (const testCase of cases) {
-    it(`refuses ${testCase.route}: no authoritative verdict exists yet`, async () => {
+    it(`refuses ${testCase.route} when the check cannot be established`, async () => {
       const user = userEvent.setup({ delay: null });
       renderWithQueryClient(<BridgeCard />);
       await fillForm(
@@ -682,6 +694,224 @@ describe("BridgeCard eligibility — the four routes awaiting the backend", () =
     await fillForm(user, /Solana/, /Robinhood/, /Robinhood/i, EVM_WALLET_B);
 
     await waitFor(() => expect(primaryCta()).toBeDisabled());
+    expect(getSolToGlcRecipientEligibility).not.toHaveBeenCalled();
+    expect(getRhnToGlcRecipientEligibility).not.toHaveBeenCalled();
+  });
+});
+
+describe("BridgeCard eligibility — the route-generic endpoint", () => {
+  /**
+   * `GET /routes/{route}/eligibility`, which answers for all six routes
+   * and is the only path for the four with no `/recipients/*` endpoint.
+   *
+   * # The Goldcoin-funded routes ask about the destination ONLY
+   *
+   * `GlcToSol` and `GlcToRhn` are funded by sending GLC to an address the
+   * backend issues. No source wallet exists in the browser and none can
+   * be learned until the deposit is observed on-chain, so the check sends
+   * `?destination=` alone and the backend answers `source: null`. That is
+   * a side with no question — NOT a failed check, and NOT a wallet this
+   * UI may invent to make the gate satisfiable. The source window is
+   * still enforced, by the backend, against the wallet the deposit really
+   * arrives from.
+   *
+   * These tests were the production defect: the client asked an endpoint
+   * that never shipped, every request 404'd, and both wallet rows read
+   * "Unavailable" under "Wallet eligibility check is temporarily
+   * unavailable" on a route `/chains` reported as Available.
+   */
+
+  /** One leg of the answer, as the backend serves it. */
+  function leg(address: string, overrides: Record<string, unknown> = {}) {
+    return {
+      address,
+      eligible: true,
+      reason: null,
+      retry_after: null,
+      retry_after_seconds: null,
+      ...overrides,
+    };
+  }
+
+  function genericBody(
+    route: string,
+    source: ReturnType<typeof leg> | null,
+    destination: ReturnType<typeof leg> | null,
+    eligible = true,
+  ) {
+    return {
+      route,
+      source,
+      destination,
+      eligible,
+      blocked_reason: null,
+      blocked_reasons: [],
+      retry_after: null,
+      retry_after_seconds: null,
+      window_seconds: 86_400,
+      as_of: 1_700_000_000,
+    };
+  }
+
+  it("clears GlcToRhn from a DESTINATION-ONLY check", async () => {
+    getRouteGenericEligibility.mockImplementation(
+      async (route: string, _source: string | null, destination: string) =>
+        genericBody(route, null, leg(destination.toLowerCase())),
+    );
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillForm(user, /Goldcoin/, /Robinhood/, /Robinhood/i, EVM_WALLET_B);
+
+    await waitFor(() => expect(primaryCta()).toBeEnabled());
+    // No source wallet was put on the wire. This is the assertion that
+    // fabricating one would break.
+    expect(getRouteGenericEligibility).toHaveBeenCalledWith(
+      "GlcToRhn",
+      null,
+      EVM_WALLET_B,
+    );
+    expect(screen.queryByText(ELIGIBILITY_UNAVAILABLE_TITLE)).toBeNull();
+    // And the source row says WHEN that side is checked, rather than
+    // claiming a verdict or reporting a fault.
+    expect(
+      (await screen.findAllByText(ELIGIBILITY_NOT_APPLICABLE_LABEL)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("clears GlcToSol from a destination-only check, the same way", async () => {
+    getRouteGenericEligibility.mockImplementation(
+      async (route: string, _source: string | null, destination: string) =>
+        genericBody(route, null, leg(destination)),
+    );
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillForm(user, /Goldcoin/, /Solana/, "Solana recipient address", SOL_RECIPIENT);
+
+    await waitFor(() => expect(primaryCta()).toBeEnabled());
+    expect(getRouteGenericEligibility).toHaveBeenCalledWith(
+      "GlcToSol",
+      null,
+      SOL_RECIPIENT,
+    );
+  });
+
+  it("refuses GlcToRhn when the DESTINATION is inside its window", async () => {
+    // The side this check exists to establish. No exemption reaches it.
+    getRouteGenericEligibility.mockImplementation(
+      async (route: string, _source: string | null, destination: string) =>
+        genericBody(
+          route,
+          null,
+          leg(destination.toLowerCase(), {
+            eligible: false,
+            reason: "wallet_destination_24h_limit",
+            retry_after: RETRY_AT,
+            retry_after_seconds: 40_000,
+          }),
+          false,
+        ),
+    );
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillForm(user, /Goldcoin/, /Robinhood/, /Robinhood/i, EVM_WALLET_B);
+
+    expect(
+      (await screen.findAllByText(ELIGIBILITY_BLOCKED_TITLE.destination)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() => expect(primaryCta()).toBeDisabled());
+    await user.click(primaryCta());
+    expect(createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("refuses GlcToRhn when the backend answers with NO destination leg", async () => {
+    // A malformed answer is not an answer. The one side that had to be
+    // established was not, so the check fails closed rather than reading
+    // the untouched `eligible: true` as a clearance.
+    getRouteGenericEligibility.mockImplementation(async (route: string) =>
+      genericBody(route, null, null),
+    );
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillForm(user, /Goldcoin/, /Robinhood/, /Robinhood/i, EVM_WALLET_B);
+
+    expect(
+      (await screen.findAllByText(ELIGIBILITY_UNAVAILABLE_TITLE)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() => expect(primaryCta()).toBeDisabled());
+    await user.click(primaryCta());
+    expect(createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("refuses GlcToSol when the request itself fails", async () => {
+    getRouteGenericEligibility.mockImplementation(() => {
+      throw new Error("network down");
+    });
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillForm(user, /Goldcoin/, /Solana/, "Solana recipient address", SOL_RECIPIENT);
+
+    expect(
+      (await screen.findAllByText(ELIGIBILITY_UNAVAILABLE_TITLE)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() => expect(primaryCta()).toBeDisabled());
+    expect(createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("clears RhnToSol with BOTH legs, accepting the backend's lowercase EVM echo", async () => {
+    // A route whose source wallet the browser does know: both legs are
+    // sent, both are evaluated, and the source side is a real gate.
+    getRouteGenericEligibility.mockImplementation(
+      async (route: string, source: string | null, destination: string) =>
+        genericBody(route, leg((source ?? "").toLowerCase()), leg(destination)),
+    );
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillForm(
+      user,
+      /Robinhood/,
+      /Solana/,
+      "Solana recipient address",
+      SOL_RECIPIENT,
+    );
+
+    await waitFor(() => expect(primaryCta()).toBeEnabled());
+    expect(getRouteGenericEligibility).toHaveBeenCalledWith(
+      "RhnToSol",
+      EVM_WALLET_A,
+      SOL_RECIPIENT,
+    );
+  });
+
+  it("refuses SolToRhn when the backend evaluates no SOURCE leg", async () => {
+    // The exemption is for a wallet that cannot exist, never for one the
+    // check simply did not ask about. `SolToRhn` has a connected Solana
+    // wallet, so an unevaluated source is half an answer.
+    getRouteGenericEligibility.mockImplementation(
+      async (route: string, _source: string | null, destination: string) =>
+        genericBody(route, null, leg(destination.toLowerCase())),
+    );
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillForm(user, /Solana/, /Robinhood/, /Robinhood/i, EVM_WALLET_B);
+
+    expect(
+      (await screen.findAllByText(ELIGIBILITY_UNAVAILABLE_TITLE)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() => expect(primaryCta()).toBeDisabled());
+  });
+
+  it("never asks a Goldcoin-payout endpoint about a Goldcoin-SOURCED route", async () => {
+    // `/recipients/*` answers about Goldcoin PAYOUT windows. Asking one
+    // about `GlcToRhn` would be the wrong question, not a weaker answer.
+    getRouteGenericEligibility.mockImplementation(
+      async (route: string, _source: string | null, destination: string) =>
+        genericBody(route, null, leg(destination.toLowerCase())),
+    );
+    const user = userEvent.setup({ delay: null });
+    renderWithQueryClient(<BridgeCard />);
+    await fillForm(user, /Goldcoin/, /Robinhood/, /Robinhood/i, EVM_WALLET_B);
+
+    await waitFor(() => expect(primaryCta()).toBeEnabled());
     expect(getSolToGlcRecipientEligibility).not.toHaveBeenCalled();
     expect(getRhnToGlcRecipientEligibility).not.toHaveBeenCalled();
   });
