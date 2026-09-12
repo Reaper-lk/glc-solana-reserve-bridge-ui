@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import {
   primaryCta,
   renderWithQueryClient,
+  routeEligibilityFrom,
   selectNetwork,
   waitForRouteVerdict,
 } from "./test-utils";
@@ -54,6 +55,16 @@ vi.mock("@/lib/api", async () => ({
     listTransfers: (...args: unknown[]) => listTransfers(...args),
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
+    // The one method `fetchRouteEligibility` calls. Built from the
+    // per-route mocks above by the same rule `HttpBridgeClient` uses, so
+    // a route with no landed endpoint rejects here exactly as it would
+    // against the real backend.
+    getRouteEligibility: routeEligibilityFrom({
+      SolToGlc: (address: string, wallet: string | null) =>
+        getSolToGlcRecipientEligibility(address, wallet),
+      RhnToGlc: (address: string, wallet: string | null) =>
+        getRhnToGlcRecipientEligibility(address, wallet),
+    }),
     getRhnToGlcRecipientEligibility: (...args: unknown[]) =>
       getRhnToGlcRecipientEligibility(...args),
   },

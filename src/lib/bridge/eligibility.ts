@@ -1,5 +1,9 @@
 import type { Route } from "@/lib/api/schemas/common";
-import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
+import type {
+  RecipientEligibilityDto,
+  RouteEligibilityDto,
+  RouteEligibilitySideDto,
+} from "@/lib/api/schemas/eligibility";
 import { isUsableRetryTimestamp } from "./robinhood-predeposit";
 
 /**
@@ -41,6 +45,38 @@ import { isUsableRetryTimestamp } from "./robinhood-predeposit";
  * this file that produces an eligible verdict from anything other than a
  * backend response that said so about these exact inputs.
  */
+
+/**
+ * Raised when the deployment being talked to serves no eligibility
+ * endpoint for a route.
+ *
+ * A distinct type rather than a generic failure because the two mean
+ * different things to an operator: a transport error is transient, and
+ * this is an endpoint that is not there. Both block submission
+ * identically — this only selects which sentence is shown.
+ *
+ * Lives here, in the pure model, rather than beside the client that
+ * raises it: `HttpBridgeClient` needs it, and importing it from the
+ * request module (which imports the API barrel, which constructs the HTTP
+ * client) would close a runtime import cycle.
+ */
+export class EligibilityEndpointUnpublishedError extends Error {
+  readonly route: string;
+
+  constructor(route: string) {
+    super(`this deployment serves no rolling-24h eligibility endpoint for ${route}`);
+    this.name = "EligibilityEndpointUnpublishedError";
+    this.route = route;
+  }
+}
+
+/** Whether a thrown value is that error, across module realms. */
+export function isEligibilityEndpointUnpublished(error: unknown): boolean {
+  return (
+    error instanceof EligibilityEndpointUnpublishedError ||
+    (error instanceof Error && error.name === "EligibilityEndpointUnpublishedError")
+  );
+}
 
 /** Every route the bridge runs. All six are gated. */
 export const ELIGIBILITY_ROUTES = [
@@ -181,6 +217,21 @@ export interface WalletEligibility {
   readonly remainingSeconds: number | null;
   /** The backend's own machine-readable reason, verbatim; `null` when clear. */
   readonly reason: string | null;
+  /**
+   * Whether this side's window governs this route at all — **said by the
+   * backend, never decided here.**
+   *
+   * `false` is not an exemption this UI grants itself. It is the backend
+   * reporting that a side is outside the rule, which one route family
+   * genuinely requires: `GlcToSol`/`GlcToRhn` are funded by sending GLC
+   * to an address the backend issues, so no source wallet exists in the
+   * browser and the source side can only be enforced at fold time. The
+   * alternative would be a gate no answer could ever satisfy.
+   *
+   * Defaults to `true` everywhere it is not explicitly published, so a
+   * backend that omits it gets the strict reading.
+   */
+  readonly applicable: boolean;
 }
 
 const NOT_EVALUATED: WalletEligibility = {
@@ -189,6 +240,7 @@ const NOT_EVALUATED: WalletEligibility = {
   retryAt: null,
   remainingSeconds: null,
   reason: null,
+  applicable: true,
 };
 
 const CLEAR: WalletEligibility = {
@@ -197,6 +249,23 @@ const CLEAR: WalletEligibility = {
   retryAt: null,
   remainingSeconds: null,
   reason: null,
+  applicable: true,
+};
+
+/**
+ * A side the backend reported as outside this route's rule.
+ *
+ * Distinct from {@link CLEAR}: that is "checked and fine", this is "not
+ * this route's question". Both permit submission; only one of them is a
+ * statement about a wallet.
+ */
+const NOT_APPLICABLE: WalletEligibility = {
+  evaluated: true,
+  eligible: true,
+  retryAt: null,
+  remainingSeconds: null,
+  reason: null,
+  applicable: false,
 };
 
 /**
@@ -287,7 +356,16 @@ export function normalizeRecipientEligibility(
         : aggregateIsThisSide
           ? (dto.retry_after_seconds ?? null)
           : null;
-    return { evaluated: true, eligible: false, retryAt, remainingSeconds, reason };
+    return {
+      evaluated: true,
+      eligible: false,
+      retryAt,
+      remainingSeconds,
+      reason,
+      // The per-route endpoints govern both sides unconditionally; they
+      // have no notion of a side being out of scope.
+      applicable: true,
+    };
   };
 
   const sourceSide = perSide(
@@ -317,6 +395,62 @@ export function normalizeRecipientEligibility(
     windowSeconds: dto.window_seconds,
     // `RecipientEligibility` publishes no `as_of`. Absent, never invented.
     asOf: null,
+  };
+}
+
+/**
+ * Maps a route-agnostic `RouteEligibility` response onto the same
+ * {@link RouteEligibility} shape the per-route endpoints produce.
+ *
+ * Two normalisers, one output type — which is the whole reason the form
+ * reads a normalised verdict rather than a response. A caller cannot tell
+ * which endpoint answered, and nothing downstream branches on it.
+ *
+ * `applicable` defaults to `true` when the field is absent: an omitted
+ * flag must never exempt a side. `evaluated` is `true` for any side the
+ * response carried, because this endpoint takes both addresses and
+ * answers about both — unlike the per-route pair, whose `?wallet=` is
+ * optional and whose omission is the "not evaluated" case.
+ */
+export function normalizeRouteEligibility(
+  dto: RouteEligibilityDto,
+  route: EligibilityRoute,
+): RouteEligibility {
+  const side = (payload: RouteEligibilitySideDto): WalletEligibility => {
+    const applicable = payload.applicable ?? true;
+    if (!applicable) return NOT_APPLICABLE;
+    if (payload.eligible) return CLEAR;
+    return {
+      evaluated: true,
+      eligible: false,
+      retryAt: isUsableRetryTimestamp(payload.retry_at) ? payload.retry_at : null,
+      remainingSeconds:
+        payload.remaining_seconds === null || payload.remaining_seconds === undefined
+          ? null
+          : payload.remaining_seconds,
+      reason: payload.reason ?? null,
+      applicable: true,
+    };
+  };
+
+  const sourceSide = side(dto.source_eligibility);
+  const destinationSide = side(dto.destination_eligibility);
+
+  return {
+    route,
+    source: dto.source ?? null,
+    destination: dto.destination,
+    // The stricter of "every applicable side is clear" and the backend's
+    // own flag, exactly as the per-route normaliser does it.
+    eligible:
+      dto.eligible &&
+      (!sourceSide.applicable || (sourceSide.evaluated && sourceSide.eligible)) &&
+      (!destinationSide.applicable ||
+        (destinationSide.evaluated && destinationSide.eligible)),
+    sourceSide,
+    destinationSide,
+    windowSeconds: dto.window_seconds,
+    asOf: dto.as_of ?? null,
   };
 }
 
@@ -389,6 +523,17 @@ export interface RouteEligibilityInput {
   readonly pending: boolean;
   /** The last answer received, or `null` for failed/absent. */
   readonly answer: RouteEligibility | null;
+  /**
+   * The request failed because the deployment serves no eligibility
+   * endpoint for this route (`EligibilityEndpointUnpublishedError`).
+   *
+   * Purely a message selector: it chooses `endpoint-not-published` over
+   * `request-failed`, and both are the same refusal. It is read from the
+   * error the CLIENT raised rather than from any table here, because what
+   * gates a transfer is whether an authoritative answer actually arrived
+   * — never a compile-time claim about what the backend ought to serve.
+   */
+  readonly endpointUnpublished?: boolean;
 }
 
 /**
@@ -396,7 +541,20 @@ export interface RouteEligibilityInput {
  * button AND by the submit path to refuse a click, so the two can never
  * disagree about what "eligible" means.
  *
- * Order matters. Structural refusals come first (no endpoint, no inputs)
+ * # The only way through is a real answer
+ *
+ * There is deliberately no branch that consults {@link ENDPOINTS} to
+ * decide whether a route MAY pass. That table records what the backend
+ * publishes today and is worth keeping accurate, but a gate resting on it
+ * would be trusting a compile-time claim: it would refuse a route the
+ * backend has since started answering for, and — the direction that
+ * matters — it could be loosened by editing a constant rather than by
+ * obtaining a verdict. So the question this function asks is only ever
+ * "did an authoritative answer arrive, about these exact inputs, clearing
+ * every side the backend says applies". A deployment whose endpoint 404s
+ * produces no answer and is refused; nothing else changes that.
+ *
+ * Order matters. Structural refusals come first — no inputs to ask about —
  * because they are facts about the question rather than answers to it, and
  * reporting them as "checking…" would promise a verdict that is not
  * coming.
@@ -404,40 +562,50 @@ export interface RouteEligibilityInput {
 export function routeEligibilityVerdict(
   input: RouteEligibilityInput,
 ): EligibilityVerdict {
-  if (!hasAuthoritativeEligibility(input.route)) {
-    return { kind: "unavailable", detail: "endpoint-not-published" };
-  }
   if (input.destination.trim() === "") {
     return { kind: "unavailable", detail: "destination-unknown" };
-  }
-  // Both sides are gated, so a route with no connected source wallet
-  // cannot be cleared — there is nothing to ask about. This is a refusal
-  // and not a skipped check.
-  if (input.source === null) {
-    return { kind: "unavailable", detail: "source-unknown" };
   }
   if (input.answer === null) {
     // Pending is distinguished from failed only so the UI can say
     // "checking" rather than "unavailable". Both block submission.
-    return input.pending
-      ? { kind: "checking" }
-      : { kind: "unavailable", detail: "request-failed" };
+    if (input.pending) return { kind: "checking" };
+    return {
+      kind: "unavailable",
+      detail: input.endpointUnpublished ? "endpoint-not-published" : "request-failed",
+    };
   }
   const answer = input.answer;
   if (!eligibilityMatchesInputs(answer, input.route, input.source, input.destination)) {
     return { kind: "unavailable", detail: "answer-stale" };
   }
-  if (!answer.sourceSide.evaluated || !answer.destinationSide.evaluated) {
+  // A side the BACKEND reported as outside this route's rule needs no
+  // verdict. A side it did not exempt needs one, and an unevaluated one
+  // is not it — see `WalletEligibility.applicable`, and note that an
+  // absent flag reads as applicable so a silence cannot exempt anything.
+  if (
+    (answer.sourceSide.applicable && !answer.sourceSide.evaluated) ||
+    (answer.destinationSide.applicable && !answer.destinationSide.evaluated)
+  ) {
     return { kind: "unavailable", detail: "side-not-evaluated" };
+  }
+  // A route whose source side IS in scope cannot be cleared without a
+  // source wallet to ask about. Checked against the answer rather than
+  // against the form alone, so "this route has no client-side source
+  // wallet" stays the backend's statement and never this UI's assumption.
+  if (answer.sourceSide.applicable && input.source === null) {
+    return { kind: "unavailable", detail: "source-unknown" };
   }
   const sides: EligibilitySide[] = [];
   // Source first, matching the backend's own fold precedence.
-  if (!answer.sourceSide.eligible) sides.push("source");
-  if (!answer.destinationSide.eligible) sides.push("destination");
+  if (answer.sourceSide.applicable && !answer.sourceSide.eligible) sides.push("source");
+  if (answer.destinationSide.applicable && !answer.destinationSide.eligible) {
+    sides.push("destination");
+  }
   if (sides.length > 0) return { kind: "blocked", answer, sides };
   if (!answer.eligible) {
-    // Both sides read clear and the backend still refused. Nothing here
-    // may invent the reason, and nothing here may let it through.
+    // Every applicable side read clear and the backend still refused.
+    // Nothing here may invent the reason, and nothing here may let it
+    // through.
     return { kind: "unavailable", detail: "request-failed" };
   }
   return { kind: "eligible", answer };

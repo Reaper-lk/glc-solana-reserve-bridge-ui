@@ -6,6 +6,7 @@ import type {
   ListTransfersParams,
 } from "./client";
 import {
+  isApiError,
   badRequestError,
   directionUnavailableError,
   networkError,
@@ -28,7 +29,17 @@ import { chainsViewSchema } from "./schemas/chains";
 import { explorerEventListSchema } from "./schemas/explorer";
 import { reserveHistoryListSchema } from "./schemas/reserves";
 import { quoteOutputSchema } from "./schemas/quote";
-import { recipientEligibilitySchema } from "./schemas/eligibility";
+import {
+  recipientEligibilitySchema,
+  routeEligibilitySchema,
+} from "./schemas/eligibility";
+import {
+  EligibilityEndpointUnpublishedError,
+  isEligibilityRoute,
+  normalizeRecipientEligibility,
+  normalizeRouteEligibility,
+  type RouteEligibility,
+} from "@/lib/bridge/eligibility";
 import {
   createTransferOutputSchema,
   createTransferRequestSchema,
@@ -137,6 +148,71 @@ export class HttpBridgeClient implements BridgeApiClient {
       query,
       signal,
     );
+  }
+
+  /**
+   * The rolling-24h verdict for one route, from whichever endpoint this
+   * backend actually serves.
+   *
+   * # A per-route endpoint where one exists; an attempt otherwise
+   *
+   * `SolToGlc` and `RhnToGlc` have their own published endpoints and are
+   * asked directly. Every other route is asked through the route-agnostic
+   * `GET /eligibility`, which today's backend does not serve — so it
+   * 404s, this raises `EligibilityEndpointUnpublishedError`, and the form
+   * refuses that route. That is the current, intended behaviour.
+   *
+   * Attempting it rather than refusing without asking is what makes the
+   * backend shipping it a backend-only change: no frontend deploy, no
+   * table to edit, nothing to forget. And attempting it cannot produce a
+   * false clearance — only a real 200 with a body this schema accepts
+   * does, which is precisely the case where the answer is authoritative.
+   * Every other outcome (404, 5xx, timeout, malformed body) throws, and
+   * every throw is a refusal upstream.
+   */
+  async getRouteEligibility(
+    route: string,
+    source: string | null,
+    destination: string,
+    signal?: AbortSignal,
+  ): Promise<RouteEligibility> {
+    if (route === "SolToGlc") {
+      return normalizeRecipientEligibility(
+        await this.getSolToGlcRecipientEligibility(destination, source, signal),
+        "SolToGlc",
+      );
+    }
+    if (route === "RhnToGlc") {
+      return normalizeRecipientEligibility(
+        await this.getRhnToGlcRecipientEligibility(destination, source, signal),
+        "RhnToGlc",
+      );
+    }
+    if (!isEligibilityRoute(route)) {
+      // A route this build has no eligibility model for. Refused rather
+      // than asked about with an unknown discriminator.
+      throw new EligibilityEndpointUnpublishedError(route);
+    }
+    const query: Record<string, string> = { route, destination };
+    // Omitted rather than sent empty, matching the per-route endpoints'
+    // treatment of `?wallet=`: a blank value is not "no wallet", it is a
+    // value the backend's address parsers would have to reject.
+    if (source) query.source = source;
+    let dto;
+    try {
+      dto = await this.request("/eligibility", routeEligibilitySchema, query, signal);
+    } catch (cause) {
+      // A 404 is the ONE outcome that means "this deployment does not
+      // serve this check", which deserves its own message. Everything
+      // else is a transport or contract failure and is re-thrown as-is —
+      // both refuse, and conflating them would tell an operator to wait
+      // for a deploy when the real problem is a 500.
+      if (isApiError(cause) && cause.kind === "not-found") {
+        throw new EligibilityEndpointUnpublishedError(route);
+      }
+      throw cause;
+    }
+    return normalizeRouteEligibility(dto, route);
   }
 
   getTransfer(id: number, signal?: AbortSignal) {

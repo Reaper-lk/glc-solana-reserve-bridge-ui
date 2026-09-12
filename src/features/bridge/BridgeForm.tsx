@@ -41,6 +41,7 @@ import {
   rollingVolumeRemaining,
   routeAvailability,
   routeEligibilityVerdict,
+  isEligibilityEndpointUnpublished,
   validateAmount,
   eligibilityBlockedDetail,
   eligibilityBlockedTitle,
@@ -499,6 +500,11 @@ export function BridgeForm() {
           // button between polls.
           pending: eligibility.isPending,
           answer: eligibility.data ?? null,
+          // Chooses the sentence, not the outcome: both this and a plain
+          // failure are refusals. Read from the error the CLIENT raised,
+          // so "this deployment does not serve the check" is something
+          // the deployment said rather than something this build assumed.
+          endpointUnpublished: isEligibilityEndpointUnpublished(eligibility.error),
         });
 
   /**
@@ -1246,13 +1252,15 @@ export function BridgeForm() {
     const destination = recipient.trim();
     const source = sourceWalletForEligibility;
     let answer: RouteEligibility | null = null;
+    let unpublished = false;
     try {
       answer = await fetchRouteEligibility(eligibilityRoute, source, destination);
-    } catch {
-      // Includes the four routes with no published endpoint, which reject
-      // rather than resolve. Unreadable eligibility is unknown
+    } catch (error) {
+      // Includes a route this deployment serves no endpoint for, which
+      // rejects rather than resolves. Unreadable eligibility is unknown
       // eligibility, and unknown is a refusal.
       answer = null;
+      unpublished = isEligibilityEndpointUnpublished(error);
     }
     const verdict = routeEligibilityVerdict({
       route: eligibilityRoute,
@@ -1262,6 +1270,7 @@ export function BridgeForm() {
       // waiting", so `pending` would be a state this call cannot be in.
       pending: false,
       answer,
+      endpointUnpublished: unpublished,
     });
     if (verdict.kind === "eligible") return;
     // Bring the cached verdict in line with what was just read, so the

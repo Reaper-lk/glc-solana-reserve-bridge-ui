@@ -5,6 +5,7 @@ import {
   expectHeldOnlyByEligibility,
   primaryCta,
   renderWithQueryClient,
+  routeEligibilityFrom,
   selectNetwork,
 } from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
@@ -82,6 +83,23 @@ const getQuote = vi.fn();
 const createTransfer = vi.fn();
 const listTransfers = vi.fn();
 
+/** Both sides clear, echoed back exactly as the backend would. */
+function solToGlcEligibility(address: unknown, wallet: unknown) {
+  return Promise.resolve({
+    direction: "SolToGlc",
+    address: String(address),
+    wallet: wallet === null || wallet === undefined ? null : String(wallet),
+    eligible: true,
+    blocked_reason: null,
+    blocked_reasons: [],
+    retry_after: null,
+    retry_after_seconds: null,
+    source_wallet_retry_after: null,
+    recipient_retry_after: null,
+    window_seconds: 86_400,
+  });
+}
+
 vi.mock("@/lib/api", async () => ({
   // The real error factories: BridgeForm imports them by name, and a
   // partial mock of this module would leave them undefined.
@@ -97,20 +115,15 @@ vi.mock("@/lib/api", async () => ({
     // These tests exercise the minimum-amount bound, not the rolling-24h
     // windows — every pair here reads as eligible on BOTH sides so the
     // amount validation stays the only variable under test.
-    getSolToGlcRecipientEligibility: (address: unknown, wallet: unknown) =>
-      Promise.resolve({
-        direction: "SolToGlc",
-        address: String(address),
-        wallet: wallet === null || wallet === undefined ? null : String(wallet),
-        eligible: true,
-        blocked_reason: null,
-        blocked_reasons: [],
-        retry_after: null,
-        retry_after_seconds: null,
-        source_wallet_retry_after: null,
-        recipient_retry_after: null,
-        window_seconds: 86_400,
-      }),
+    getSolToGlcRecipientEligibility: solToGlcEligibility,
+    // The one method `fetchRouteEligibility` calls. Built from the
+    // per-route mock above by the same rule `HttpBridgeClient` uses, so
+    // a route with no landed endpoint rejects here exactly as it would
+    // against the real backend — which is why the `GlcToSol` cases assert
+    // `expectHeldOnlyByEligibility()` rather than an enabled button.
+    getRouteEligibility: routeEligibilityFrom({
+      SolToGlc: solToGlcEligibility,
+    }),
   },
 }));
 

@@ -9,6 +9,7 @@ import {
   hasAuthoritativeEligibility,
   isEligibilityRoute,
   normalizeRecipientEligibility,
+  normalizeRouteEligibility,
   remainingSecondsFor,
   routeEligibilityVerdict,
   ELIGIBILITY_BACKEND_DEPENDENCY,
@@ -42,6 +43,7 @@ import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 const GLC_ADDRESS = "GdKQNBb8CVhFxKC1kBi1AjgTQTgLPvVp7c";
 const SOL_WALLET = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const EVM_WALLET = "0xdD870fA1b7C4700F2BD7f44238821C26f7392148";
+const SOL_RECIPIENT = "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1";
 const NOW = 1_787_000_000;
 const WINDOW = 86_400;
 
@@ -70,6 +72,7 @@ function verdictFor(
     source?: string | null;
     destination?: string;
     pending?: boolean;
+    endpointUnpublished?: boolean;
   } = {},
 ) {
   return routeEligibilityVerdict({
@@ -78,6 +81,9 @@ function verdictFor(
     destination: overrides.destination ?? GLC_ADDRESS,
     pending: overrides.pending ?? false,
     answer,
+    ...(overrides.endpointUnpublished === undefined
+      ? {}
+      : { endpointUnpublished: overrides.endpointUnpublished }),
   });
 }
 
@@ -156,6 +162,7 @@ describe("normalizeRecipientEligibility — the backend's shape, mapped by SIDE"
       retryAt: NOW + 3_600,
       remainingSeconds: 3_600,
       reason: "source_wallet_rate_limited",
+      applicable: true,
     });
     expect(answer.destinationSide).toMatchObject({
       evaluated: true,
@@ -318,19 +325,37 @@ describe("routeEligibilityVerdict — every branch fails closed", () => {
     expect(eligibilityPermitsSubmission(verdict)).toBe(true);
   });
 
-  it("refuses all four routes the backend publishes no endpoint for", () => {
+  it("refuses a route this deployment serves no endpoint for", () => {
+    // The CLIENT reports that, by rejecting with
+    // `EligibilityEndpointUnpublishedError`; the flag only picks which
+    // sentence is shown. Against today's backend that is all four of
+    // GlcToSol, GlcToRhn, SolToRhn and RhnToSol.
     for (const route of ["GlcToSol", "GlcToRhn", "SolToRhn", "RhnToSol"] as const) {
-      const verdict = verdictFor(null, { route });
+      const verdict = verdictFor(null, { route, endpointUnpublished: true });
       expect(verdict).toEqual({ kind: "unavailable", detail: "endpoint-not-published" });
       expect(eligibilityPermitsSubmission(verdict)).toBe(false);
     }
   });
 
-  it("refuses an unpublished route even when an answer is somehow in hand", () => {
-    // No answer about a route with no endpoint can be authoritative, so
-    // the structural refusal comes first and cannot be talked out of.
+  it("refuses an unanswered route whatever the reason for the silence", () => {
+    // The flag is cosmetic. With it absent the refusal is identical in
+    // effect — which is the property that matters: no answer, no
+    // submission.
+    for (const route of ["GlcToSol", "GlcToRhn", "SolToRhn", "RhnToSol"] as const) {
+      const verdict = verdictFor(null, { route });
+      expect(verdict).toEqual({ kind: "unavailable", detail: "request-failed" });
+      expect(eligibilityPermitsSubmission(verdict)).toBe(false);
+    }
+  });
+
+  it("refuses an answer that is about a DIFFERENT route than the one asked about", () => {
+    // The gate rests on an answer matching these exact inputs, so a
+    // verdict earned on one route cannot be replayed onto another.
     const answer = normalizeRecipientEligibility(dto(), "SolToGlc");
-    expect(verdictFor(answer, { route: "RhnToSol" }).kind).toBe("unavailable");
+    expect(verdictFor(answer, { route: "RhnToSol" })).toEqual({
+      kind: "unavailable",
+      detail: "answer-stale",
+    });
   });
 
   it("refuses before an answer arrives, as `checking`", () => {
@@ -346,12 +371,107 @@ describe("routeEligibilityVerdict — every branch fails closed", () => {
     });
   });
 
-  it("refuses when no source wallet is connected", () => {
-    // Both sides are gated; there is nothing to ask about on one of them.
-    expect(verdictFor(null, { source: null })).toEqual({
+  it("refuses when the source side APPLIES and no source wallet is connected", () => {
+    // The per-route endpoints govern both sides unconditionally, so a
+    // SolToGlc answer always reports the source side as applicable —
+    // and with no wallet to ask about, there is nothing that could clear
+    // it.
+    const answer = normalizeRecipientEligibility(dto({ wallet: null }), "SolToGlc");
+    expect(answer.sourceSide.applicable).toBe(true);
+    expect(verdictFor(answer, { source: null })).toEqual({
       kind: "unavailable",
-      detail: "source-unknown",
+      detail: "side-not-evaluated",
     });
+  });
+
+  it("clears a route whose source side the BACKEND reports as out of scope", () => {
+    // The one case a Goldcoin-sourced route requires: funded by sending
+    // to an address the backend issues, so no source wallet exists in
+    // the browser and that side is enforced at fold time. The exemption
+    // is the backend's statement — nothing here grants it.
+    const answer = normalizeRouteEligibility(
+      {
+        route: "GlcToSol",
+        source: null,
+        destination: SOL_RECIPIENT,
+        eligible: true,
+        source_eligibility: { eligible: true, applicable: false },
+        destination_eligibility: { eligible: true, applicable: true },
+        as_of: NOW,
+        window_seconds: WINDOW,
+      },
+      "GlcToSol",
+    );
+    expect(answer.sourceSide.applicable).toBe(false);
+    expect(
+      routeEligibilityVerdict({
+        route: "GlcToSol",
+        source: null,
+        destination: SOL_RECIPIENT,
+        pending: false,
+        answer,
+      }).kind,
+    ).toBe("eligible");
+  });
+
+  it("refuses when an out-of-scope claim is ABSENT rather than false", () => {
+    // An omitted `applicable` must read as applicable: a backend that
+    // forgets the field gets the strict rule, never a silent exemption.
+    const answer = normalizeRouteEligibility(
+      {
+        route: "GlcToSol",
+        source: null,
+        destination: SOL_RECIPIENT,
+        eligible: true,
+        source_eligibility: { eligible: true },
+        destination_eligibility: { eligible: true },
+        as_of: NOW,
+        window_seconds: WINDOW,
+      },
+      "GlcToSol",
+    );
+    expect(answer.sourceSide.applicable).toBe(true);
+    expect(
+      routeEligibilityVerdict({
+        route: "GlcToSol",
+        source: null,
+        destination: SOL_RECIPIENT,
+        pending: false,
+        answer,
+      }),
+    ).toEqual({ kind: "unavailable", detail: "source-unknown" });
+  });
+
+  it("still refuses a BLOCKED side the backend reports as in scope", () => {
+    // `applicable` exempts a side from the question; it never answers it.
+    const answer = normalizeRouteEligibility(
+      {
+        route: "SolToRhn",
+        source: SOL_WALLET,
+        destination: EVM_WALLET,
+        eligible: false,
+        source_eligibility: {
+          eligible: false,
+          retry_at: NOW + 3_600,
+          remaining_seconds: 3_600,
+          reason: "source_wallet_rate_limited",
+          applicable: true,
+        },
+        destination_eligibility: { eligible: true, applicable: true },
+        as_of: NOW,
+        window_seconds: WINDOW,
+      },
+      "SolToRhn",
+    );
+    const verdict = routeEligibilityVerdict({
+      route: "SolToRhn",
+      source: SOL_WALLET,
+      destination: EVM_WALLET,
+      pending: false,
+      answer,
+    });
+    expect(verdict.kind).toBe("blocked");
+    if (verdict.kind === "blocked") expect(verdict.sides).toEqual(["source"]);
   });
 
   it("refuses when no destination has been entered", () => {
@@ -492,6 +612,7 @@ describe("the copy and the compact cooldown", () => {
       retryAt: null,
       remainingSeconds,
       reason: "source_wallet_rate_limited",
+      applicable: true,
     });
     expect(formatEligibilityCooldown(side(11_520), NOW)).toBe("3h 12m");
     expect(formatEligibilityCooldown(side(720), NOW)).toBe("12m");
@@ -511,6 +632,7 @@ describe("the copy and the compact cooldown", () => {
       // has since moved on.
       remainingSeconds: 60,
       reason: "recipient_rate_limited",
+      applicable: true,
     };
     expect(remainingSecondsFor(side, NOW)).toBe(7_200);
     expect(formatEligibilityCooldown(side, NOW)).toBe("2h");
@@ -525,6 +647,7 @@ describe("the copy and the compact cooldown", () => {
       retryAt: null,
       remainingSeconds: null,
       reason: "recipient_rate_limited",
+      applicable: true,
     };
     expect(remainingSecondsFor(side, NOW)).toBeNull();
     expect(formatEligibilityCooldown(side, NOW)).toBeNull();
@@ -537,6 +660,7 @@ describe("the copy and the compact cooldown", () => {
       retryAt: NOW - 600,
       remainingSeconds: null,
       reason: "recipient_rate_limited",
+      applicable: true,
     };
     expect(remainingSecondsFor(side, NOW)).toBe(0);
   });

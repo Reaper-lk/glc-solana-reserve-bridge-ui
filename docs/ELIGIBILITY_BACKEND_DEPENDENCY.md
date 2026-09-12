@@ -85,52 +85,48 @@ this UI never learns which address the user will send from — so the
 **source side of the policy cannot be established client-side on those two
 routes at all**, even once an endpoint exists.
 
-When the endpoint lands it will need to either (a) accept a request with
-no source wallet and answer about the destination side while stating that
-the source side is enforced at fold time, or (b) declare those routes
-out of scope for the source-side window. Either is fine for the UI; what
-it cannot do is supply a source wallet it has no way to know.
+The contract below carries a per-side `applicable` flag for exactly this:
+the backend states that a side is outside the rule, and the UI honours
+that statement rather than assuming it. Two properties make that safe:
 
-## The expected replacement
-
-One route-agnostic endpoint, equivalent to:
-
-```
-GET /eligibility?route=<Route>&source=<address>&destination=<address>
-
-{
-  "route": "RhnToSol",
-  "source": "...",
-  "destination": "...",
-  "eligible": false,
-  "as_of": 1787000000,
-  "window_seconds": 86400,
-  "source":      { "eligible": false, "retry_at": ..., "remaining_seconds": ..., "reason": "..." },
-  "destination": { "eligible": true,  "retry_at": null, "remaining_seconds": null, "reason": null }
-}
-```
+- The UI never sets it. A side is exempt only because a response said so.
+- **Absent means applicable.** A backend that ships the endpoint without
+  the field gets the strict reading — the side must be evaluated and
+  eligible — so forgetting it fails closed rather than silently exempting
+  a wallet. `tests/unit/eligibility.test.ts` pins this.
 
 ## What changes in the UI when it lands
 
-Two things, and nothing else:
+**Nothing.** `HttpBridgeClient.getRouteEligibility` already ATTEMPTS
+`GET /eligibility` for every route with no per-route endpoint, and a 404
+is what currently turns into the refusal. The day the backend answers
+instead of 404ing, those routes start clearing — no frontend deploy, no
+table to edit, nothing to remember.
 
-1. `ENDPOINTS` in `src/lib/bridge/eligibility.ts` gains the four missing
-   entries.
-2. `fetchRouteEligibility` in `src/lib/api/eligibility-request.ts` gains
-   one more input shape to normalise.
+That is deliberate. An earlier revision of this branch kept a
+compile-time table of "routes the backend answers for" and refused
+anything absent from it. That table is still here — `ENDPOINTS` in
+`src/lib/bridge/eligibility.ts` — but only as documentation and as the
+per-route endpoint map. It no longer gates anything, because a gate
+resting on it would be trusting a claim about the backend rather than an
+answer from it: it would refuse a deployment that had started serving the
+endpoint, and — the direction that matters — it could be loosened by
+editing a constant instead of by obtaining a verdict.
 
-The form, the submit gate, the pre-signing re-check and the compact
-display all read `RouteEligibility` already. That indirection exists for
-exactly this reason.
+The gate is now exactly one thing: **an authoritative answer arrived,
+about these exact inputs, clearing every side the backend says applies.**
 
 Tests that will invert (they currently assert the refusal, deliberately, so
 the change is visible rather than silent):
 
-- `tests/unit/eligibility.test.ts` — "refuses all four routes the backend
-  publishes no endpoint for", and `ELIGIBILITY_BACKEND_DEPENDENCY`'s
+- `tests/unit/eligibility.test.ts` — "refuses a route this deployment
+  serves no endpoint for", and `ELIGIBILITY_BACKEND_DEPENDENCY`'s
   `covered`/`pending` split.
 - `tests/unit/bridge-card-eligibility.test.tsx` — "the four routes
   awaiting the backend".
+- `tests/unit/http-client.test.ts` — "REFUSES when the deployment does not
+  serve the route-agnostic endpoint" describes the 404; the sibling test
+  that attempts it already describes the answered case.
 - `tests/unit/cross-route-submit.test.tsx` — the `SolToRhn`/`RhnToSol`
   submission assertions, which this branch replaced with refusal
   assertions. The payload encodings they used to cover end-to-end are

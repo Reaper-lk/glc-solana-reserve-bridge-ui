@@ -83,7 +83,12 @@ test.describe("bridge form — unavailable pairs", () => {
     await selectNetwork(page, "Destination network", /Robinhood Chain/);
 
     await expect(page.getByText("Goldcoin → Robinhood Chain")).toBeVisible();
-    await expect(page.getByText("Coming soon").first()).toBeVisible();
+    // "Currently unavailable", not "Coming soon". Every route the backend
+    // names is built and settling, so a closed one is switched off rather
+    // than unreleased — promising a launch that already happened is a
+    // claim this UI may not make.
+    await expect(page.getByText("Currently unavailable").first()).toBeVisible();
+    await expect(page.getByText("Coming soon")).toHaveCount(0);
     await expect(primaryCta(page)).toBeDisabled();
     await expect(primaryCta(page)).toHaveText("Route unavailable");
   });
@@ -94,8 +99,8 @@ test.describe("bridge form — unavailable pairs", () => {
     // This used to assert "Not available" — the copy for a pair with no
     // settlement machinery — because `SolToRhn` was `implemented: false`.
     // Phase H built it, so it is `implemented: true` and shipped shut,
-    // and it must now read as a route an operator can open ("Coming
-    // soon") rather than one that does not exist.
+    // and it must now read as a route an operator can open ("Currently
+    // unavailable") rather than one that does not exist.
     //
     // The stronger "Not available" verdict is not dead: it is what a
     // backend reporting `implemented: false` still produces. Nothing in
@@ -110,8 +115,9 @@ test.describe("bridge form — unavailable pairs", () => {
     await selectNetwork(page, "Destination network", /Robinhood Chain/);
 
     await expect(page.getByText("Solana → Robinhood Chain")).toBeVisible();
-    await expect(page.getByText("Coming soon").first()).toBeVisible();
+    await expect(page.getByText("Currently unavailable").first()).toBeVisible();
     await expect(page.getByText("Not available", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Coming soon")).toHaveCount(0);
     // Closed is still closed: nothing about being built opens it.
     await expect(primaryCta(page)).toBeDisabled();
   });
@@ -208,27 +214,39 @@ test.describe("routes on the status page", () => {
 
     await expect(page.getByRole("heading", { name: "Routes" })).toBeVisible();
     await expect(page.getByText("Robinhood Chain → Goldcoin")).toBeVisible();
-    // A card for each of the four EXECUTABLE routes, closed or not: the
-    // Robinhood pair used to be dropped entirely when the gate was shut,
-    // which left /status silently missing half the routes it exists to
-    // report on.
+    // A card for each of the SIX executable routes, closed or not: the
+    // Robinhood routes used to be dropped entirely when the gate was
+    // shut, which left /status silently missing most of the routes it
+    // exists to report on. Phase H made all six `implemented: true`, so
+    // all six get a card — the two cross routes included.
     for (const label of [
       "GLC L1 → GLC on Solana",
       "GLC on Solana → GLC L1",
       "GLC L1 → GLC on Robinhood",
       "GLC on Robinhood → GLC L1",
+      "GLC on Solana → GLC on Robinhood",
+      "GLC on Robinhood → GLC on Solana",
     ]) {
       await expect(page.getByRole("group", { name: label })).toBeVisible();
     }
-    // And a closed route carries no borrowed figure. Mock mode publishes
-    // no Robinhood reserve, so `GlcToRhn` — the only route that would pay
-    // out of it — shows no capacity at all, while the other three do.
-    await expect(page.getByText("Destination reserve capacity")).toHaveCount(3);
-    const glcToRhn = page.getByRole("group", { name: "GLC L1 → GLC on Robinhood" });
-    await expect(glcToRhn.getByText("Destination reserve capacity")).toHaveCount(0);
-    // Absent, not stubbed: the placeholder that used to sit here read as
-    // an unfinished card rather than as a fact about the deployment.
-    await expect(glcToRhn.getByText("Not published")).toHaveCount(0);
+    // And a closed route carries no borrowed figure. Capacity is read
+    // from the route's own DESTINATION reserve, and mock mode publishes
+    // the Goldcoin and Solana reserves but no Robinhood one — so exactly
+    // the two routes that would pay out of it show no capacity, and the
+    // other four do.
+    await expect(page.getByText("Destination reserve capacity")).toHaveCount(4);
+    for (const label of [
+      "GLC L1 → GLC on Robinhood",
+      "GLC on Solana → GLC on Robinhood",
+    ]) {
+      const robinhoodDestination = page.getByRole("group", { name: label });
+      await expect(
+        robinhoodDestination.getByText("Destination reserve capacity"),
+      ).toHaveCount(0);
+      // Absent, not stubbed: the placeholder that used to sit here read
+      // as an unfinished card rather than as a fact about the deployment.
+      await expect(robinhoodDestination.getByText("Not published")).toHaveCount(0);
+    }
   });
 
   test("never shows a Robinhood route as available while the gate is shut", async ({

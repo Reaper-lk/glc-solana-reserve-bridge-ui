@@ -97,7 +97,7 @@ test.describe("design-review screenshots", () => {
     await settle(page);
     await selectNetwork(page, "Destination network", /Robinhood Chain/);
     await expect(page.getByText("Goldcoin → Robinhood Chain")).toBeVisible();
-    await expect(page.getByText("Coming soon").first()).toBeVisible();
+    await expect(page.getByText("Currently unavailable").first()).toBeVisible();
     await shoot(page, "glc-to-robinhood.png");
 
     // --- 4. Robinhood Chain -> Goldcoin: implemented, CLOSED.

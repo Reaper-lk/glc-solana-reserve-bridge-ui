@@ -3,7 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import type userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
-import { ELIGIBILITY_UNAVAILABLE_TITLE } from "@/lib/bridge/eligibility";
+import {
+  EligibilityEndpointUnpublishedError,
+  normalizeRecipientEligibility,
+  normalizeRouteEligibility,
+  ELIGIBILITY_UNAVAILABLE_TITLE,
+} from "@/lib/bridge/eligibility";
 
 /**
  * Shared render helper for component tests.
@@ -119,4 +124,50 @@ export function primaryCta(): HTMLElement {
 export async function expectHeldOnlyByEligibility() {
   await waitFor(() => expect(primaryCta()).toBeDisabled());
   expect(screen.getAllByText(ELIGIBILITY_UNAVAILABLE_TITLE).length).toBeGreaterThan(0);
+}
+
+/**
+ * A `bridgeApi.getRouteEligibility` stand-in built from the two per-route
+ * mocks a test already has.
+ *
+ * # Why the tests need this at all
+ *
+ * `fetchRouteEligibility` delegates to the CLIENT, because which endpoint
+ * can answer for a route is a property of the deployment rather than of
+ * the form. A component test that mocks `@/lib/api` therefore has to
+ * supply that one method, and hand-rolling the dispatch in every file
+ * would be a dozen copies of the rule free to drift from
+ * `HttpBridgeClient`'s.
+ *
+ * So this mirrors the real client exactly: the two landed per-route
+ * endpoints are asked through the supplied mocks and normalised by the
+ * production normaliser, and every other route rejects with
+ * `EligibilityEndpointUnpublishedError` — the behaviour of a backend that
+ * does not serve `GET /eligibility`, which is the state these component
+ * tests describe. A test that wants a route-agnostic answer supplies
+ * `generic` instead.
+ */
+export function routeEligibilityFrom(handlers: {
+  SolToGlc?: (address: string, wallet: string | null) => unknown;
+  RhnToGlc?: (address: string, wallet: string | null) => unknown;
+  /** For a test that models a deployment serving the route-agnostic endpoint. */
+  generic?: (route: string, source: string | null, destination: string) => unknown;
+}) {
+  return async (route: string, source: string | null, destination: string) => {
+    if (route === "SolToGlc" || route === "RhnToGlc") {
+      const handler = handlers[route];
+      if (!handler) throw new EligibilityEndpointUnpublishedError(route);
+      const dto = await handler(destination, source);
+      return normalizeRecipientEligibility(
+        dto as Parameters<typeof normalizeRecipientEligibility>[0],
+        route,
+      );
+    }
+    if (!handlers.generic) throw new EligibilityEndpointUnpublishedError(route);
+    const dto = await handlers.generic(route, source, destination);
+    return normalizeRouteEligibility(
+      dto as Parameters<typeof normalizeRouteEligibility>[0],
+      route as Parameters<typeof normalizeRouteEligibility>[1],
+    );
+  };
 }

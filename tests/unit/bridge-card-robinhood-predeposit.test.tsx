@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
+import {
+  primaryCta,
+  renderWithQueryClient,
+  routeEligibilityFrom,
+  selectNetwork,
+} from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { encodeBase58Check } from "@/lib/bridge/glc-address";
 import {
@@ -58,6 +63,16 @@ vi.mock("@/lib/api", async () => ({
     listTransfers: (...args: unknown[]) => listTransfers(...args),
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
+    // The one method `fetchRouteEligibility` calls. Built from the
+    // per-route mocks above by the same rule `HttpBridgeClient` uses, so
+    // a route with no landed endpoint rejects here exactly as it would
+    // against the real backend.
+    getRouteEligibility: routeEligibilityFrom({
+      SolToGlc: (address: string, wallet: string | null) =>
+        getSolToGlcRecipientEligibility(address, wallet),
+      RhnToGlc: (address: string, wallet: string | null) =>
+        getRhnToGlcRecipientEligibility(address, wallet),
+    }),
     getRhnToGlcRecipientEligibility: (...args: unknown[]) =>
       getRhnToGlcRecipientEligibility(...args),
   },
@@ -358,11 +373,7 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     await fillRhnForm(user);
 
     await waitFor(() =>
-      expect(getRhnToGlcRecipientEligibility).toHaveBeenCalledWith(
-        ADDRESS_A,
-        WALLET_A,
-        expect.anything(),
-      ),
+      expect(getRhnToGlcRecipientEligibility).toHaveBeenCalledWith(ADDRESS_A, WALLET_A),
     );
   });
 
@@ -449,11 +460,7 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     rerender(<BridgeCard />);
 
     await waitFor(() => expect(primaryCta()).toBeDisabled());
-    expect(getRhnToGlcRecipientEligibility).toHaveBeenCalledWith(
-      ADDRESS_A,
-      WALLET_B,
-      expect.anything(),
-    );
+    expect(getRhnToGlcRecipientEligibility).toHaveBeenCalledWith(ADDRESS_A, WALLET_B);
     await user.click(primaryCta());
     expect(depositFn).not.toHaveBeenCalled();
   });

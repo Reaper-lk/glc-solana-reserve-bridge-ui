@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderWithQueryClient, selectNetwork, waitForRouteVerdict } from "./test-utils";
+import {
+  renderWithQueryClient,
+  routeEligibilityFrom,
+  selectNetwork,
+  waitForRouteVerdict,
+} from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import type * as EvmModule from "@/lib/evm";
 import { BridgeForm } from "@/features/bridge/BridgeForm";
@@ -40,6 +45,14 @@ vi.mock("@/lib/api", async () => ({
     listTransfers: (...args: unknown[]) => listTransfers(...args),
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
+    // The one method `fetchRouteEligibility` calls. Built from the
+    // per-route mocks above by the same rule `HttpBridgeClient` uses, so
+    // a route with no landed endpoint rejects here exactly as it would
+    // against the real backend.
+    getRouteEligibility: routeEligibilityFrom({
+      SolToGlc: (address: string, wallet: string | null) =>
+        getSolToGlcRecipientEligibility(address, wallet),
+    }),
   },
 }));
 

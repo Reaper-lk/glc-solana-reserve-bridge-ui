@@ -11,6 +11,7 @@ import type { ExplorerEventListDto } from "./schemas/explorer";
 import type { ReserveHistoryListDto, ReserveDirectionParam } from "./schemas/reserves";
 import type { QuoteOutputDto } from "./schemas/quote";
 import type { RecipientEligibilityDto } from "./schemas/eligibility";
+import type { RouteEligibility } from "@/lib/bridge/eligibility";
 import type {
   CreateTransferOutputDto,
   CreateTransferRequest,
@@ -175,6 +176,36 @@ export interface BridgeApiClient {
     wallet: string | null,
     signal?: AbortSignal,
   ): Promise<RecipientEligibilityDto>;
+
+  /**
+   * The rolling-24h wallet eligibility verdict for ANY of the six routes,
+   * normalised to one shape.
+   *
+   * # Why the CLIENT decides which endpoint answers
+   *
+   * The backend publishes two per-route endpoints today (both
+   * `*-to-glc`) and a route-agnostic `GET /eligibility` is expected for
+   * the rest. Which of those can answer for a given route is a property
+   * of the DEPLOYMENT being talked to, not of the form asking — so it
+   * belongs behind this boundary, where the real client speaks for the
+   * real backend and the fixture client speaks for the fixtures.
+   *
+   * `HttpBridgeClient` uses a per-route endpoint where one exists and
+   * otherwise ATTEMPTS the route-agnostic one, raising
+   * `EligibilityEndpointUnpublishedError` on a 404 — so a deployment that
+   * does not serve it refuses that route, and one that starts serving it
+   * works with no frontend change.
+   *
+   * Rejects rather than returning a "could not check" value: a function
+   * that can return both an answer and a non-answer invites a caller to
+   * forget which it got. Every rejection becomes a refusal upstream.
+   */
+  getRouteEligibility(
+    route: string,
+    source: string | null,
+    destination: string,
+    signal?: AbortSignal,
+  ): Promise<RouteEligibility>;
 
   getTransfer(id: number, signal?: AbortSignal): Promise<TransferViewDto>;
   /**
