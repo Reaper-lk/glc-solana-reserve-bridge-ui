@@ -4,7 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { render } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
-import { primaryCta, renderWithQueryClient, waitForRouteVerdict } from "./test-utils";
+import {
+  expectHeldOnlyByEligibility,
+  primaryCta,
+  renderWithQueryClient,
+  routeEligibilityFrom,
+  waitForRouteVerdict,
+} from "./test-utils";
 import { createQueryClient } from "@/lib/query/provider";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import type * as EvmModule from "@/lib/evm";
@@ -42,8 +48,10 @@ const listTransfers = vi.fn();
 const getSolToGlcRecipientEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => {
-  const errors = await import("@/lib/api/errors");
   return {
+    // The real error factories: BridgeForm imports them by name, and a
+    // partial mock of this module would leave them undefined.
+    ...(await import("@/lib/api/errors")),
     bridgeApi: {
       getStatus: (...a: unknown[]) => getStatus(...a),
       getChains: (...a: unknown[]) => getChains(...a),
@@ -54,9 +62,15 @@ vi.mock("@/lib/api", async () => {
       listTransfers: (...a: unknown[]) => listTransfers(...a),
       getSolToGlcRecipientEligibility: (...a: unknown[]) =>
         getSolToGlcRecipientEligibility(...a),
+      // The one method `fetchRouteEligibility` calls. Built from the
+      // per-route mocks above by the same rule `HttpBridgeClient` uses, so
+      // a route with no landed endpoint rejects here exactly as it would
+      // against the real backend.
+      getRouteEligibility: routeEligibilityFrom({
+        SolToGlc: (address: string, wallet: string | null) =>
+          getSolToGlcRecipientEligibility(address, wallet),
+      }),
     },
-    recipientRateLimitedError: errors.recipientRateLimitedError,
-    sourceWalletRateLimitedError: errors.sourceWalletRateLimitedError,
   };
 });
 
@@ -265,7 +279,11 @@ describe("quote failure", () => {
     await user.type(screen.getByLabelText(/Solana recipient address/i), SOLANA_ADDRESS);
     await user.type(amountField(), "1000");
     await waitFor(() => expect(estimate()).toHaveTextContent("970.00"));
-    await waitFor(() => expect(primaryCta()).toBeEnabled());
+    // The gate is held by eligibility on this route rather than by the
+    // quote — `GlcToSol` has no published eligibility endpoint yet — so
+    // what this test can still prove is the part it is actually about:
+    // the stale figure does not survive the amount changing.
+    await expectHeldOnlyByEligibility();
 
     getQuote.mockImplementation(
       () =>
@@ -276,8 +294,8 @@ describe("quote failure", () => {
     await user.clear(amountField());
     await user.type(amountField(), "2000");
 
-    await waitFor(() => expect(primaryCta()).toBeDisabled());
-    expect(estimate()).not.toHaveTextContent("970.00");
+    await waitFor(() => expect(estimate()).not.toHaveTextContent("970.00"));
+    expect(primaryCta()).toBeDisabled();
 
     pending.resolve?.(quoteFor("200000000000", "1940.00000000"));
     await waitFor(() => expect(estimate()).toHaveTextContent("1,940.00"));

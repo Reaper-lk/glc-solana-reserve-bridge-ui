@@ -84,3 +84,72 @@ export const recipientEligibilitySchema = z.object({
 });
 
 export type RecipientEligibilityDto = z.infer<typeof recipientEligibilitySchema>;
+
+/**
+ * One wallet's side of the ROUTE-AGNOSTIC eligibility answer.
+ *
+ * `applicable` is how the BACKEND says a side is not part of this route's
+ * rule — and it is the only way that can be said. The case it exists for
+ * is real and structural: `GlcToSol`/`GlcToRhn` are funded by sending GLC
+ * to an address the backend issues, so no source wallet is connected in
+ * the browser and this UI never learns which address the user will send
+ * from. The source side of those routes can only be enforced backend-side
+ * at fold time.
+ *
+ * Absent means **applicable**, deliberately. A backend that ships this
+ * endpoint without the field gets the strict reading — the side must be
+ * evaluated and eligible — so forgetting it fails closed rather than
+ * silently exempting a wallet.
+ */
+export const routeEligibilitySideSchema = z.object({
+  /** `true` only when this side is outside its rolling window right now. */
+  eligible: z.boolean(),
+  /** Absolute unix second the window reopens; `null` when not blocked. */
+  retry_at: z.number().int().nullable().optional(),
+  /** The same wait in seconds (>= 0); `null` when not blocked. */
+  remaining_seconds: z.number().int().nonnegative().nullable().optional(),
+  /** The backend's machine-readable reason; `null` when clear. */
+  reason: z.string().nullable().optional(),
+  /**
+   * Whether this side's window governs this route at all. Absent reads as
+   * `true` — see the type docs; an omitted field must never exempt a side.
+   */
+  applicable: z.boolean().optional(),
+});
+
+/**
+ * `GET /eligibility?route=<Route>&source=<address>&destination=<address>`
+ * — the route-agnostic endpoint this UI expects for the four routes the
+ * two per-route `/recipients/*` endpoints do not cover.
+ *
+ * # Attempted, not assumed
+ *
+ * This shape is a stated expectation, not a landed contract. The HTTP
+ * client ATTEMPTS this endpoint for any route with no per-route endpoint
+ * and treats a 404 as "not published", which disables submission on that
+ * route — the behaviour against today's backend. Nothing is presumed to
+ * exist, and nothing is presumed eligible; the endpoint appearing later is
+ * what turns the refusal into an answer, with no frontend change.
+ *
+ * `source`/`destination` are echoed back for the same reason the per-route
+ * endpoints echo theirs: an in-flight answer about a superseded address is
+ * not a weaker answer, it is an answer to a different question, and it
+ * must be discardable rather than actionable.
+ */
+export const routeEligibilitySchema = z.object({
+  route: z.string().min(1),
+  /** Echoed back; `null` when the caller sent none. */
+  source: z.string().nullable(),
+  destination: z.string().min(1),
+  /** `true` only when every applicable side is clear. */
+  eligible: z.boolean(),
+  source_eligibility: routeEligibilitySideSchema,
+  destination_eligibility: routeEligibilitySideSchema,
+  /** When the backend computed this, in unix seconds. */
+  as_of: z.number().int().nullable().optional(),
+  /** The rolling window itself, so copy/logic never hardcodes 24 hours. */
+  window_seconds: z.number().int().positive(),
+});
+
+export type RouteEligibilitySideDto = z.infer<typeof routeEligibilitySideSchema>;
+export type RouteEligibilityDto = z.infer<typeof routeEligibilitySchema>;

@@ -18,22 +18,35 @@ export const queryKeys = {
   quote: (direction: string, grossAmount: string) =>
     ["bridge", "quote", direction, grossAmount] as const,
   /**
-   * The rolling-24h eligibility verdict, keyed by ROUTE, address AND
-   * wallet.
+   * The unified six-route rolling-24h wallet eligibility verdict.
    *
-   * All three belong in the key. The two inbound routes have separate
-   * endpoints and separate source-wallet windows, so one cache entry for
-   * both would answer a Robinhood question with a Solana verdict. Address
-   * and wallet are in it because a verdict is a statement about exactly
-   * that pair: changing either must produce a cache MISS, never a stale
-   * "eligible" carried across the edit. That is what stops a previously
-   * granted answer from authorizing a deposit whose inputs it never saw.
+   * Every input the verdict is about is in the key, which is what makes
+   * the refresh triggers the UX requires fall out of React Query rather
+   * than out of hand-written effects:
+   *
+   * - ROUTE — a verdict is per route; two routes never share an entry.
+   * - SOURCE wallet — covers both "the user connected a different
+   *   wallet" and "the wallet switched accounts", which are the same
+   *   event from this query's point of view.
+   * - DESTINATION — a verdict is a statement about exactly this pair.
+   * - CHAIN — the connected network. Not part of the backend question,
+   *   and in the key anyway: switching networks changes which wallet
+   *   identity the connected address even belongs to, and a verdict
+   *   obtained on another chain must not be reused across that.
+   *
+   * Changing any of them is a cache MISS, never a stale "eligible"
+   * carried across the edit. `refetchOnWindowFocus` (the app-wide
+   * default) covers a page regaining focus, and a successful submission
+   * invalidates this prefix explicitly.
    */
-  recipientEligibility: (
-    route: "SolToGlc" | "RhnToGlc",
-    address: string,
-    wallet: string | null,
-  ) => ["bridge", "recipient-eligibility", route, address, wallet] as const,
+  routeEligibility: (
+    route: string,
+    source: string | null,
+    destination: string,
+    chainId: number | null,
+  ) => ["bridge", "route-eligibility", route, source, destination, chainId] as const,
+  /** The prefix, for invalidating every route's verdict after a submission. */
+  routeEligibilityAll: () => ["bridge", "route-eligibility"] as const,
   transfer: (id: number) => ["bridge", "transfer", id] as const,
   transfers: (params: ListTransfersParams) => ["bridge", "transfers", params] as const,
   explorerEvents: (params: ListExplorerEventsParams) =>
@@ -81,13 +94,14 @@ export const pollIntervals = {
    */
   robinhoodLimits: 300_000,
   /**
-   * The inbound-route recipient rate-limit check for the address currently
-   * in the form. Refetching while the form sits open both catches an address
-   * that got paid from elsewhere in the meantime and lets a blocked
-   * address unblock on its own once its 24-hour window passes — without
-   * the user having to retype anything.
+   * The unified six-route eligibility verdict, on the same cadence and
+   * for the same two reasons: a wallet that became blocked elsewhere
+   * shows up without a retype, and — the reason this is a poll and not a
+   * one-shot — a BLOCKED wallet re-enables itself the moment the backend
+   * says its rolling window has expired. There is no client-side timer
+   * counting down to that; the backend is asked again and believed.
    */
-  recipientEligibility: 30_000,
+  routeEligibility: 30_000,
   /** A transfer the user is actively watching. */
   activeTransfer: 8_000,
   /** A transfer that has reached a terminal state. */

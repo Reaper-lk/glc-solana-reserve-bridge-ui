@@ -17,7 +17,16 @@ import { chainsViewSchema } from "../schemas/chains";
 import { explorerEventListSchema } from "../schemas/explorer";
 import { reserveHistoryListSchema } from "../schemas/reserves";
 import { quoteOutputSchema, type QuoteOutputDto } from "../schemas/quote";
-import { recipientEligibilitySchema } from "../schemas/eligibility";
+import {
+  recipientEligibilitySchema,
+  routeEligibilitySchema,
+} from "../schemas/eligibility";
+import {
+  EligibilityEndpointUnpublishedError,
+  isEligibilityRoute,
+  normalizeRecipientEligibility,
+  normalizeRouteEligibility,
+} from "@/lib/bridge/eligibility";
 import {
   createTransferOutputSchema,
   createTransferRequestSchema,
@@ -290,6 +299,83 @@ export class MockBridgeClient implements BridgeApiClient {
    */
   async getRhnToGlcRecipientEligibility(address: string, wallet: string | null) {
     return this.delay(this.eligibility("RhnToGlc", address, wallet));
+  }
+
+  /**
+   * The rolling-24h verdict for ANY of the six routes.
+   *
+   * # Why the fixture client answers all six when the real backend
+   * answers two
+   *
+   * Because that is what a fixture backend is for. `MockBridgeClient`
+   * stands in for the bridge API so the app can be exercised end to end
+   * without one — it already invents deposit addresses, quotes and
+   * transfer histories. Modelling the eligibility endpoint the real
+   * backend is expected to serve is the same kind of statement, and
+   * without it four of six routes are unreachable in mock mode and every
+   * flow behind them (the Goldcoin deposit address, its QR, the
+   * submit-failure paths) is untestable.
+   *
+   * This weakens nothing in production. The gate is not a flag: the only
+   * way to a cleared verdict is a client returning an authoritative
+   * answer, and in production the client is `HttpBridgeClient`, which
+   * asks the real backend and refuses when it 404s. Mock mode reaches no
+   * chain and moves no value — `isMockMode` is surfaced in the shell for
+   * exactly that reason.
+   *
+   * Every route reads clear, for the same reason the two per-route
+   * answers do: this fixture keeps no history to rate-limit against. The
+   * blocked, stale, unevaluated and unpublished shapes are exercised by
+   * unit tests, which construct them directly.
+   */
+  async getRouteEligibility(route: string, source: string | null, destination: string) {
+    if (route === "SolToGlc" || route === "RhnToGlc") {
+      // Through the SAME per-route builder the real client uses, so the
+      // two landed endpoints behave identically in both modes.
+      return this.delay(
+        normalizeRecipientEligibility(
+          this.eligibility(route, destination, source),
+          route,
+        ),
+      );
+    }
+    if (!isEligibilityRoute(route)) {
+      throw new EligibilityEndpointUnpublishedError(route);
+    }
+    return this.delay(
+      normalizeRouteEligibility(
+        routeEligibilitySchema.parse({
+          route,
+          // Echoed back exactly as the backend does, so the caller's
+          // stale-answer check is exercised rather than defeated.
+          source: source ?? null,
+          destination: destination.trim(),
+          eligible: true,
+          source_eligibility: {
+            eligible: true,
+            retry_at: null,
+            remaining_seconds: null,
+            reason: null,
+            // A Goldcoin-sourced route is funded by sending to an address
+            // the backend issues: no source wallet exists in the browser,
+            // so its source window can only be enforced at fold time.
+            // Said here because the BACKEND says it — the UI never
+            // exempts a side on its own.
+            applicable: route !== "GlcToSol" && route !== "GlcToRhn",
+          },
+          destination_eligibility: {
+            eligible: true,
+            retry_at: null,
+            remaining_seconds: null,
+            reason: null,
+            applicable: true,
+          },
+          as_of: Math.floor(this.now().getTime() / 1000),
+          window_seconds: 86_400,
+        }),
+        route,
+      ),
+    );
   }
 
   private eligibility(

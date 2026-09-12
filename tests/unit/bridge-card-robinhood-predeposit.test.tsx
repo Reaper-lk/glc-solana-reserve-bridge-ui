@@ -1,14 +1,20 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
+import {
+  primaryCta,
+  renderWithQueryClient,
+  routeEligibilityFrom,
+  selectNetwork,
+} from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { encodeBase58Check } from "@/lib/bridge/glc-address";
 import {
-  ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
-  ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
-  ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE,
-} from "@/lib/bridge/robinhood-predeposit";
+  ELIGIBILITY_BLOCKED_BOTH_TITLE,
+  ELIGIBILITY_BLOCKED_TITLE,
+  ELIGIBILITY_UNAVAILABLE_TITLE,
+} from "@/lib/bridge/eligibility";
+import { ROBINHOOD_V2_BRIDGE_ADDRESS } from "@/lib/evm/robinhood-target";
 import type * as EnvModule from "@/lib/config/env";
 import type * as EvmModule from "@/lib/evm";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
@@ -44,6 +50,9 @@ const getSolToGlcRecipientEligibility = vi.fn();
 const getRhnToGlcRecipientEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getChains: (...args: unknown[]) => getChains(...args),
@@ -54,13 +63,19 @@ vi.mock("@/lib/api", async () => ({
     listTransfers: (...args: unknown[]) => listTransfers(...args),
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
+    // The one method `fetchRouteEligibility` calls. Built from the
+    // per-route mocks above by the same rule `HttpBridgeClient` uses, so
+    // a route with no landed endpoint rejects here exactly as it would
+    // against the real backend.
+    getRouteEligibility: routeEligibilityFrom({
+      SolToGlc: (address: string, wallet: string | null) =>
+        getSolToGlcRecipientEligibility(address, wallet),
+      RhnToGlc: (address: string, wallet: string | null) =>
+        getRhnToGlcRecipientEligibility(address, wallet),
+    }),
     getRhnToGlcRecipientEligibility: (...args: unknown[]) =>
       getRhnToGlcRecipientEligibility(...args),
   },
-  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
-  sourceWalletRateLimitedError: (await import("@/lib/api/errors"))
-    .sourceWalletRateLimitedError,
-  robinhoodPredepositError: (await import("@/lib/api/errors")).robinhoodPredepositError,
 }));
 
 const push = vi.fn();
@@ -109,7 +124,9 @@ const DEPLOYMENT = {
   chainId: 4663,
   chainName: "Robinhood Chain",
   rpcUrl: "https://rpc.example.invalid",
-  bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+  // The PINNED V2 contract. A fixture naming anything else is refused
+  // before the gate under test is reached, which is the point of the pin.
+  bridgeAddress: ROBINHOOD_V2_BRIDGE_ADDRESS,
   tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
 };
 
@@ -206,8 +223,6 @@ function eligibility(overrides: Record<string, unknown> = {}) {
 
 /** A plausible unix SECOND: the reopen instant the backend publishes. */
 const RETRY_AT = 1_800_000_000;
-/** The same instant, rendered the way every backend instant in this app is. */
-const RETRY_AT_LOCAL = new Date(RETRY_AT * 1000).toLocaleString();
 
 function sourceWalletBlocked(overrides: Record<string, unknown> = {}) {
   return eligibility({
@@ -358,11 +373,7 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     await fillRhnForm(user);
 
     await waitFor(() =>
-      expect(getRhnToGlcRecipientEligibility).toHaveBeenCalledWith(
-        ADDRESS_A,
-        WALLET_A,
-        expect.anything(),
-      ),
+      expect(getRhnToGlcRecipientEligibility).toHaveBeenCalledWith(ADDRESS_A, WALLET_A),
     );
   });
 
@@ -374,21 +385,17 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     await fillRhnForm(user);
 
     expect(
-      (await screen.findAllByText(ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE)).length,
+      (await screen.findAllByText(ELIGIBILITY_BLOCKED_TITLE.source)).length,
     ).toBeGreaterThan(0);
-    // The ABSOLUTE reopen time the backend published, preferred over the
-    // seconds-from-now figure because it does not decay while the page
-    // sits open — and naming the wallet, so the line is unambiguous read
-    // beside the destination limit's.
-    expect(
-      screen.getByText(
-        `This Robinhood Network wallet can bridge again after ${RETRY_AT_LOCAL}.`,
-      ),
-    ).toBeInTheDocument();
+    // The reopen time the backend published, rendered compactly beside
+    // the row it belongs to and derived from the ABSOLUTE instant rather
+    // than the seconds-from-now figure, which decays while the page sits
+    // open.
+    expect(screen.getByText(/Source wallet is eligible again in/)).toBeInTheDocument();
     // The destination's own message must not also appear: only one limit
     // is blocking, and naming both would send the user to fix the wrong one.
     expect(
-      screen.queryByText(ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE),
+      screen.queryByText(ELIGIBILITY_BLOCKED_TITLE.destination),
     ).not.toBeInTheDocument();
 
     await waitFor(() => expect(primaryCta()).toBeDisabled());
@@ -404,12 +411,10 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     await fillRhnForm(user);
 
     expect(
-      (await screen.findAllByText(ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE)).length,
+      (await screen.findAllByText(ELIGIBILITY_BLOCKED_TITLE.destination)).length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getByText(
-        `This Goldcoin address can receive again after ${RETRY_AT_LOCAL}.`,
-      ),
+      screen.getByText(/Destination wallet is eligible again in/),
     ).toBeInTheDocument();
     await waitFor(() => expect(primaryCta()).toBeDisabled());
     await user.click(primaryCta());
@@ -417,9 +422,10 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
   });
 
   it("fails closed when the eligibility endpoint cannot be read", async () => {
-    // The asymmetry with SolToGlc, which deliberately fails OPEN here: a
-    // blocked Robinhood deposit is not slower, it is parked with the
-    // user's GLC already in the contract.
+    // Every route now fails closed on an unreadable verdict, not just
+    // this one — but this is the route where the cost of the old
+    // fail-open behaviour was a user's GLC parked in ManualReview rather
+    // than a slower transfer.
     getRhnToGlcRecipientEligibility.mockRejectedValue(new Error("500"));
 
     const user = userEvent.setup({ delay: null });
@@ -427,7 +433,7 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     await fillRhnForm(user);
 
     expect(
-      (await screen.findAllByText(ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE)).length,
+      (await screen.findAllByText(ELIGIBILITY_UNAVAILABLE_TITLE)).length,
     ).toBeGreaterThan(0);
     await waitFor(() => expect(primaryCta()).toBeDisabled());
     await user.click(primaryCta());
@@ -454,11 +460,7 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     rerender(<BridgeCard />);
 
     await waitFor(() => expect(primaryCta()).toBeDisabled());
-    expect(getRhnToGlcRecipientEligibility).toHaveBeenCalledWith(
-      ADDRESS_A,
-      WALLET_B,
-      expect.anything(),
-    );
+    expect(getRhnToGlcRecipientEligibility).toHaveBeenCalledWith(ADDRESS_A, WALLET_B);
     await user.click(primaryCta());
     expect(depositFn).not.toHaveBeenCalled();
   });
@@ -495,10 +497,10 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     renderWithQueryClient(<BridgeCard />);
     await fillRhnForm(user);
 
+    // Falls through to the seconds figure the backend did send, rendered
+    // in the compact h/m form.
     expect(
-      await screen.findByText(
-        "This Goldcoin address can receive again in about 2 hours.",
-      ),
+      await screen.findByText(/Destination wallet is eligible again in 2h/),
     ).toBeInTheDocument();
     await waitFor(() => expect(primaryCta()).toBeDisabled());
     expect(depositFn).not.toHaveBeenCalled();
@@ -520,18 +522,18 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     await fillRhnForm(user);
 
     expect(
-      (await screen.findAllByText(ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE)).length,
+      (await screen.findAllByText(ELIGIBILITY_BLOCKED_TITLE.source)).length,
     ).toBeGreaterThan(0);
-    expect(screen.queryByText(/can bridge again/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/can receive again/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/eligible again in/)).not.toBeInTheDocument();
     await waitFor(() => expect(primaryCta()).toBeDisabled());
     await user.click(primaryCta());
     expect(depositFn).not.toHaveBeenCalled();
   });
 
   it("times the two limits separately when both windows block", async () => {
-    // Wallet-first, matching the fold's precedence — and the surfaced
-    // line quotes the WALLET's reopen instant, not the destination's.
+    // Both windows are reported, each with its OWN reopen time, because a
+    // user waiting out two limits needs both waits — the old gate could
+    // surface only the higher-precedence one.
     getRhnToGlcRecipientEligibility.mockResolvedValue(
       sourceWalletBlocked({
         blocked_reasons: ["source_wallet_rate_limited", "recipient_rate_limited"],
@@ -544,18 +546,15 @@ describe("BridgeCard — RhnToGlc eligibility", () => {
     renderWithQueryClient(<BridgeCard />);
     await fillRhnForm(user);
 
+    // The compact rows time each side independently.
     expect(
-      await screen.findByText(
-        `This Robinhood Network wallet can bridge again after ${RETRY_AT_LOCAL}.`,
-      ),
+      await screen.findByText(/Source wallet is eligible again in/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(
-        `This Goldcoin address can receive again after ${new Date(
-          (RETRY_AT + 86_400) * 1000,
-        ).toLocaleString()}.`,
-      ),
-    ).not.toBeInTheDocument();
+      screen.getByText(/Destination wallet is eligible again in/),
+    ).toBeInTheDocument();
+    // And the callout names both sides rather than picking one.
+    expect(screen.getAllByText(ELIGIBILITY_BLOCKED_BOTH_TITLE).length).toBeGreaterThan(0);
   });
 
   it("accepts the backend's lowercase echo of a checksummed wallet address", async () => {
@@ -591,17 +590,13 @@ describe("BridgeCard — RhnToGlc submit-time re-check", () => {
     );
     expect(depositFn).not.toHaveBeenCalled();
     expect(
-      (await screen.findAllByText(ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE)).length,
+      (await screen.findAllByText(ELIGIBILITY_BLOCKED_TITLE.source)).length,
     ).toBeGreaterThan(0);
     // The submit-time refusal states the reopen time too, not just the
     // form's own callout — it is built from the same verdict, so the two
     // can never quote different times.
     expect(
-      (
-        await screen.findAllByText(
-          `This Robinhood Network wallet can bridge again after ${RETRY_AT_LOCAL}.`,
-        )
-      ).length,
+      (await screen.findAllByText(/Source wallet is eligible again in/)).length,
     ).toBeGreaterThan(0);
   });
 
@@ -634,7 +629,7 @@ describe("BridgeCard — RhnToGlc submit-time re-check", () => {
     await user.click(primaryCta());
 
     expect(
-      (await screen.findAllByText(ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE)).length,
+      (await screen.findAllByText(ELIGIBILITY_UNAVAILABLE_TITLE)).length,
     ).toBeGreaterThan(0);
     expect(depositFn).not.toHaveBeenCalled();
   });
@@ -670,9 +665,19 @@ describe("BridgeCard — the Solana routes are untouched by this gate", () => {
     expect(getRhnToGlcRecipientEligibility).not.toHaveBeenCalled();
   });
 
-  it("leaves GlcToSol usable while the Robinhood route is gated shut", async () => {
-    // A Goldcoin→Solana transfer draws on a different reserve entirely.
-    // The Robinhood gate closing must not touch it.
+  it("never asks the RhnToGlc endpoint about a GlcToSol transfer", async () => {
+    // A Goldcoin→Solana transfer draws on a different reserve entirely,
+    // and its windows are not the ones this endpoint reports. The
+    // Robinhood gate closing must not reach it, and neither must its
+    // eligibility question: asking `/recipients/rhn-to-glc/eligibility`
+    // about `GlcToSol` would be asking about a limit that does not govern
+    // it.
+    //
+    // GlcToSol is nonetheless NOT submittable, and deliberately so: the
+    // backend publishes no eligibility endpoint for it yet, and every
+    // route now requires an authoritative verdict. What this test pins is
+    // that the reason is its OWN missing verdict, never Robinhood's
+    // capacity.
     getChains.mockResolvedValue(
       chains({ available: false, unavailableReason: "Bridge capacity reached." }),
     );
@@ -687,7 +692,10 @@ describe("BridgeCard — the Solana routes are untouched by this gate", () => {
       "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     );
 
-    await waitFor(() => expect(primaryCta()).toBeEnabled());
+    expect(
+      (await screen.findAllByText(ELIGIBILITY_UNAVAILABLE_TITLE)).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Bridge capacity reached.")).not.toBeInTheDocument();
     expect(getRhnToGlcRecipientEligibility).not.toHaveBeenCalled();
   });
 });

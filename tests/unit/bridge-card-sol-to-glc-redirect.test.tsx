@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
+import {
+  primaryCta,
+  renderWithQueryClient,
+  routeEligibilityFrom,
+  selectNetwork,
+} from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { encodeBase58Check } from "@/lib/bridge/glc-address";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
@@ -32,6 +37,9 @@ const listTransfers = vi.fn();
 const getSolToGlcRecipientEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getChains: (...args: unknown[]) => getChains(...args),
@@ -42,10 +50,15 @@ vi.mock("@/lib/api", async () => ({
     listTransfers: (...args: unknown[]) => listTransfers(...args),
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
+    // The one method `fetchRouteEligibility` calls. Built from the
+    // per-route mocks above by the same rule `HttpBridgeClient` uses, so
+    // a route with no landed endpoint rejects here exactly as it would
+    // against the real backend.
+    getRouteEligibility: routeEligibilityFrom({
+      SolToGlc: (address: string, wallet: string | null) =>
+        getSolToGlcRecipientEligibility(address, wallet),
+    }),
   },
-  // BridgeCard imports this error factory alongside bridgeApi; the real
-  // implementation is pure copy/shaping, so pass it through unmocked.
-  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
 }));
 
 const push = vi.fn();
@@ -172,12 +185,20 @@ beforeEach(() => {
   getLimits.mockResolvedValue(fixtures.limitsFixture());
   getReserve.mockResolvedValue(fixtures.reserveFixture());
   getQuote.mockResolvedValue(quote());
+  // BOTH sides cleared, for these exact inputs: the gate requires the
+  // source wallet to have been evaluated, so an answer echoing `wallet:
+  // null` would be a refusal rather than a clearance.
   getSolToGlcRecipientEligibility.mockResolvedValue({
     direction: "SolToGlc",
     address: GOLDCOIN_ADDRESS,
+    wallet: WALLET_ADDRESS,
     eligible: true,
+    blocked_reason: null,
+    blocked_reasons: [],
     retry_after: null,
     retry_after_seconds: null,
+    source_wallet_retry_after: null,
+    recipient_retry_after: null,
     window_seconds: 86_400,
   });
   depositCapability.mockReturnValue({ available: true });

@@ -1,7 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderWithQueryClient, selectNetwork, waitForRouteVerdict } from "./test-utils";
+import {
+  expectHeldOnlyByEligibility,
+  primaryCta,
+  renderWithQueryClient,
+  routeEligibilityFrom,
+  selectNetwork,
+  waitForRouteVerdict,
+} from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { BridgeForm } from "@/features/bridge/BridgeForm";
 
@@ -29,6 +36,9 @@ const listTransfers = vi.fn();
 const getSolToGlcRecipientEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getChains: (...args: unknown[]) => getChains(...args),
@@ -39,10 +49,15 @@ vi.mock("@/lib/api", async () => ({
     listTransfers: (...args: unknown[]) => listTransfers(...args),
     getSolToGlcRecipientEligibility: (...args: unknown[]) =>
       getSolToGlcRecipientEligibility(...args),
+    // The one method `fetchRouteEligibility` calls. Built from the
+    // per-route mocks above by the same rule `HttpBridgeClient` uses, so
+    // a route with no landed endpoint rejects here exactly as it would
+    // against the real backend.
+    getRouteEligibility: routeEligibilityFrom({
+      SolToGlc: (address: string, wallet: string | null) =>
+        getSolToGlcRecipientEligibility(address, wallet),
+    }),
   },
-  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
-  sourceWalletRateLimitedError: (await import("@/lib/api/errors"))
-    .sourceWalletRateLimitedError,
 }));
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -338,11 +353,13 @@ describe("BridgeForm — GlcToRhn once the backend opens the route", () => {
     ).toBeVisible();
   });
 
-  it("creates the transfer on the derived route", async () => {
-    createTransfer.mockResolvedValue({
-      request_id: 5001,
-      deposit_address: "DtTTf6RR6bt3tCoZBfX5yVCp6xgANb1GWb",
-    });
+  it("derives GlcToRhn from the pair, and creates nothing while eligibility is unestablished", async () => {
+    // The route DERIVATION is what this test is about, and it is
+    // unchanged. What changed is that a Goldcoin-sourced route cannot
+    // currently clear the rolling-24h gate — the backend publishes no
+    // eligibility endpoint for it — so the transfer is refused rather
+    // than created. The quote proves the derived route reached the
+    // backend correctly.
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await waitForRouteVerdict();
@@ -354,17 +371,15 @@ describe("BridgeForm — GlcToRhn once the backend opens the route", () => {
       EVM_RECIPIENT,
     );
 
-    const cta = await screen.findByRole("button", { name: /Bridge GLC/i });
-    await waitFor(() => expect(cta).toBeEnabled());
-    await user.click(cta);
-
     await waitFor(() =>
-      expect(createTransfer).toHaveBeenCalledWith({
-        amount_atomic: "100000000000",
-        recipient: EVM_RECIPIENT,
-        route: "GlcToRhn",
-      }),
+      expect(getQuote).toHaveBeenCalledWith(
+        expect.objectContaining({ direction: "GlcToRhn" }),
+        expect.anything(),
+      ),
     );
+    await expectHeldOnlyByEligibility();
+    await user.click(primaryCta());
+    expect(createTransfer).not.toHaveBeenCalled();
   });
 
   it("shows the received amount from the backend quote, never a local calculation", async () => {

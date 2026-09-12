@@ -36,7 +36,10 @@ const config = NETWORK_ANNOUNCEMENT;
 const getChains = vi.fn();
 const getStatus = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getChains: (...args: unknown[]) => getChains(...args),
     getStatus: (...args: unknown[]) => getStatus(...args),

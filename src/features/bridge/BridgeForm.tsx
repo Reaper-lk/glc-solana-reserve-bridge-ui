@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 import { Button, Card, ErrorState } from "@/components/ui";
 import { isSettlementRoute, toBigInt } from "@/lib/api/schemas/common";
 import type { SettlementRoute } from "@/lib/api/schemas/common";
-import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
 import {
   bridgeApi,
-  recipientRateLimitedError,
+  eligibilityBlockedError,
+  eligibilityUnavailableError,
   robinhoodPredepositError,
-  sourceWalletRateLimitedError,
 } from "@/lib/api";
+import { fetchRouteEligibility } from "@/lib/api/eligibility-request";
 import {
   adapterFor,
   CHAIN_DESCRIPTORS,
@@ -40,23 +40,27 @@ import {
   robinhoodRawToCanonicalExact,
   rollingVolumeRemaining,
   routeAvailability,
+  routeEligibilityVerdict,
+  isEligibilityEndpointUnpublished,
   validateAmount,
+  eligibilityBlockedDetail,
+  eligibilityBlockedTitle,
+  isEligibilityRoute,
+  ELIGIBILITY_UNAVAILABLE_TITLE,
   QUOTA_EXHAUSTED_BODY,
   QUOTA_EXHAUSTED_TITLE,
   QUOTA_PAUSED_BODY,
   QUOTA_PAUSED_TITLE,
-  RECIPIENT_RATE_LIMIT_TITLE,
-  ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
-  ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
-  ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE,
   SOLANA_GLC,
-  SOURCE_WALLET_RATE_LIMIT_TITLE,
 } from "@/lib/bridge";
 import type {
   AmountBounds,
   ChainAdapter,
+  EligibilityRoute,
+  EligibilityVerdict,
   RobinhoodContractLeg,
   RobinhoodPredepositVerdict,
+  RouteEligibility,
   SolanaGovernedRoute,
   SolanaSourcedRoute,
 } from "@/lib/bridge";
@@ -72,6 +76,7 @@ import {
   encodeSolanaDestination,
   evmWalletQueryKeys,
   robinhoodDeployment,
+  robinhoodDeploymentProblem,
   robinhoodDepositCapability,
   useEvmWallet,
   useRobinhoodDeposit,
@@ -83,14 +88,14 @@ import {
   useLimits,
   useQuote,
   useReserve,
-  useRhnToGlcRecipientEligibility,
   useRobinhoodLimits,
-  useSolToGlcRecipientEligibility,
+  useRouteEligibility,
 } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
 import { useDepositToReserve, useWalletConnection, walletQueryKeys } from "@/lib/solana";
 import { useQueryClient } from "@tanstack/react-query";
 import { BlockerAlert, type Blocker } from "./BlockerAlert";
+import { EligibilityRows } from "./EligibilityRows";
 import { DepositInstructions } from "./DepositInstructions";
 import { DestinationContext, SourceContext } from "./chain-context";
 import { DirectionSwitch } from "./DirectionSwitch";
@@ -399,69 +404,137 @@ export function BridgeForm() {
     [destinationAdapter, recipient],
   );
 
-  const recipientEligibility = useSolToGlcRecipientEligibility(
+  /**
+   * The SOURCE wallet whose rolling-24h window is checked, per route.
+   *
+   * Named per FUNDING kind rather than per route, because that is what
+   * decides whether a source wallet exists in the browser at all:
+   *
+   * - `solana-program` (`SolToGlc`, `SolToRhn`) — the connected Solana
+   *   wallet, which is the account that will sign `deposit_to_reserve`
+   *   and therefore the `requester` the backend keys the window on.
+   * - `evm-contract` (`RhnToGlc`, `RhnToSol`) — the connected EVM
+   *   account, which is the custody contract's recorded depositor.
+   * - `goldcoin-deposit-address` (`GlcToSol`, `GlcToRhn`) — `null`. The
+   *   user sends GLC to an address the backend issues; no Goldcoin wallet
+   *   is connected here and this UI never learns which one they will send
+   *   from. So the source side of the policy CANNOT be established
+   *   client-side on these two routes, which is a refusal, not a pass.
+   */
+  const sourceWalletForEligibility: string | null =
+    sourceAdapter?.funding === "solana-program"
+      ? wallet.address
+      : sourceAdapter?.funding === "evm-contract"
+        ? evmWallet.address
+        : null;
+
+  /**
+   * The connected network, for the eligibility query's key only.
+   *
+   * A network switch changes which chain the connected address is an
+   * identity on, so a verdict obtained before it must not be reused
+   * after. Only the EVM side has a switchable network in this app; the
+   * Solana cluster is fixed by configuration.
+   */
+  const eligibilityChainId: number | null =
+    sourceAdapter?.funding === "evm-contract" ? evmWallet.chainId : null;
+
+  const eligibilityRoute: EligibilityRoute | null =
+    route !== null && isEligibilityRoute(route) ? route : null;
+
+  /**
+   * The rolling 24-hour wallet eligibility check, on EVERY route.
+   *
+   * # Why every route, and why it fails closed
+   *
+   * The policy is per route and per side: the source wallet and the
+   * destination wallet may each be used at most once in a rolling 24-hour
+   * window on that route. Both sides are gated on all six routes, so the
+   * form asks one question and reads one answer whatever pair is
+   * selected.
+   *
+   * The backend publishes an authoritative endpoint for two of the six
+   * today (`SolToGlc`, `RhnToGlc`). For the other four the query rejects,
+   * `routeEligibilityVerdict` reports `unavailable`, and submission is
+   * disabled. That is deliberate and is a stated backend dependency —
+   * see `ELIGIBILITY_BACKEND_DEPENDENCY`. Nothing here synthesises an
+   * eligible verdict for a route the backend has not answered about, and
+   * nothing here keeps a local record of what a wallet did: a
+   * client-side window would be neither authoritative nor tamper-proof.
+   *
+   * # Refresh
+   *
+   * Every input is in the query key, so a route change, a source-wallet
+   * or account change, a destination edit, or a network switch is a cache
+   * MISS rather than a stale verdict carried across it. The app-wide
+   * `refetchOnWindowFocus` covers a page regaining focus, the poll
+   * interval re-asks so an expired window re-enables the form on its own,
+   * and a successful submission invalidates the prefix explicitly.
+   */
+  const eligibility = useRouteEligibility(
+    eligibilityRoute,
+    sourceWalletForEligibility,
     recipient.trim(),
-    route === "SolToGlc" ? wallet.address : null,
-    route === "SolToGlc" && recipientValidation.valid,
+    eligibilityChainId,
+    recipientValidation.valid,
   );
 
   /**
-   * The pre-deposit checks for a ROBINHOOD-SOURCED route — `RhnToGlc` and
-   * `RhnToSol`.
+   * The one eligibility verdict the whole form reads — the disabled
+   * button, the compact rows, and the pre-submit refusal all derive from
+   * this, so they cannot disagree.
+   */
+  const eligibilityVerdict: EligibilityVerdict | null =
+    eligibilityRoute === null
+      ? null
+      : routeEligibilityVerdict({
+          route: eligibilityRoute,
+          source: sourceWalletForEligibility,
+          destination: recipient.trim(),
+          // A query that has not answered YET holds the button rather
+          // than releasing it. A background REFETCH of an answer that
+          // already arrived is deliberately not "pending" — that would
+          // flicker the button off every poll tick, and the answer being
+          // refreshed is still the one this form holds. Staleness is
+          // closed by the fresh re-read in `submit`, not by disabling the
+          // button between polls.
+          pending: eligibility.isPending,
+          answer: eligibility.data ?? null,
+          // Chooses the sentence, not the outcome: both this and a plain
+          // failure are refusals. Read from the error the CLIENT raised,
+          // so "this deployment does not serve the check" is something
+          // the deployment said rather than something this build assumed.
+          endpointUnpublished: isEligibilityEndpointUnpublished(eligibility.error),
+        });
+
+  /**
+   * The pre-deposit AVAILABILITY check for a ROBINHOOD-SOURCED route —
+   * `RhnToGlc` and `RhnToSol`.
    *
    * # Why these routes are gated and the others are not
    *
    * A Goldcoin-sourced route asks the backend for permission before
    * anything leaves a wallet: `POST /transfers` can refuse outright. Both
-   * of these call the custody contract's `deposit` directly, so there is no
-   * preflight to refuse — a deposit that arrives while the destination
+   * of these call the custody contract's `deposit` directly, so there is
+   * no preflight to refuse — a deposit that arrives while the destination
    * reserve is closed is not rejected but FOLDED and parked in
    * `ManualReview`, with the user's GLC already committed.
    *
-   * So the published signals that could have prevented it are read here,
-   * fail closed, and are re-read fresh in `submit` immediately before the
-   * wallet is invoked. The backend re-checks everything authoritatively at
-   * fold time and remains the enforcement; what it cannot do is give the
-   * deposit back.
-   *
-   * # The two routes are gated on different NUMBERS of signals
-   *
-   * Availability applies to both: it is what stands in front of the
-   * irreversible deposit. The rolling-window eligibility applies only to
-   * `RhnToGlc`, because those windows are GOLDCOIN-PAYOUT policy — the
-   * backend publishes exactly two eligibility endpoints, both `*-to-glc` —
-   * and `RhnToSol` pays out on Solana. Requiring an answer there would be a
-   * gate no response could satisfy; `eligibilityApplies` says which case
-   * this is, and the verdict function owns what each one means.
+   * So the published availability signal is read here, fails closed, and
+   * is re-read fresh in `submit` immediately before the wallet is
+   * invoked. The wallet-eligibility half is `eligibilityVerdict` above,
+   * which applies to every route including these two; both must pass.
    */
-  const routeIsRhnToGlc = route === "RhnToGlc";
   const routeIsRobinhoodSourced = route === "RhnToGlc" || route === "RhnToSol";
-  // Keyed on route, destination AND wallet, so editing either input is a
-  // cache MISS rather than a stale "eligible" carried across the edit.
-  // Fired only for the route whose endpoint exists.
-  const rhnEligibility = useRhnToGlcRecipientEligibility(
-    recipient.trim(),
-    routeIsRhnToGlc ? evmWallet.address : null,
-    routeIsRhnToGlc && recipientValidation.valid && evmWallet.address !== null,
-  );
-
-  /**
-   * `/chains` positively answered `available: true` — and, on `RhnToGlc`,
-   * the eligibility endpoint positively cleared THESE inputs — or the
-   * single reason it did not. `null` for a route whose deposit the backend
-   * can refuse before anything moves.
-   */
-  const rhnPredeposit: RobinhoodPredepositVerdict | null = routeIsRobinhoodSourced
-    ? robinhoodPredepositVerdict({
-        routeAvailable: isRouteEffectivelyAvailable(chains.data, route),
-        unavailableReason:
-          availability.kind === "unavailable" ? availability.reason : null,
-        eligibilityApplies: routeIsRhnToGlc,
-        eligibility: rhnEligibility.data ?? null,
-        address: recipient.trim(),
-        wallet: evmWallet.address,
-      })
-    : null;
+  const rhnPredeposit: RobinhoodPredepositVerdict | null =
+    route === "RhnToGlc" || route === "RhnToSol"
+      ? robinhoodPredepositVerdict({
+          route,
+          routeAvailable: isRouteEffectivelyAvailable(chains.data, route),
+          unavailableReason:
+            availability.kind === "unavailable" ? availability.reason : null,
+        })
+      : null;
 
   /**
    * `GET /reserve` carries the Goldcoin and Solana reserves only, so a
@@ -583,6 +656,27 @@ export function BridgeForm() {
       ? "Remaining 24-hour bridge capacity for this route. Reopening after exhaustion is a manual operator action, not automatic."
       : "Remaining capacity in this route's rolling 24-hour window, as the bridge contract itself accounts for it. It refills when the window rolls over.";
 
+  /**
+   * The instant every cooldown on screen is measured against: when the
+   * verdict being displayed actually ARRIVED.
+   *
+   * Not `Date.now()`. Reading a clock during render is impure — the same
+   * props would produce a different tree on a re-render the component did
+   * not ask for — and React's own lint rules refuse it. `dataUpdatedAt`
+   * is a value React Query captured when the response landed, so it is
+   * stable for as long as that response is what the form holds, and it
+   * advances on its own every poll. That is also the honest reading: a
+   * wait shown beside a verdict should be measured from the moment the
+   * verdict was true, not from a clock that has since moved on.
+   *
+   * It only ever FORMATS a wait the backend published — it never decides
+   * eligibility. A clock hours out of true would render a wrong "eligible
+   * again in" and still not let a blocked wallet through: the verdict is
+   * the backend's, and an expired window re-enables the form when the
+   * backend says so, not when this number passes a threshold.
+   */
+  const nowSeconds = Math.floor(eligibility.dataUpdatedAt / 1000);
+
   // Called directly rather than memoized by hand: it is a pure
   // function of values already computed above, the React Compiler
   // memoizes it, and a hand-written dependency list for this many
@@ -612,6 +706,9 @@ export function BridgeForm() {
     robinhoodCapability: () =>
       robinhoodDepositCapability({
         deployment: robinhoodDeployment(),
+        // Why it did not resolve, so a deployment pointed at the retired
+        // V1 contract says THAT rather than "not configured".
+        deploymentProblem: robinhoodDeploymentProblem(),
         injectedWalletAvailable: evmWallet.hasInjectedWallet,
         walletConnected: evmWallet.address !== null,
         connectedChainId: evmWallet.chainId,
@@ -621,29 +718,14 @@ export function BridgeForm() {
         amountIsCanonical,
         destinationValid: recipientValidation.valid,
       }),
-    eligibility: {
-      applies: route === "SolToGlc",
-      pending: recipientEligibility.isPending,
-      data: recipientEligibility.data ?? null,
-    },
+    // One verdict, every route. `null` only for a pair that resolves to
+    // no route at all, which the gate refuses long before this step.
+    eligibility: eligibilityVerdict,
+    nowSeconds,
+    routeEffectivelyAvailable:
+      route !== null && isRouteEffectivelyAvailable(chains.data, route),
     predeposit: {
       applies: routeIsRobinhoodSourced,
-      // A query that has not answered YET is not a permission: it holds
-      // the button rather than releasing it, which is the difference
-      // between this gate and its advisory SolToGlc sibling. A background
-      // REFETCH of an answer that already arrived is deliberately not
-      // "pending" — that would flicker the button off every poll tick,
-      // and the answer being refreshed is still the one this form holds.
-      // Staleness is closed by the fresh re-read in `submit`, not by
-      // disabling the button between polls.
-      //
-      // Scoped to the route that HAS an eligibility query. React Query
-      // reports a DISABLED query as `isPending` — it has no data and never
-      // will — so reading this flag on `RhnToSol`, whose query is switched
-      // off because no such endpoint exists, held the button shut forever
-      // on an answer that was never coming. "Waiting" must mean a question
-      // was actually asked.
-      pending: routeIsRhnToGlc && rhnEligibility.isPending,
       verdict: rhnPredeposit,
     },
     quotePending: quote.isPending,
@@ -897,12 +979,22 @@ export function BridgeForm() {
           }
         />
 
+        {/* The rolling-24h readout, directly under the destination field
+            it is mostly about. Held back until a destination has been
+            entered: before that both sides are genuinely unknown, and a
+            red "Unavailable" on an empty form would read as a fault
+            rather than as a question not yet asked. */}
+        {eligibilityVerdict !== null && recipient.trim() !== "" && (
+          <EligibilityRows verdict={eligibilityVerdict} nowSeconds={nowSeconds} />
+        )}
+
         {gate.blocker && (
           <BlockerAlert
             blocker={gate.blocker}
             directionLabel={`${source.name} → ${destination.name}`}
             reason={gate.reason ?? ""}
             detail={gate.detail ?? ""}
+            title={gate.reason ?? ""}
           />
         )}
 
@@ -953,6 +1045,18 @@ export function BridgeForm() {
     setSubmitError(null);
     setSubmitting(true);
     try {
+      /*
+       * FINAL pre-submit eligibility re-check, fetched fresh, for EVERY
+       * route and BOTH sides.
+       *
+       * Nothing in the cache authorizes this. A rolling window can open
+       * between the button enabling and this click — another deposit
+       * landing, a payout settling, a second tab — and the next thing
+       * that happens is a signature. So the verdict is re-read against
+       * the values the form holds RIGHT NOW, and any answer that is not
+       * an unambiguous yes stops the submit before a wallet is opened.
+       */
+      await assertFreshEligibility();
       switch (sourceAdapter.funding) {
         case "goldcoin-deposit-address": {
           // `route` is sent explicitly even where it is the backend's own
@@ -1001,36 +1105,6 @@ export function BridgeForm() {
               "The destination payload does not select the route you chose, so nothing was sent.",
             );
           }
-          // FINAL pre-submit dual rate-limit re-check, fetched fresh: the
-          // address may have received a payout, or this wallet may have
-          // deposited, between being typed and this click. A blocked
-          // verdict stops everything BEFORE the wallet is invoked. A read
-          // that FAILS does not stop the submit — the backend re-checks
-          // authoritatively at admission, so failing open degrades to a
-          // slower transfer, never a lost one.
-          //
-          // `SolToGlc` only. These are the rolling 24-hour windows on a
-          // GOLDCOIN payout, and the backend publishes no equivalent for
-          // `SolToRhn` — there are exactly two eligibility endpoints and
-          // both are `*-to-glc`. Asking this one about a Robinhood-bound
-          // transfer would be asking about a limit that does not govern it.
-          if (route === "SolToGlc") {
-            let finalEligibility: RecipientEligibilityDto | null = null;
-            try {
-              finalEligibility = await bridgeApi.getSolToGlcRecipientEligibility(
-                recipient.trim(),
-                wallet.address,
-              );
-            } catch {
-              finalEligibility = null;
-            }
-            if (finalEligibility && !finalEligibility.eligible) {
-              void recipientEligibility.refetch();
-              throw finalEligibility.blocked_reason === "source_wallet_rate_limited"
-                ? sourceWalletRateLimitedError()
-                : recipientRateLimitedError();
-            }
-          }
           const baselineRequestId = await highestKnownRequestId(wallet.address).catch(
             () => null,
           );
@@ -1072,22 +1146,12 @@ export function BridgeForm() {
             // thing about a deposit the contract cannot recover afterwards.
             throw new Error(`route ${route} is not a Robinhood-sourced deposit`);
           }
-          const destinationAddress = recipient.trim();
-          const sourceWallet = evmWallet.address;
-          const refuse = (
-            verdict: Exclude<RobinhoodPredepositVerdict, { kind: "allowed" }>,
-          ): never => {
-            // Pull both cached answers back in line with what was just
-            // read, so the form's own callout agrees with this refusal
-            // rather than still showing an enabled button behind it.
-            void queryClient.invalidateQueries({ queryKey: queryKeys.chains() });
-            void rhnEligibility.refetch();
-            throw robinhoodPredepositError(verdict);
-          };
           // A wallet that vanished between render and click. The gate
           // cannot have passed without one, so this is a race, not a
-          // state — and it is still not a reason to send anything.
-          if (!sourceWallet) refuse({ kind: "eligibility-unknown" });
+          // state — and it is still not a reason to send anything. The
+          // eligibility re-check above already refuses a null source, so
+          // this is the belt to its braces.
+          if (!evmWallet.address) throw eligibilityUnavailableError();
 
           let freshChains;
           try {
@@ -1097,37 +1161,21 @@ export function BridgeForm() {
             freshChains = undefined;
           }
           const freshRoute = routeAvailability(freshChains, route);
-          // `RhnToGlc` only: the rolling windows are a Goldcoin-payout
-          // policy and the backend publishes no endpoint for the other
-          // route. `eligibilityApplies` below is what makes that a stated
-          // fact about the route rather than a missing read.
-          let freshEligibility: RecipientEligibilityDto | null = null;
-          if (route === "RhnToGlc") {
-            try {
-              freshEligibility = await bridgeApi.getRhnToGlcRecipientEligibility(
-                destinationAddress,
-                sourceWallet,
-              );
-            } catch {
-              freshEligibility = null;
-            }
-          }
           const verdict = robinhoodPredepositVerdict({
+            route,
             routeAvailable: isRouteEffectivelyAvailable(freshChains, route),
             unavailableReason:
               freshRoute.kind === "unavailable" || freshRoute.kind === "closed"
                 ? freshRoute.reason
                 : null,
-            eligibilityApplies: route === "RhnToGlc",
-            eligibility: freshEligibility,
-            // Checked against the CURRENT form values, not the ones the
-            // cached verdict was about: the backend echoes both back
-            // precisely so an answer to a superseded question can be
-            // discarded rather than acted on.
-            address: destinationAddress,
-            wallet: sourceWallet,
           });
-          if (verdict.kind !== "allowed") refuse(verdict);
+          if (verdict.kind !== "allowed") {
+            // Pull the cached answer back in line with what was just
+            // read, so the form's own callout agrees with this refusal
+            // rather than still showing an enabled button behind it.
+            void queryClient.invalidateQueries({ queryKey: queryKeys.chains() });
+            throw robinhoodPredepositError(verdict);
+          }
 
           /*
            * The destination payload, encoded for THIS ROUTE.
@@ -1165,6 +1213,14 @@ export function BridgeForm() {
           break;
         }
       }
+      // A submission consumes this route's window for BOTH wallets, so
+      // the verdict this form is holding is stale the moment it
+      // succeeds. Invalidated by prefix rather than refetched by key: the
+      // relevant entry is the one for the pair just used, and the next
+      // read of any of them should go to the backend.
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.routeEligibilityAll(),
+      });
     } catch (error) {
       setSubmitError(error);
     } finally {
@@ -1181,6 +1237,52 @@ export function BridgeForm() {
    * under MAX correct immediately, which is when someone is most likely to
    * look at it.
    */
+  /**
+   * Re-reads the rolling-24h verdict from the backend and throws unless
+   * BOTH sides are positively clear for the values the form holds now.
+   *
+   * The same `routeEligibilityVerdict` the disabled button is built from,
+   * fed a freshly fetched answer — so a refused click and a disabled
+   * button can never disagree about what "eligible" means, and a failure
+   * of the read is a refusal here exactly as it is there.
+   */
+  async function assertFreshEligibility(): Promise<void> {
+    // No route means no question to ask, which is not permission.
+    if (eligibilityRoute === null) throw eligibilityUnavailableError();
+    const destination = recipient.trim();
+    const source = sourceWalletForEligibility;
+    let answer: RouteEligibility | null = null;
+    let unpublished = false;
+    try {
+      answer = await fetchRouteEligibility(eligibilityRoute, source, destination);
+    } catch (error) {
+      // Includes a route this deployment serves no endpoint for, which
+      // rejects rather than resolves. Unreadable eligibility is unknown
+      // eligibility, and unknown is a refusal.
+      answer = null;
+      unpublished = isEligibilityEndpointUnpublished(error);
+    }
+    const verdict = routeEligibilityVerdict({
+      route: eligibilityRoute,
+      source,
+      destination,
+      // A one-shot read: it has either answered or failed, never "still
+      // waiting", so `pending` would be a state this call cannot be in.
+      pending: false,
+      answer,
+      endpointUnpublished: unpublished,
+    });
+    if (verdict.kind === "eligible") return;
+    // Bring the cached verdict in line with what was just read, so the
+    // form stops offering a button this refusal has just contradicted.
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.routeEligibilityAll(),
+    });
+    throw verdict.kind === "blocked"
+      ? eligibilityBlockedError(verdict, Math.floor(Date.now() / 1000))
+      : eligibilityUnavailableError();
+  }
+
   function refreshSourceBalance() {
     void queryClient.invalidateQueries({ queryKey: walletQueryKeys.balances() });
     void queryClient.invalidateQueries({ queryKey: evmWalletQueryKeys.balances() });
@@ -1465,18 +1567,25 @@ interface GateInput {
     message: string | null;
   };
   robinhoodCapability: () => { available: boolean; message: string | null };
-  eligibility: {
-    applies: boolean;
-    pending: boolean;
-    data: RecipientEligibilityDto | null;
-  };
   /**
-   * The RhnToGlc pre-deposit gate. `applies` is false for every other
-   * route, which is what keeps their gates byte-for-byte unchanged.
+   * The unified rolling-24h wallet verdict for the selected route.
+   * `null` only when the selected pair resolves to no route at all —
+   * which the gate refuses several steps earlier.
+   */
+  eligibility: EligibilityVerdict | null;
+  /** One instant, for formatting whatever cooldown the backend published. */
+  nowSeconds: number;
+  /**
+   * `isRouteEffectivelyAvailable(chains, route)` — `/chains` positively
+   * answered `available: true`. An absent field is `false`, never a shrug.
+   */
+  routeEffectivelyAvailable: boolean;
+  /**
+   * The contract-sourced AVAILABILITY gate. `applies` is false for every
+   * other route, which is what keeps their gates unchanged.
    */
   predeposit: {
     applies: boolean;
-    pending: boolean;
     verdict: RobinhoodPredepositVerdict | null;
   };
   quotePending: boolean;
@@ -1493,6 +1602,18 @@ interface GateInput {
  * route that cannot run wastes the user's time and teaches them to click
  * through prompts.
  */
+/**
+ * Said when `/chains` reports a route enabled but published no
+ * `available` field at all — so the reserve half of the question was
+ * never answered, and there is no backend sentence to quote.
+ *
+ * Deliberately cause-agnostic, like every other availability message
+ * here: this UI does not infer which gate refused, and it has not been
+ * told that one did.
+ */
+const ROUTE_AVAILABILITY_UNKNOWN =
+  "This route's current availability could not be confirmed, so transfers are held until it is.";
+
 function computeGate(input: GateInput): Gate {
   const blocked = (reason: string, extra: Partial<Gate> = {}): Gate => ({
     can: false,
@@ -1545,14 +1666,32 @@ function computeGate(input: GateInput): Gate {
     });
   }
 
-  // 2a. EFFECTIVE availability, for the one route with no backend
-  // preflight in front of an irreversible deposit. `enabled` says the
-  // route gate is open and reads no reserve state at all; `available`
-  // says the destination reserve would actually admit a deposit started
-  // now. A deployment that publishes neither answer gets refused here
-  // rather than falling back to the half of the question it did answer —
-  // an unknown must never render as a yes when the cost of being wrong
-  // is a user's funds already in the custody contract.
+  // 2a. EFFECTIVE availability, on EVERY route.
+  //
+  // `enabled` says the route gate is open and reads no reserve state at
+  // all; `available` says the destination reserve would actually admit a
+  // deposit started now. A deployment that published only the first gets
+  // refused here rather than having the half it answered read as the
+  // whole — an unknown must never render as a yes.
+  //
+  // This used to apply to the contract-sourced routes alone, on the
+  // reasoning that the others could still be refused by the backend
+  // before funds moved. That is true of `POST /transfers` and it is not
+  // true of a Goldcoin deposit a user has already sent to an issued
+  // address, or of a `deposit_to_reserve` already signed. `enabled: true`
+  // is not permission on any route, and the exact production defect this
+  // guards against — a route gate reporting open while the destination
+  // reserve's admission was closed — was never route-specific.
+  if (!input.routeEffectivelyAvailable) {
+    // Step 2 already returned for every non-`open` kind and quoted the
+    // backend's own sentence, so the only way to reach here is `open`
+    // with `available` unpublished — a case the backend authored no
+    // sentence for, because it does not know it did not answer.
+    return blocked(ROUTE_AVAILABILITY_UNKNOWN, {
+      cta: "Route unavailable",
+      blocker: "route-unavailable",
+    });
+  }
   if (
     input.predeposit.applies &&
     input.predeposit.verdict?.kind === "route-unavailable"
@@ -1680,66 +1819,59 @@ function computeGate(input: GateInput): Gate {
     }
   }
 
-  // 7. Rate limits, for the one route that has them.
-  if (input.eligibility.applies) {
-    if (input.eligibility.pending) {
-      return blocked("Checking this address's recent bridge activity…");
+  // 7. The contract-sourced AVAILABILITY gate, which fails closed on a
+  // read that did not complete.
+  //
+  // Availability stands in front of an IRREVERSIBLE deposit on these two
+  // routes: the custody contract takes the GLC and the bridge parks the
+  // obligation in ManualReview rather than refusing it, so an unreadable
+  // `/chains` must not be treated as permission. Every other route can be
+  // refused by the backend before anything moves.
+  if (input.predeposit.applies) {
+    const verdict = input.predeposit.verdict;
+    if (verdict?.kind !== "allowed") {
+      // `route-unavailable` was already returned at step 2a with the
+      // backend's own sentence; reaching here means the verdict itself
+      // was absent, which is not permission either.
+      return blocked(verdict?.reason ?? "This route cannot accept a deposit right now.", {
+        blocker: "route-unavailable",
+        cta: "Route unavailable",
+      });
     }
-    const data = input.eligibility.data;
-    if (data && !data.eligible) {
-      // Wallet-first, matching the backend's own precedence. Both limits
-      // are independently enforced regardless of which is surfaced.
-      return data.blocked_reason === "source_wallet_rate_limited"
-        ? blocked(SOURCE_WALLET_RATE_LIMIT_TITLE, {
-            blocker: "source-wallet-rate-limited",
-            cta: "Route unavailable",
-          })
-        : blocked(RECIPIENT_RATE_LIMIT_TITLE, {
-            blocker: "recipient-rate-limited",
-            cta: "Route unavailable",
-          });
-    }
-    // A FAILED eligibility read deliberately does not block: the backend
-    // re-checks the same rule authoritatively at admission, and submit()
-    // makes one more fresh attempt right before the wallet opens.
   }
 
-  // 7b. The same two rolling-24h limits for RhnToGlc — and, unlike above,
-  // FAIL CLOSED on a read that did not complete.
+  // 7b. The rolling 24-hour wallet windows — BOTH sides, EVERY route,
+  // fail closed.
   //
-  // The asymmetry is deliberate and is the whole point of this gate. A
-  // blocked SolToGlc deposit lands in a Solana program the bridge
-  // controls, so failing open there degrades to a slower transfer. A
-  // blocked Robinhood deposit is taken by the custody contract and parked
-  // in ManualReview; failing open there costs a user their GLC for as
-  // long as a human takes to look at it. So pending, failed, absent, and
-  // "about different inputs than the form now holds" are all refusals.
-  if (input.predeposit.applies) {
-    if (input.predeposit.pending) {
-      return blocked("Checking this deposit against the bridge's limits…");
-    }
-    const verdict = input.predeposit.verdict;
-    switch (verdict?.kind) {
-      case "allowed":
+  // The policy is per route and per side: the source wallet and the
+  // destination wallet may each be used at most once per rolling 24
+  // hours on that route. The verdict is entirely the backend's; this step
+  // only decides which sentence a refusal shows.
+  //
+  // `unavailable` is a refusal, not a shrug, and it covers the four
+  // routes the backend publishes no endpoint for yet as well as a read
+  // that failed. That is deliberate: a transfer the bridge would hold
+  // back cannot be reversed once it is sent, so "we could not establish
+  // eligibility" must not authorize one. The cost of a wrong no is a
+  // retry.
+  if (input.eligibility !== null) {
+    const verdict = input.eligibility;
+    switch (verdict.kind) {
+      case "eligible":
         break;
-      case "source-wallet-rate-limited":
-        return blocked(ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE, {
-          blocker: "robinhood-source-wallet-rate-limited",
+      case "checking":
+        return blocked("Checking this route's recent wallet activity…");
+      case "blocked":
+        return blocked(eligibilityBlockedTitle(verdict.sides), {
+          blocker: "eligibility-blocked",
           cta: "Route unavailable",
-          detail: verdict.retryAfter,
+          // The backend's own reopen time, per blocked side. Empty when
+          // it published none — never a guessed window.
+          detail: eligibilityBlockedDetail(verdict, input.nowSeconds),
         });
-      case "recipient-rate-limited":
-        return blocked(ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE, {
-          blocker: "robinhood-recipient-rate-limited",
-          cta: "Route unavailable",
-          detail: verdict.retryAfter,
-        });
-      default:
-        // `route-unavailable` was already returned at step 2a; everything
-        // remaining is an answer this form could not use, which is not a
-        // rate limit and must not be described as one.
-        return blocked(ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE, {
-          blocker: "robinhood-eligibility-unknown",
+      case "unavailable":
+        return blocked(ELIGIBILITY_UNAVAILABLE_TITLE, {
+          blocker: "eligibility-unavailable",
           cta: "Route unavailable",
         });
     }

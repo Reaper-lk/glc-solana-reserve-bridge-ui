@@ -1,7 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { primaryCta, renderWithQueryClient, selectNetwork } from "./test-utils";
+import {
+  expectHeldOnlyByEligibility,
+  primaryCta,
+  renderWithQueryClient,
+  routeEligibilityFrom,
+  selectNetwork,
+} from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 import { encodeBase58Check } from "@/lib/bridge/glc-address";
 import { BridgeCard } from "@/features/bridge/BridgeCard";
@@ -77,7 +83,27 @@ const getQuote = vi.fn();
 const createTransfer = vi.fn();
 const listTransfers = vi.fn();
 
+/** Both sides clear, echoed back exactly as the backend would. */
+function solToGlcEligibility(address: unknown, wallet: unknown) {
+  return Promise.resolve({
+    direction: "SolToGlc",
+    address: String(address),
+    wallet: wallet === null || wallet === undefined ? null : String(wallet),
+    eligible: true,
+    blocked_reason: null,
+    blocked_reasons: [],
+    retry_after: null,
+    retry_after_seconds: null,
+    source_wallet_retry_after: null,
+    recipient_retry_after: null,
+    window_seconds: 86_400,
+  });
+}
+
 vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStatus: (...args: unknown[]) => getStatus(...args),
     getChains: (...args: unknown[]) => getChains(...args),
@@ -86,22 +112,19 @@ vi.mock("@/lib/api", async () => ({
     getQuote: (...args: unknown[]) => getQuote(...args),
     createTransfer: (...args: unknown[]) => createTransfer(...args),
     listTransfers: (...args: unknown[]) => listTransfers(...args),
-    // These tests exercise the minimum-amount bound, not the recipient
-    // rate limit — every address here reads as eligible so the amount
-    // validation stays the only variable under test.
-    getSolToGlcRecipientEligibility: (address: unknown) =>
-      Promise.resolve({
-        direction: "SolToGlc",
-        address: String(address),
-        eligible: true,
-        retry_after: null,
-        retry_after_seconds: null,
-        window_seconds: 86_400,
-      }),
+    // These tests exercise the minimum-amount bound, not the rolling-24h
+    // windows — every pair here reads as eligible on BOTH sides so the
+    // amount validation stays the only variable under test.
+    getSolToGlcRecipientEligibility: solToGlcEligibility,
+    // The one method `fetchRouteEligibility` calls. Built from the
+    // per-route mock above by the same rule `HttpBridgeClient` uses, so
+    // a route with no landed endpoint rejects here exactly as it would
+    // against the real backend — which is why the `GlcToSol` cases assert
+    // `expectHeldOnlyByEligibility()` rather than an enabled button.
+    getRouteEligibility: routeEligibilityFrom({
+      SolToGlc: solToGlcEligibility,
+    }),
   },
-  // BridgeCard imports this error factory alongside bridgeApi; the real
-  // implementation is pure copy/shaping, so pass it through unmocked.
-  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -276,8 +299,11 @@ describe("BridgeCard — minimum bridge amount (Goldcoin -> Solana)", () => {
   it("accepts exactly 100 GLC, the policy floor", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, "100");
-    const submit = primaryCta();
-    await waitFor(() => expect(submit).toBeEnabled());
+    // The amount cleared every bound: the gate got as far as eligibility,
+    // which is ordered after all of them. `GlcToSol` cannot clear THAT
+    // yet — the backend publishes no endpoint for it — so an enabled
+    // button is not a state this route can reach.
+    await expectHeldOnlyByEligibility();
     expect(screen.queryByText(/minimum transfer is/i)).not.toBeInTheDocument();
   });
 
@@ -289,7 +315,7 @@ describe("BridgeCard — minimum bridge amount (Goldcoin -> Solana)", () => {
   it("still charges the ordinary fee on a minimum transfer", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, "100");
-    await waitFor(() => expect(primaryCta()).toBeEnabled());
+    await expectHeldOnlyByEligibility();
     expect(getQuote).toHaveBeenCalled();
     const quoted = getQuote.mock.calls.at(-1)?.[0] as { gross_amount: string };
     expect(BigInt(quoted.gross_amount)).toBe(BigInt(fixtures.SOURCE_MINIMUM_ATOMIC));
@@ -298,16 +324,14 @@ describe("BridgeCard — minimum bridge amount (Goldcoin -> Solana)", () => {
   it("accepts exactly the minimum at Goldcoin precision", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, GLC_TO_SOL_MINIMUM_INPUT);
-    const submit = primaryCta();
-    await waitFor(() => expect(submit).toBeEnabled());
+    await expectHeldOnlyByEligibility();
     expect(screen.queryByText(/minimum transfer is/i)).not.toBeInTheDocument();
   });
 
   it("accepts a normal amount above the minimum", async () => {
     const user = userEvent.setup();
     await typeGlcToSolAmount(user, "500");
-    const submit = primaryCta();
-    await waitFor(() => expect(submit).toBeEnabled());
+    await expectHeldOnlyByEligibility();
     expect(screen.queryByText(/minimum transfer is/i)).not.toBeInTheDocument();
   });
 });

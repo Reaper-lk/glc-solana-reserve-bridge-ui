@@ -23,7 +23,10 @@ import * as fixtures from "@/lib/api/mock/fixtures";
 const getStats = vi.fn();
 const getChains = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStats: (...args: unknown[]) => getStats(...args),
     getChains: (...args: unknown[]) => getChains(...args),

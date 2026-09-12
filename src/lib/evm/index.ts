@@ -2,11 +2,20 @@
  * Robinhood Network (EVM) support.
  *
  * The counterpart of `@/lib/solana` for the second non-Goldcoin chain this
- * bridge spans. Everything here is inert in every environment today: the
- * custody contract is not deployed, so `robinhoodDeployment()` resolves to
- * `null`, every capability check refuses with a stated reason, and no
- * transaction can be built. That is the intended shipping state — the
- * route is opened backend-side, never by this code.
+ * bridge spans.
+ *
+ * Every production transaction this module can build targets the PINNED
+ * V2 custody contract on the pinned chain — see `./robinhood-target`,
+ * which compiles both in and is the only place either value appears. A
+ * deployment configured with anything else, including the retired V1
+ * contract, resolves `robinhoodDeployment()` to `null`, refuses every
+ * capability check with a stated reason, and can build no transaction at
+ * all. There is no fallback path to V1 and no configuration that selects
+ * it.
+ *
+ * Resolving a target is still not permission: the route is opened
+ * backend-side (`GET /chains`' `available`, the rolling-24h wallet
+ * eligibility, the contract's own `isRouteLive`), never by this code.
  */
 
 export {
@@ -39,13 +48,29 @@ export {
 
 export {
   isRobinhoodDeploymentConfigured,
+  resolveRobinhoodDeployment,
   robinhoodDeployment,
+  robinhoodDeploymentProblem,
   robinhoodDepositCapability,
   type RobinhoodDeployment,
+  type RobinhoodDeploymentResolution,
   type RobinhoodDepositCapability,
   type RobinhoodDepositContext,
   type RobinhoodDepositReason,
 } from "./config";
+
+export {
+  checkRobinhoodTarget,
+  isRetiredRobinhoodV1BridgeAddress,
+  isRobinhoodV2BridgeAddress,
+  isSameEvmAddress,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_V1_BRIDGE_ADDRESS,
+  ROBINHOOD_V2_BRIDGE_ADDRESS,
+  wrongChainMessage,
+  type RobinhoodTargetProblem,
+  type RobinhoodTargetResult,
+} from "./robinhood-target";
 
 export {
   subscribeToInjectedWallets,
@@ -54,6 +79,7 @@ export {
 } from "./provider";
 
 export {
+  assertRobinhoodV2Target,
   depositToRobinhoodReserve,
   preflightRobinhoodDeposit,
   type RobinhoodDepositResult,

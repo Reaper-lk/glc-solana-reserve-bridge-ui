@@ -17,6 +17,43 @@ export {
   type RouteDisplay,
 } from "./direction";
 export {
+  eligibilityBlockedDetail,
+  eligibilityBlockedTitle,
+  eligibilityEndpointFor,
+  eligibilityMatchesInputs,
+  eligibilityPermitsSubmission,
+  formatEligibilityCooldown,
+  hasAuthoritativeEligibility,
+  isEligibilityEndpointUnpublished,
+  isEligibilityRoute,
+  normalizeRecipientEligibility,
+  normalizeRouteEligibility,
+  remainingSecondsFor,
+  routeEligibilityVerdict,
+  ELIGIBILITY_BACKEND_DEPENDENCY,
+  ELIGIBILITY_BLOCKED_BOTH_TITLE,
+  ELIGIBILITY_BLOCKED_LABEL,
+  ELIGIBILITY_BLOCKED_TITLE,
+  ELIGIBILITY_CHECKING_LABEL,
+  ELIGIBILITY_ELIGIBLE_LABEL,
+  ELIGIBILITY_ROUTES,
+  ELIGIBILITY_SIDE_LABEL,
+  ELIGIBILITY_UNAVAILABLE_LABEL,
+  ELIGIBILITY_UNAVAILABLE_NEXT,
+  ELIGIBILITY_UNAVAILABLE_TITLE,
+  REASON_DESTINATION_RATE_LIMITED,
+  REASON_SOURCE_WALLET_RATE_LIMITED,
+  type EligibilityEndpoint,
+  type EligibilityRoute,
+  type EligibilitySide,
+  type EligibilityUnavailableDetail,
+  type EligibilityVerdict,
+  EligibilityEndpointUnpublishedError,
+  type RouteEligibility,
+  type RouteEligibilityInput,
+  type WalletEligibility,
+} from "./eligibility";
+export {
   isRouteEffectivelyAvailable,
   isRouteEnabled,
   isRouteOpen,
@@ -58,22 +95,12 @@ export type { AddressProblem, AddressRules, AddressValidation } from "./glc-addr
 
 export { goldcoinAddressRules } from "./address-rules";
 
-export { RECIPIENT_RATE_LIMIT_TITLE } from "./recipient-rate-limit";
-export { SOURCE_WALLET_RATE_LIMIT_TITLE } from "./source-wallet-rate-limit";
-
 export {
   formatRetryAfter,
   formatRetryAt,
-  retryAfterSentence,
-  retryTimeFor,
+  isUsableRetryTimestamp,
   robinhoodPredepositVerdict,
-  verdictMatchesInputs,
-  ROBINHOOD_ELIGIBILITY_UNKNOWN_NEXT,
-  ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
-  ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
   ROBINHOOD_ROUTE_UNAVAILABLE_FALLBACK,
-  ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE,
-  type RateLimitedBy,
   type RobinhoodPredepositInput,
   type RobinhoodPredepositVerdict,
 } from "./robinhood-predeposit";

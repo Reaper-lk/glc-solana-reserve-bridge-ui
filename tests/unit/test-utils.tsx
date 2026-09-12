@@ -3,6 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import type userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
+import {
+  EligibilityEndpointUnpublishedError,
+  normalizeRecipientEligibility,
+  normalizeRouteEligibility,
+  ELIGIBILITY_UNAVAILABLE_TITLE,
+} from "@/lib/bridge/eligibility";
 
 /**
  * Shared render helper for component tests.
@@ -94,4 +100,74 @@ export function primaryCta(): HTMLElement {
       name: /^(Bridge GLC|Route unavailable|Connect wallet|Enter destination|Enter an amount|Choose networks)$/i,
     },
   );
+}
+
+/**
+ * Asserts the form accepted everything it validates locally, and is held
+ * shut only by the rolling-24h eligibility gate.
+ *
+ * # Why this is a real assertion and not a weaker `toBeDisabled`
+ *
+ * `computeGate` is ORDERED: the route, availability, the amount bounds,
+ * the canonical-precision check, the destination address and the source
+ * wallet's capability are all decided BEFORE eligibility is consulted. So
+ * a form reporting the eligibility blocker has necessarily passed every
+ * one of those — which is exactly what a test about minimum amounts, or
+ * about a quote, means by "accepted".
+ *
+ * It exists because four of the six routes cannot currently clear
+ * eligibility at all: the backend publishes no endpoint for them yet, and
+ * every route now requires an authoritative verdict before a wallet may
+ * be opened. Tests whose subject is not eligibility assert up to this
+ * point rather than asserting an enabled button they can no longer reach.
+ */
+export async function expectHeldOnlyByEligibility() {
+  await waitFor(() => expect(primaryCta()).toBeDisabled());
+  expect(screen.getAllByText(ELIGIBILITY_UNAVAILABLE_TITLE).length).toBeGreaterThan(0);
+}
+
+/**
+ * A `bridgeApi.getRouteEligibility` stand-in built from the two per-route
+ * mocks a test already has.
+ *
+ * # Why the tests need this at all
+ *
+ * `fetchRouteEligibility` delegates to the CLIENT, because which endpoint
+ * can answer for a route is a property of the deployment rather than of
+ * the form. A component test that mocks `@/lib/api` therefore has to
+ * supply that one method, and hand-rolling the dispatch in every file
+ * would be a dozen copies of the rule free to drift from
+ * `HttpBridgeClient`'s.
+ *
+ * So this mirrors the real client exactly: the two landed per-route
+ * endpoints are asked through the supplied mocks and normalised by the
+ * production normaliser, and every other route rejects with
+ * `EligibilityEndpointUnpublishedError` — the behaviour of a backend that
+ * does not serve `GET /eligibility`, which is the state these component
+ * tests describe. A test that wants a route-agnostic answer supplies
+ * `generic` instead.
+ */
+export function routeEligibilityFrom(handlers: {
+  SolToGlc?: (address: string, wallet: string | null) => unknown;
+  RhnToGlc?: (address: string, wallet: string | null) => unknown;
+  /** For a test that models a deployment serving the route-agnostic endpoint. */
+  generic?: (route: string, source: string | null, destination: string) => unknown;
+}) {
+  return async (route: string, source: string | null, destination: string) => {
+    if (route === "SolToGlc" || route === "RhnToGlc") {
+      const handler = handlers[route];
+      if (!handler) throw new EligibilityEndpointUnpublishedError(route);
+      const dto = await handler(destination, source);
+      return normalizeRecipientEligibility(
+        dto as Parameters<typeof normalizeRecipientEligibility>[0],
+        route,
+      );
+    }
+    if (!handlers.generic) throw new EligibilityEndpointUnpublishedError(route);
+    const dto = await handlers.generic(route, source, destination);
+    return normalizeRouteEligibility(
+      dto as Parameters<typeof normalizeRouteEligibility>[0],
+      route as Parameters<typeof normalizeRouteEligibility>[1],
+    );
+  };
 }

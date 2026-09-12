@@ -388,3 +388,169 @@ describe("HttpBridgeClient — timeout composition", () => {
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 });
+
+/**
+ * `getRouteEligibility` against the REAL client — the one production uses.
+ *
+ * This is where the fail-closed guarantee actually lives. The fixture
+ * client answers all six routes so the app can be exercised without a
+ * backend; that is a statement about fixtures. What matters for
+ * production is that the HTTP client only ever reports a clearance the
+ * backend itself gave, and refuses otherwise.
+ */
+describe("HttpBridgeClient — rolling-24h eligibility", () => {
+  const GLC = "GdKQNBb8CVhFxKC1kBi1AjgTQTgLPvVp7c";
+  const SOL_WALLET = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+
+  function recipientBody(direction: "SolToGlc" | "RhnToGlc", wallet: string | null) {
+    return {
+      direction,
+      address: GLC,
+      wallet,
+      eligible: true,
+      blocked_reason: null,
+      blocked_reasons: [],
+      retry_after: null,
+      retry_after_seconds: null,
+      source_wallet_retry_after: null,
+      recipient_retry_after: null,
+      window_seconds: 86_400,
+    };
+  }
+
+  it("asks the per-route endpoint for SolToGlc, destination as ?address= and source as ?wallet=", async () => {
+    respondOk(recipientBody("SolToGlc", SOL_WALLET));
+    const answer = await new HttpBridgeClient(BASE).getRouteEligibility(
+      "SolToGlc",
+      SOL_WALLET,
+      GLC,
+    );
+    const [url] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(String(url)).toBe(
+      `${BASE}/recipients/sol-to-glc/eligibility?address=${GLC}&wallet=${SOL_WALLET}`,
+    );
+    // Normalised by side, not passed through raw.
+    expect(answer.sourceSide).toMatchObject({ evaluated: true, eligible: true });
+    expect(answer.destinationSide).toMatchObject({ evaluated: true, eligible: true });
+    expect(answer.eligible).toBe(true);
+  });
+
+  it("asks the per-route endpoint for RhnToGlc", async () => {
+    respondOk(recipientBody("RhnToGlc", "0xdd870fa1b7c4700f2bd7f44238821c26f7392148"));
+    await new HttpBridgeClient(BASE).getRouteEligibility(
+      "RhnToGlc",
+      "0xdD870fA1b7C4700F2BD7f44238821C26f7392148",
+      GLC,
+    );
+    const [url] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(String(url)).toContain("/recipients/rhn-to-glc/eligibility");
+  });
+
+  it("ATTEMPTS the route-agnostic endpoint for a route with no per-route one", async () => {
+    // Attempting rather than refusing unasked is what makes the backend
+    // shipping this a backend-only change.
+    respondOk({
+      route: "RhnToSol",
+      source: "0xdd870fa1b7c4700f2bd7f44238821c26f7392148",
+      destination: SOL_WALLET,
+      eligible: true,
+      source_eligibility: { eligible: true, applicable: true },
+      destination_eligibility: { eligible: true, applicable: true },
+      as_of: 1_787_000_000,
+      window_seconds: 86_400,
+    });
+    const answer = await new HttpBridgeClient(BASE).getRouteEligibility(
+      "RhnToSol",
+      "0xdd870fa1b7c4700f2bd7f44238821c26f7392148",
+      SOL_WALLET,
+    );
+    const [url] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(String(url)).toContain("/eligibility?");
+    expect(String(url)).toContain("route=RhnToSol");
+    expect(String(url)).toContain(`destination=${SOL_WALLET}`);
+    expect(answer.eligible).toBe(true);
+    expect(answer.asOf).toBe(1_787_000_000);
+  });
+
+  it("omits ?source= entirely rather than sending it blank", async () => {
+    // A blank value is not "no wallet"; it is the one spelling the
+    // backend's address parsers would have to reject.
+    respondOk({
+      route: "GlcToSol",
+      source: null,
+      destination: SOL_WALLET,
+      eligible: true,
+      source_eligibility: { eligible: true, applicable: false },
+      destination_eligibility: { eligible: true, applicable: true },
+      window_seconds: 86_400,
+    });
+    await new HttpBridgeClient(BASE).getRouteEligibility("GlcToSol", null, SOL_WALLET);
+    const [url] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(String(url)).not.toContain("source=");
+  });
+
+  it("REFUSES when the deployment does not serve the route-agnostic endpoint", async () => {
+    // Today's backend. A 404 is not an answer, and the form refuses.
+    respondError(404, "not found");
+    await expect(
+      new HttpBridgeClient(BASE).getRouteEligibility("SolToRhn", SOL_WALLET, GLC),
+    ).rejects.toMatchObject({ name: "EligibilityEndpointUnpublishedError" });
+  });
+
+  it("refuses a 5xx rather than reporting it as unpublished", async () => {
+    // Both refuse; conflating them would tell an operator to wait for a
+    // deploy when the real problem is a failing backend.
+    respondError(500, "boom");
+    const failure = await new HttpBridgeClient(BASE)
+      .getRouteEligibility("SolToRhn", SOL_WALLET, GLC)
+      .catch((error: unknown) => error);
+    expect((failure as Error).name).not.toBe("EligibilityEndpointUnpublishedError");
+    expect(isApiError(failure)).toBe(true);
+  });
+
+  it("refuses a 200 whose body does not match the schema", async () => {
+    // A malformed clearance is not a clearance.
+    respondOk({ route: "SolToRhn", eligible: true });
+    await expect(
+      new HttpBridgeClient(BASE).getRouteEligibility("SolToRhn", SOL_WALLET, GLC),
+    ).rejects.toSatisfy((error: unknown) => isApiError(error));
+  });
+
+  it("refuses a route this build has no eligibility model for", async () => {
+    respondOk({});
+    await expect(
+      new HttpBridgeClient(BASE).getRouteEligibility("NotARoute", SOL_WALLET, GLC),
+    ).rejects.toMatchObject({ name: "EligibilityEndpointUnpublishedError" });
+    // Nothing was even asked.
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("never synthesises a clearance from a blocked per-side answer", async () => {
+    respondOk({
+      route: "SolToRhn",
+      source: SOL_WALLET,
+      destination: GLC,
+      eligible: false,
+      source_eligibility: {
+        eligible: false,
+        retry_at: 1_787_003_600,
+        remaining_seconds: 3_600,
+        reason: "source_wallet_rate_limited",
+        applicable: true,
+      },
+      destination_eligibility: { eligible: true, applicable: true },
+      window_seconds: 86_400,
+    });
+    const answer = await new HttpBridgeClient(BASE).getRouteEligibility(
+      "SolToRhn",
+      SOL_WALLET,
+      GLC,
+    );
+    expect(answer.eligible).toBe(false);
+    expect(answer.sourceSide).toMatchObject({
+      eligible: false,
+      applicable: true,
+      reason: "source_wallet_rate_limited",
+    });
+  });
+});

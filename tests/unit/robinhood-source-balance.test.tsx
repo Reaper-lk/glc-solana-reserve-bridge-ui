@@ -3,7 +3,12 @@ import { Component, type ReactNode } from "react";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { numberToHex } from "viem";
-import { renderWithQueryClient, selectNetwork, waitForRouteVerdict } from "./test-utils";
+import {
+  renderWithQueryClient,
+  routeEligibilityFrom,
+  selectNetwork,
+  waitForRouteVerdict,
+} from "./test-utils";
 import * as fixtures from "@/lib/api/mock/fixtures";
 
 /**
@@ -28,8 +33,12 @@ vi.hoisted(() => {
   process.env.NEXT_PUBLIC_ROBINHOOD_CHAIN_ID = "4663";
   process.env.NEXT_PUBLIC_ROBINHOOD_CHAIN_NAME = "Robinhood Chain";
   process.env.NEXT_PUBLIC_ROBINHOOD_RPC_URL = "https://rpc.example.invalid";
+  // The PINNED V2 contract. Configuration is checked against it rather
+  // than believed, so any other address fails the deployment closed —
+  // which is what a fixture naming an arbitrary contract used to do
+  // silently.
   process.env.NEXT_PUBLIC_ROBINHOOD_BRIDGE_ADDRESS =
-    "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+    "0xbaEdFFdAC19fC9c1F025f8F6F74e633aB2708DBf";
   process.env.NEXT_PUBLIC_ROBINHOOD_TOKEN_ADDRESS =
     "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359";
 });
@@ -43,6 +52,9 @@ const listTransfers = vi.fn();
 const getSolToGlcRecipientEligibility = vi.fn();
 
 vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: {
     getStatus: (...a: unknown[]) => getStatus(...a),
     getChains: (...a: unknown[]) => getChains(...a),
@@ -53,10 +65,15 @@ vi.mock("@/lib/api", async () => ({
     listTransfers: (...a: unknown[]) => listTransfers(...a),
     getSolToGlcRecipientEligibility: (...a: unknown[]) =>
       getSolToGlcRecipientEligibility(...a),
+    // The one method `fetchRouteEligibility` calls. Built from the
+    // per-route mocks above by the same rule `HttpBridgeClient` uses, so
+    // a route with no landed endpoint rejects here exactly as it would
+    // against the real backend.
+    getRouteEligibility: routeEligibilityFrom({
+      SolToGlc: (address: string, wallet: string | null) =>
+        getSolToGlcRecipientEligibility(address, wallet),
+    }),
   },
-  recipientRateLimitedError: (await import("@/lib/api/errors")).recipientRateLimitedError,
-  sourceWalletRateLimitedError: (await import("@/lib/api/errors"))
-    .sourceWalletRateLimitedError,
 }));
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));

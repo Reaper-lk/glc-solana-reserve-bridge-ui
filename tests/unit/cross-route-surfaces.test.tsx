@@ -27,7 +27,10 @@ import type { Route } from "@/lib/api/schemas/common";
 
 const getTransfer = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
+  // The real error factories: BridgeForm imports them by name, and a
+  // partial mock of this module would leave them undefined.
+  ...(await import("@/lib/api/errors")),
   bridgeApi: { getTransfer: (...args: unknown[]) => getTransfer(...args) },
 }));
 

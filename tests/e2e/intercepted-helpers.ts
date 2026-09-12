@@ -111,6 +111,84 @@ export async function mockHappyBackend(page: Page): Promise<void> {
       as_of: 0,
     });
   });
+  // The rolling-24h wallet eligibility check every route's submit gate
+  // requires. Two shapes, because the backend has two: the per-route
+  // `/recipients/*-to-glc/eligibility` pair, and the route-agnostic
+  // `/eligibility` this UI attempts for the other four.
+  //
+  // A "happy" backend answers them, exactly as it answers `/status` and
+  // `/limits`. Omitting them would leave every route unsubmittable —
+  // correctly, since an unestablished verdict fails closed, but for a
+  // reason unrelated to what these specs test. The blocked and
+  // unpublished shapes are asserted by unit tests and by
+  // intercepted-failures' own per-spec routes.
+  const recipientEligibility = (direction: "SolToGlc" | "RhnToGlc", url: URL) => ({
+    direction,
+    address: url.searchParams.get("address") ?? "",
+    wallet: url.searchParams.get("wallet"),
+    eligible: true,
+    blocked_reason: null,
+    blocked_reasons: [],
+    retry_after: null,
+    retry_after_seconds: null,
+    source_wallet_retry_after: null,
+    recipient_retry_after: null,
+    window_seconds: 86_400,
+  });
+  await page.route(
+    `${INTERCEPTED_API_ORIGIN}/recipients/sol-to-glc/eligibility**`,
+    (route) => {
+      if (route.request().method() === "OPTIONS") return json(route, null);
+      return json(
+        route,
+        recipientEligibility("SolToGlc", new URL(route.request().url())),
+      );
+    },
+  );
+  await page.route(
+    `${INTERCEPTED_API_ORIGIN}/recipients/rhn-to-glc/eligibility**`,
+    (route) => {
+      if (route.request().method() === "OPTIONS") return json(route, null);
+      return json(
+        route,
+        recipientEligibility("RhnToGlc", new URL(route.request().url())),
+      );
+    },
+  );
+  await page.route(`${INTERCEPTED_API_ORIGIN}/eligibility**`, (route) => {
+    if (route.request().method() === "OPTIONS") return json(route, null);
+    const url = new URL(route.request().url());
+    const routeId = url.searchParams.get("route") ?? "";
+    const source = url.searchParams.get("source");
+    return json(route, {
+      route: routeId,
+      // Echoed back, so the caller's stale-answer check is exercised
+      // rather than defeated.
+      source,
+      destination: url.searchParams.get("destination") ?? "",
+      eligible: true,
+      source_eligibility: {
+        eligible: true,
+        retry_at: null,
+        remaining_seconds: null,
+        reason: null,
+        // A Goldcoin-sourced route is funded by sending to an address the
+        // backend issues: no source wallet exists in the browser, so that
+        // side is enforced at fold time. Stated by the BACKEND here, which
+        // is the only place it may be stated.
+        applicable: routeId !== "GlcToSol" && routeId !== "GlcToRhn",
+      },
+      destination_eligibility: {
+        eligible: true,
+        retry_at: null,
+        remaining_seconds: null,
+        reason: null,
+        applicable: true,
+      },
+      as_of: 0,
+      window_seconds: 86_400,
+    });
+  });
   await page.route(`${INTERCEPTED_API_ORIGIN}/explorer/events`, (route) =>
     json(route, { items: fixtures.explorerEventsFixture(), next_cursor: null, as_of: 0 }),
   );

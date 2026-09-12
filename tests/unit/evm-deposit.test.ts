@@ -24,17 +24,36 @@ vi.mock("viem", async (importOriginal) => {
   };
 });
 
-const { depositToRobinhoodReserve, preflightRobinhoodDeposit } =
+const { assertRobinhoodV2Target, depositToRobinhoodReserve, preflightRobinhoodDeposit } =
   await import("@/lib/evm/deposit");
 const { CONTRACT_ROUTE_IDS } = await import("@/lib/evm/abi");
+const { ROBINHOOD_CHAIN_ID, ROBINHOOD_V1_BRIDGE_ADDRESS, ROBINHOOD_V2_BRIDGE_ADDRESS } =
+  await import("@/lib/evm/robinhood-target");
 
+/**
+ * The PINNED production target. Not an arbitrary fixture: every path
+ * below now asserts the deployment names V2 on chain 4663 before it
+ * reads or signs anything, so a made-up address would be refused before
+ * the gate under test was ever reached.
+ */
 const DEPLOYMENT = {
-  chainId: 4663,
+  chainId: ROBINHOOD_CHAIN_ID,
   chainName: "Robinhood Network",
   rpcUrl: "https://rpc.example.invalid",
-  bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+  bridgeAddress: ROBINHOOD_V2_BRIDGE_ADDRESS,
   tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
 } as const;
+
+/** A wallet reporting Robinhood Network, as EIP-1193 spells it. */
+function providerOnChain(chainId: number | null) {
+  return {
+    request: vi.fn(async ({ method }: { method: string }) => {
+      if (method !== "eth_chainId") throw new Error(`unexpected method ${method}`);
+      if (chainId === null) throw new Error("provider cannot answer");
+      return `0x${chainId.toString(16)}`;
+    }),
+  } as never;
+}
 
 const ACCOUNT = "0xdD870fA1b7C4700F2BD7f44238821C26f7392148" as const;
 /** 1 GLC at 18 decimals — an exact multiple of the contract's canonical scale. */
@@ -65,6 +84,16 @@ async function refusalText(promise: Promise<unknown>): Promise<string> {
     return (error as { presentation: { what: string } }).presentation.what;
   }
   throw new Error("expected the deposit to be refused, but it was not");
+}
+
+/** The synchronous twin of `refusalText`, for the target assertions. */
+function refusalTextSync(act: () => void): string {
+  try {
+    act();
+  } catch (error) {
+    return (error as { presentation: { what: string } }).presentation.what;
+  }
+  throw new Error("expected the target to be refused, but it was not");
 }
 
 /** Preflight reads, in the order `Promise.all` requests them. */
@@ -167,7 +196,7 @@ describe("preflightRobinhoodDeposit", () => {
 
 describe("depositToRobinhoodReserve", () => {
   const params = {
-    provider: {} as never,
+    provider: providerOnChain(ROBINHOOD_CHAIN_ID),
     deployment: DEPLOYMENT,
     route: "RhnToGlc" as const,
     account: ACCOUNT,
@@ -329,5 +358,190 @@ describe("depositToRobinhoodReserve", () => {
   it("returns the deposit hash, which is what the indexer's event will correspond to", async () => {
     const result = await depositToRobinhoodReserve(params);
     expect(result.hash).toBe("0xhash");
+  });
+});
+
+/**
+ * The V2 pin, asserted inside the module that signs.
+ *
+ * These are the checks that make "production RH submissions target V2
+ * only" a property of the code rather than of an environment variable.
+ * `resolveRobinhoodDeployment` already refuses a wrong target at config
+ * time (evm-config.test.ts covers that); this covers the second line,
+ * which catches a `RobinhoodDeployment` assembled by any other path — a
+ * hand-built struct, a test double, a future caller.
+ */
+describe("the Robinhood V2 target pin", () => {
+  const base = {
+    route: "RhnToGlc" as const,
+    account: ACCOUNT,
+    amountRaw: ONE_GLC,
+  };
+
+  it("accepts the pinned V2 contract on chain 4663", () => {
+    expect(() => assertRobinhoodV2Target(DEPLOYMENT)).not.toThrow();
+    expect(DEPLOYMENT.bridgeAddress).toBe(ROBINHOOD_V2_BRIDGE_ADDRESS);
+    expect(DEPLOYMENT.chainId).toBe(4663);
+  });
+
+  it("accepts V2 in any casing — an env var and a wallet spell it differently", () => {
+    expect(() =>
+      assertRobinhoodV2Target({
+        ...DEPLOYMENT,
+        bridgeAddress:
+          ROBINHOOD_V2_BRIDGE_ADDRESS.toLowerCase() as typeof DEPLOYMENT.bridgeAddress,
+      }),
+    ).not.toThrow();
+  });
+
+  it("REFUSES the retired V1 contract, and names it", () => {
+    const what = refusalTextSync(() =>
+      assertRobinhoodV2Target({
+        ...DEPLOYMENT,
+        bridgeAddress: ROBINHOOD_V1_BRIDGE_ADDRESS as typeof DEPLOYMENT.bridgeAddress,
+      }),
+    );
+    expect(what).toMatch(/RETIRED V1/);
+    expect(what).toContain(ROBINHOOD_V1_BRIDGE_ADDRESS);
+  });
+
+  it("refuses an arbitrary contract that is neither V1 nor V2", () => {
+    const what = refusalTextSync(() =>
+      assertRobinhoodV2Target({
+        ...DEPLOYMENT,
+        bridgeAddress:
+          "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed" as typeof DEPLOYMENT.bridgeAddress,
+      }),
+    );
+    expect(what).toMatch(/not the Robinhood bridge contract/);
+  });
+
+  it("refuses a deployment configured for any chain other than 4663", () => {
+    const what = refusalTextSync(() =>
+      assertRobinhoodV2Target({ ...DEPLOYMENT, chainId: 1 }),
+    );
+    expect(what).toMatch(/chain 4663/);
+  });
+
+  it("never reads the chain before refusing a V1 target", async () => {
+    // The order matters: a read against V1 could succeed and report a
+    // live route with sane limits for a bridge nothing settles.
+    await refusalText(
+      preflightRobinhoodDeposit({
+        ...base,
+        deployment: {
+          ...DEPLOYMENT,
+          bridgeAddress: ROBINHOOD_V1_BRIDGE_ADDRESS as typeof DEPLOYMENT.bridgeAddress,
+        },
+      }),
+    );
+    expect(readContract).not.toHaveBeenCalled();
+  });
+
+  it("refuses a V1 deposit before any transaction is signed", async () => {
+    const what = await refusalText(
+      depositToRobinhoodReserve({
+        ...base,
+        provider: providerOnChain(ROBINHOOD_CHAIN_ID),
+        deployment: {
+          ...DEPLOYMENT,
+          bridgeAddress: ROBINHOOD_V1_BRIDGE_ADDRESS as typeof DEPLOYMENT.bridgeAddress,
+        },
+        destination: DESTINATION,
+      }),
+    );
+    expect(what).toMatch(/RETIRED V1/);
+    // Not even the APPROVAL: granting an allowance to V1 is itself a real
+    // transaction and is not undone by refusing the deposit after it.
+    expect(writeContract).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the WALLET is on the wrong chain, whatever config says", async () => {
+    const what = await refusalText(
+      depositToRobinhoodReserve({
+        ...base,
+        provider: providerOnChain(1),
+        deployment: DEPLOYMENT,
+        destination: DESTINATION,
+      }),
+    );
+    expect(what).toMatch(/chain id 1/);
+    expect(what).toMatch(/chain id 4663/);
+    expect(writeContract).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the wallet cannot say which chain it is on", async () => {
+    // "I could not determine the network" and "the network is correct"
+    // are different answers; only one may authorize a signature.
+    const what = await refusalText(
+      depositToRobinhoodReserve({
+        ...base,
+        provider: providerOnChain(null),
+        deployment: DEPLOYMENT,
+        destination: DESTINATION,
+      }),
+    );
+    expect(what).toMatch(/unknown network/);
+    expect(writeContract).not.toHaveBeenCalled();
+  });
+
+  it("re-asserts the wallet's chain after the approval, before the deposit", async () => {
+    // The approval receipt is the longest pause in the flow, and the
+    // wallet's network is not this app's to hold still across it.
+    const provider = providerOnChain(ROBINHOOD_CHAIN_ID);
+    await depositToRobinhoodReserve({
+      ...base,
+      provider,
+      deployment: DEPLOYMENT,
+      destination: DESTINATION,
+    });
+    const chainReads = (
+      provider as unknown as { request: { mock: { calls: unknown[] } } }
+    ).request.mock.calls.length;
+    expect(chainReads).toBeGreaterThanOrEqual(2);
+  });
+
+  it("sends RH -> GLC to V2, on route id 0x02", async () => {
+    await depositToRobinhoodReserve({
+      ...base,
+      route: "RhnToGlc",
+      provider: providerOnChain(ROBINHOOD_CHAIN_ID),
+      deployment: DEPLOYMENT,
+      destination: DESTINATION,
+    });
+    const deposit = writeContract.mock.calls.find(
+      ([call]) => call.functionName === "deposit",
+    );
+    expect(deposit![0].address).toBe(ROBINHOOD_V2_BRIDGE_ADDRESS);
+    expect(deposit![0].args[0]).toBe(CONTRACT_ROUTE_IDS.RhnToGlc);
+  });
+
+  it("sends RH -> SOL to V2, on route id 0x04", async () => {
+    await depositToRobinhoodReserve({
+      ...base,
+      route: "RhnToSol",
+      provider: providerOnChain(ROBINHOOD_CHAIN_ID),
+      deployment: DEPLOYMENT,
+      destination: `0x${"ab".repeat(32)}`,
+    });
+    const deposit = writeContract.mock.calls.find(
+      ([call]) => call.functionName === "deposit",
+    );
+    expect(deposit![0].address).toBe(ROBINHOOD_V2_BRIDGE_ADDRESS);
+    expect(deposit![0].args[0]).toBe(CONTRACT_ROUTE_IDS.RhnToSol);
+  });
+
+  it("approves V2 as the spender, never V1", async () => {
+    await depositToRobinhoodReserve({
+      ...base,
+      provider: providerOnChain(ROBINHOOD_CHAIN_ID),
+      deployment: DEPLOYMENT,
+      destination: DESTINATION,
+    });
+    const approval = writeContract.mock.calls.find(
+      ([call]) => call.functionName === "approve",
+    );
+    expect(approval![0].args[0]).toBe(ROBINHOOD_V2_BRIDGE_ADDRESS);
+    expect(approval![0].args[0]).not.toBe(ROBINHOOD_V1_BRIDGE_ADDRESS);
   });
 });

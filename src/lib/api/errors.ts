@@ -1,11 +1,14 @@
 import { type ApiErrorBody } from "./schemas/common";
-import { RECIPIENT_RATE_LIMIT_TITLE } from "@/lib/bridge/recipient-rate-limit";
-import { SOURCE_WALLET_RATE_LIMIT_TITLE } from "@/lib/bridge/source-wallet-rate-limit";
 import {
-  ROBINHOOD_ELIGIBILITY_UNKNOWN_NEXT,
-  ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
-  ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
-  ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE,
+  eligibilityBlockedDetail,
+  eligibilityBlockedTitle,
+  ELIGIBILITY_UNAVAILABLE_NEXT,
+  ELIGIBILITY_UNAVAILABLE_TITLE,
+  type EligibilityVerdict,
+} from "@/lib/bridge/eligibility";
+import {
+  formatRetryAfter,
+  formatRetryAt,
   type RobinhoodPredepositVerdict,
 } from "@/lib/bridge/robinhood-predeposit";
 
@@ -37,8 +40,8 @@ export type ApiErrorKind =
   | "validation"
   | "solana-transaction"
   | "evm-transaction"
-  | "recipient-rate-limited"
-  | "source-wallet-rate-limited"
+  | "eligibility-blocked"
+  | "eligibility-unavailable"
   | "robinhood-predeposit-refused";
 
 export interface ErrorPresentation {
@@ -170,99 +173,94 @@ export function directionUnavailableError(message?: string): ApiError {
 }
 
 /**
- * The FINAL pre-submit recipient-eligibility re-check came back blocked:
- * this Goldcoin destination already received a SolToGlc payout inside the
- * backend's rolling 24-hour window (it may have been eligible when typed —
- * another deposit can land in between). Thrown before the wallet is ever
- * invoked. Copy comes from `@/lib/bridge/recipient-rate-limit` so the
- * form-level blocker and this submit-time error can never say different
- * things — and per the same product decision, it is exactly one sentence:
- * `funds`/`next` are deliberately empty (Alert renders nothing for them),
- * with no retry-after time shown even though the enforcement path still
- * has the full backend verdict.
+ * The FINAL pre-submit eligibility re-check came back BLOCKED: one or
+ * both wallets are inside the backend's rolling 24-hour window for this
+ * route. Thrown before any wallet is invoked, on every route.
+ *
+ * # Why the re-check exists at all
+ *
+ * A verdict can go stale between a button enabling and a click landing —
+ * another deposit lands, a payout settles, the user opens a second tab.
+ * The form's live query is what disables the button; this error is what
+ * happens when the fresh read taken immediately before signing disagrees
+ * with it.
+ *
+ * Copy comes from `@/lib/bridge/eligibility`, the same module the form's
+ * own callout reads, so a refused click and a disabled button can never
+ * say different things. The reopen time is the BACKEND's, absolute where
+ * it published one and relative where it published only seconds — never
+ * a guessed window, and nothing at all when it published neither.
  */
-export function recipientRateLimitedError(): ApiError {
+export function eligibilityBlockedError(
+  verdict: Extract<EligibilityVerdict, { kind: "blocked" }>,
+  nowSeconds: number,
+): ApiError {
+  const title = eligibilityBlockedTitle(verdict.sides);
+  // The absolute instant when the backend gave one — it stays correct
+  // however long this error sits on screen, unlike a relative figure
+  // measured against a clock that has since moved on.
+  const side =
+    verdict.sides[0] === "destination"
+      ? verdict.answer.destinationSide
+      : verdict.answer.sourceSide;
+  const when = formatRetryAt(side.retryAt) ?? formatRetryAfter(side.remainingSeconds);
   return new ApiError({
-    kind: "recipient-rate-limited",
-    message: RECIPIENT_RATE_LIMIT_TITLE,
+    kind: "eligibility-blocked",
+    message: title,
     retryable: false,
     presentation: {
-      what: RECIPIENT_RATE_LIMIT_TITLE,
-      funds: "",
-      next: "",
+      what: title,
+      funds: "No funds have left your wallet — nothing was submitted.",
+      next:
+        eligibilityBlockedDetail(verdict, nowSeconds) ||
+        (when === null ? "" : `You can bridge on this route again ${when}.`),
     },
   });
 }
 
 /**
- * The source-wallet twin of `recipientRateLimitedError`: the FINAL
- * pre-submit re-check came back blocked because the CONNECTED SOLANA
- * WALLET — not the Goldcoin destination — already made a qualifying
- * SolToGlc deposit inside the backend's rolling 24-hour window. Thrown
- * before the wallet is ever invoked. Same one-sentence product decision:
- * `funds`/`next` are deliberately empty, with no retry-after time shown.
+ * The FINAL pre-submit eligibility re-check could not be ESTABLISHED —
+ * the request failed, the backend publishes no endpoint for this route
+ * yet, or the answer was about different inputs than the form holds.
+ *
+ * Deliberately distinct from `eligibilityBlockedError`: this says the
+ * CHECK did not complete, never that the user is rate limited. Asserting
+ * a limit the backend never asserted would be its own wrong answer, and
+ * the two have different remedies.
  */
-export function sourceWalletRateLimitedError(): ApiError {
+export function eligibilityUnavailableError(): ApiError {
   return new ApiError({
-    kind: "source-wallet-rate-limited",
-    message: SOURCE_WALLET_RATE_LIMIT_TITLE,
+    kind: "eligibility-unavailable",
+    message: ELIGIBILITY_UNAVAILABLE_TITLE,
     retryable: false,
     presentation: {
-      what: SOURCE_WALLET_RATE_LIMIT_TITLE,
-      funds: "",
-      next: "",
+      what: ELIGIBILITY_UNAVAILABLE_TITLE,
+      funds: "No funds have left your wallet — nothing was submitted.",
+      next: ELIGIBILITY_UNAVAILABLE_NEXT,
     },
   });
 }
 
 /**
- * The FINAL pre-deposit re-check for `RhnToGlc` refused, so no EVM
- * transaction was ever built.
+ * The FINAL pre-deposit AVAILABILITY re-check for a contract-sourced
+ * Robinhood route refused, so no EVM transaction was ever built.
  *
- * # Why this route gets its own error at all
- *
- * `recipientRateLimitedError`/`sourceWalletRateLimitedError` are one
- * approved sentence each, with `funds`/`next` deliberately empty and no
- * retry time — a product decision made for `SolToGlc`, where a blocked
- * deposit lands in a program the bridge controls and the worst outcome is
- * a slower transfer. A blocked Robinhood deposit is not slower; it is
- * folded into `ManualReview` with the user's GLC already in the custody
- * contract. So this one states plainly that nothing was sent, and — where
- * the backend published a reopen time — when to come back, because the
- * alternative is a user retrying into the same refusal all day.
- *
- * Built from the same `RobinhoodPredepositVerdict` the form's disabled
- * button is built from, so the reason a click is refused is always the
- * reason the button was already giving.
+ * Availability only — the wallet-eligibility half is
+ * `eligibilityBlockedError`/`eligibilityUnavailableError`, which apply to
+ * every route. Built from the same `RobinhoodPredepositVerdict` the
+ * form's disabled button is built from, so the reason a click is refused
+ * is always the reason the button was already giving.
  */
 export function robinhoodPredepositError(
   verdict: Exclude<RobinhoodPredepositVerdict, { kind: "allowed" }>,
 ): ApiError {
-  const NOTHING_SENT =
-    "No funds have left your wallet — no deposit transaction was created.";
-  const presentation: ErrorPresentation =
-    verdict.kind === "route-unavailable"
-      ? {
-          // The backend's own cause-agnostic sentence, verbatim. This UI
-          // never authors a second explanation of a closed route.
-          what: verdict.reason,
-          funds: NOTHING_SENT,
-          next: "Check the status page for live route availability, or try again later.",
-        }
-      : verdict.kind === "eligibility-unknown"
-        ? {
-            what: ROBINHOOD_ELIGIBILITY_UNKNOWN_TITLE,
-            funds: NOTHING_SENT,
-            next: ROBINHOOD_ELIGIBILITY_UNKNOWN_NEXT,
-          }
-        : {
-            what:
-              verdict.kind === "source-wallet-rate-limited"
-                ? ROBINHOOD_SOURCE_WALLET_RATE_LIMIT_TITLE
-                : ROBINHOOD_RECIPIENT_RATE_LIMIT_TITLE,
-            funds: NOTHING_SENT,
-            next: verdict.retryAfter,
-          };
+  const presentation: ErrorPresentation = {
+    // The backend's own cause-agnostic sentence, verbatim. This UI never
+    // authors a second explanation of a closed route.
+    what: verdict.reason,
+    funds: "No funds have left your wallet — no deposit transaction was created.",
+    next: "Check the status page for live route availability, or try again later.",
+  };
   return new ApiError({
     kind: "robinhood-predeposit-refused",
     message: presentation.what,

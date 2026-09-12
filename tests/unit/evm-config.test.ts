@@ -4,6 +4,14 @@ import {
   type RobinhoodDeployment,
   type RobinhoodDepositContext,
 } from "@/lib/evm/config";
+import {
+  checkRobinhoodTarget,
+  isRetiredRobinhoodV1BridgeAddress,
+  isRobinhoodV2BridgeAddress,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_V1_BRIDGE_ADDRESS,
+  ROBINHOOD_V2_BRIDGE_ADDRESS,
+} from "@/lib/evm/robinhood-target";
 
 /**
  * The Robinhood deposit's fail-closed gate.
@@ -16,10 +24,10 @@ import {
  */
 
 const DEPLOYMENT: RobinhoodDeployment = {
-  chainId: 4663,
+  chainId: ROBINHOOD_CHAIN_ID,
   chainName: "Robinhood Network",
   rpcUrl: "https://rpc.example.invalid",
-  bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+  bridgeAddress: ROBINHOOD_V2_BRIDGE_ADDRESS,
   tokenAddress: "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
 };
 
@@ -109,5 +117,151 @@ describe("robinhoodDepositCapability", () => {
     const capability = robinhoodDepositCapability(ready({ amountIsCanonical: false }));
     expect(capability.reason).toBe("amount-not-canonical");
     expect(capability.message).toMatch(/rather than rounding/i);
+  });
+});
+
+/**
+ * The pinned Robinhood target — the check that makes configuration
+ * incapable of selecting anything but V2.
+ *
+ * The failure this closes is a deployment left pointed at the retired V1
+ * custody contract: the UI would have built, signed and broadcast a
+ * well-formed deposit into it, V1 would have taken the GLC, and nothing
+ * downstream indexes V1 any more — so the deposit would never fold and
+ * never pay out. Presence of configuration is not correctness of it.
+ */
+describe("checkRobinhoodTarget", () => {
+  const V2 = ROBINHOOD_V2_BRIDGE_ADDRESS;
+
+  it("accepts the pinned V2 contract on chain 4663", () => {
+    const result = checkRobinhoodTarget({ bridgeAddress: V2, chainId: 4663 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.bridgeAddress).toBe(V2);
+      expect(result.chainId).toBe(4663);
+    }
+  });
+
+  it("canonicalises the casing, so one spelling reaches the chain", () => {
+    // An env var, an explorer and a wallet all legitimately spell the
+    // same 20 bytes differently; the calldata and the approved spender
+    // must not.
+    const result = checkRobinhoodTarget({
+      bridgeAddress: V2.toLowerCase(),
+      chainId: 4663,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bridgeAddress).toBe(V2);
+  });
+
+  it("REFUSES the retired V1 contract by name", () => {
+    const result = checkRobinhoodTarget({
+      bridgeAddress: ROBINHOOD_V1_BRIDGE_ADDRESS,
+      chainId: 4663,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.problem).toBe("bridge-address-retired-v1");
+      expect(result.message).toContain(ROBINHOOD_V1_BRIDGE_ADDRESS);
+      expect(result.message).toMatch(/never settled/);
+    }
+  });
+
+  it("refuses V1 in lowercase too — the denylist is not casing-dependent", () => {
+    const result = checkRobinhoodTarget({
+      bridgeAddress: ROBINHOOD_V1_BRIDGE_ADDRESS.toLowerCase(),
+      chainId: 4663,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.problem).toBe("bridge-address-retired-v1");
+  });
+
+  it("refuses an arbitrary contract that is neither V1 nor V2", () => {
+    const result = checkRobinhoodTarget({
+      bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+      chainId: 4663,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.problem).toBe("bridge-address-unexpected");
+  });
+
+  it("refuses V2 on the wrong chain", () => {
+    const result = checkRobinhoodTarget({ bridgeAddress: V2, chainId: 1 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.problem).toBe("chain-id-unexpected");
+      expect(result.message).toContain("4663");
+    }
+  });
+
+  it("refuses missing configuration, naming which half is missing", () => {
+    expect(
+      checkRobinhoodTarget({ bridgeAddress: undefined, chainId: 4663 }),
+    ).toMatchObject({ ok: false, problem: "bridge-address-missing" });
+    expect(checkRobinhoodTarget({ bridgeAddress: "", chainId: 4663 })).toMatchObject({
+      ok: false,
+      problem: "bridge-address-missing",
+    });
+    expect(checkRobinhoodTarget({ bridgeAddress: V2, chainId: undefined })).toMatchObject(
+      { ok: false, problem: "chain-id-missing" },
+    );
+  });
+
+  it("never resolves a target for any address other than V2", () => {
+    // A property, not a sample: nothing in this module can be configured
+    // into returning ok for a non-V2 address.
+    const candidates = [
+      ROBINHOOD_V1_BRIDGE_ADDRESS,
+      "0x0000000000000000000000000000000000000000",
+      "0xffffffffffffffffffffffffffffffffffffffff",
+      "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+    ];
+    for (const bridgeAddress of candidates) {
+      expect(checkRobinhoodTarget({ bridgeAddress, chainId: 4663 }).ok).toBe(false);
+    }
+  });
+
+  it("identifies V1 and V2 without confusing them", () => {
+    expect(isRobinhoodV2BridgeAddress(ROBINHOOD_V2_BRIDGE_ADDRESS)).toBe(true);
+    expect(isRobinhoodV2BridgeAddress(ROBINHOOD_V1_BRIDGE_ADDRESS)).toBe(false);
+    expect(isRetiredRobinhoodV1BridgeAddress(ROBINHOOD_V1_BRIDGE_ADDRESS)).toBe(true);
+    expect(isRetiredRobinhoodV1BridgeAddress(ROBINHOOD_V2_BRIDGE_ADDRESS)).toBe(false);
+    expect(isRobinhoodV2BridgeAddress(null)).toBe(false);
+    expect(isRetiredRobinhoodV1BridgeAddress(undefined)).toBe(false);
+  });
+
+  it("holds V1 and V2 as different addresses — the pin means nothing otherwise", () => {
+    expect(ROBINHOOD_V1_BRIDGE_ADDRESS.toLowerCase()).not.toBe(
+      ROBINHOOD_V2_BRIDGE_ADDRESS.toLowerCase(),
+    );
+  });
+});
+
+describe("robinhoodDepositCapability — the chain id is the pin, not the config", () => {
+  it("refuses a wallet on any chain other than 4663", () => {
+    const capability = robinhoodDepositCapability(ready({ connectedChainId: 1 }));
+    expect(capability.available).toBe(false);
+    expect(capability.reason).toBe("wrong-chain");
+    expect(capability.message).toContain("4663");
+  });
+
+  it("refuses a wallet whose chain is unknown", () => {
+    expect(robinhoodDepositCapability(ready({ connectedChainId: null }))).toMatchObject({
+      available: false,
+      reason: "wrong-chain",
+    });
+  });
+
+  it("surfaces the deployment's own problem rather than a generic sentence", () => {
+    // An operator pointed at the retired V1 contract and one who has set
+    // nothing need different instructions.
+    const capability = robinhoodDepositCapability(
+      ready({
+        deployment: null,
+        deploymentProblem: `configured with the RETIRED V1 contract (${ROBINHOOD_V1_BRIDGE_ADDRESS})`,
+      }),
+    );
+    expect(capability.available).toBe(false);
+    expect(capability.message).toContain(ROBINHOOD_V1_BRIDGE_ADDRESS);
   });
 });

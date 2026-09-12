@@ -16,6 +16,14 @@ import {
   type DepositContractRoute,
 } from "./abi";
 import type { RobinhoodDeployment } from "./config";
+import {
+  isRetiredRobinhoodV1BridgeAddress,
+  isRobinhoodV2BridgeAddress,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_V1_BRIDGE_ADDRESS,
+  ROBINHOOD_V2_BRIDGE_ADDRESS,
+  wrongChainMessage,
+} from "./robinhood-target";
 
 /**
  * A Robinhood-sourced deposit — `RhnToGlc` or `RhnToSol`. The one place
@@ -105,6 +113,84 @@ function walletClientFor(provider: EIP1193Provider, account: Address) {
 }
 
 /**
+ * The LAST check before any Robinhood transaction is built: this
+ * deployment names the pinned V2 custody contract on the pinned chain.
+ *
+ * # Why it is repeated here
+ *
+ * `resolveRobinhoodDeployment` already refused everything else, so in a
+ * correctly wired build this can never fire. It is asserted anyway,
+ * inside the module that actually signs, because what it protects against
+ * is not a misconfiguration but a WIRING mistake: a `RobinhoodDeployment`
+ * assembled by some other path, a test double, a future caller that
+ * builds the struct by hand. Every one of those bypasses the resolver,
+ * and the failure mode is GLC sent to the retired V1 contract — accepted
+ * on-chain, never indexed, never settled, never returned.
+ *
+ * V1 is named explicitly rather than folded into the generic mismatch
+ * because it is the one wrong address with a known cause and a known
+ * consequence, and an operator reading the error should not have to look
+ * the address up.
+ */
+export function assertRobinhoodV2Target(deployment: RobinhoodDeployment): void {
+  if (isRetiredRobinhoodV1BridgeAddress(deployment.bridgeAddress)) {
+    throw evmPreflightError(
+      `This transfer would have been sent to the RETIRED V1 Robinhood bridge contract (${ROBINHOOD_V1_BRIDGE_ADDRESS}), which never settles. Nothing was sent.`,
+      "This is a deployment configuration problem, not something you can fix — please report it.",
+    );
+  }
+  if (!isRobinhoodV2BridgeAddress(deployment.bridgeAddress)) {
+    throw evmPreflightError(
+      `This transfer would have been sent to ${deployment.bridgeAddress}, which is not the Robinhood bridge contract (${ROBINHOOD_V2_BRIDGE_ADDRESS}). Nothing was sent.`,
+      "This is a deployment configuration problem, not something you can fix — please report it.",
+    );
+  }
+  if (deployment.chainId !== ROBINHOOD_CHAIN_ID) {
+    throw evmPreflightError(
+      `This deployment is configured for chain id ${deployment.chainId}, but the Robinhood bridge contract lives on chain ${ROBINHOOD_CHAIN_ID}. Nothing was sent.`,
+      "This is a deployment configuration problem, not something you can fix — please report it.",
+    );
+  }
+}
+
+/**
+ * The connected wallet is on Robinhood Network RIGHT NOW, read from the
+ * wallet itself rather than from React state.
+ *
+ * `robinhoodDepositCapability` compares the chain id the app last
+ * OBSERVED, which is a render-time fact. A user can switch networks in
+ * their wallet in the moment between the button enabling and the click
+ * landing, and `writeContract` is called with `chain: null` — viem is
+ * explicitly told not to assert a chain, so nothing else in the send path
+ * would notice. This asks the provider directly, immediately before the
+ * first write.
+ *
+ * A provider that cannot answer is a refusal, not a pass: "I could not
+ * determine the network" and "the network is correct" are different
+ * answers, and only one of them may authorize a signature.
+ */
+async function assertWalletOnRobinhoodChain(provider: EIP1193Provider): Promise<void> {
+  let chainId: number | null = null;
+  try {
+    const raw = await provider.request({ method: "eth_chainId" });
+    // EIP-1193 returns a hex quantity string; a provider returning a
+    // number is tolerated rather than trusted blindly.
+    const parsed = typeof raw === "string" ? Number.parseInt(raw, 16) : Number(raw);
+    chainId = Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    chainId = null;
+  }
+  if (chainId !== ROBINHOOD_CHAIN_ID) {
+    throw evmPreflightError(
+      wrongChainMessage(chainId),
+      chainId === null
+        ? "If your wallet is already on Robinhood Network, reconnect it and try again."
+        : `Switch your wallet to chain id ${ROBINHOOD_CHAIN_ID} and try again.`,
+    );
+  }
+}
+
+/**
  * Reads every gate the contract will apply, and refuses before signing if
  * any of them would fail. Exported for direct testing — the assertions
  * here are the difference between a clear refusal and a paid-for revert.
@@ -117,6 +203,10 @@ export async function preflightRobinhoodDeposit(params: {
   readonly amountRaw: bigint;
 }): Promise<void> {
   const { deployment, account, amountRaw } = params;
+  // Before any RPC call: a read against the wrong contract is wasted, and
+  // a read that SUCCEEDS against the wrong contract is worse — it would
+  // report a live route and sane limits for a bridge nothing settles.
+  assertRobinhoodV2Target(deployment);
   const client = publicClientFor(deployment);
   const route = DEPOSIT_CONTRACT_ROUTE_IDS[params.route];
 
@@ -211,6 +301,13 @@ export async function depositToRobinhoodReserve(
   const route = DEPOSIT_CONTRACT_ROUTE_IDS[params.route];
 
   onStep?.("preflight");
+  // The pinned V2 target and the live wallet chain, before the approval —
+  // which is itself a real transaction granting a real allowance to
+  // `deployment.bridgeAddress`. Approving the retired V1 contract, or
+  // approving anything at all on the wrong network, is not recoverable by
+  // refusing the deposit that would have followed it.
+  assertRobinhoodV2Target(deployment);
+  await assertWalletOnRobinhoodChain(provider);
   // The SAME route the deposit below names, so the liveness that was
   // checked and the liveness that is relied on cannot be different routes'.
   await preflightRobinhoodDeposit({
@@ -255,6 +352,10 @@ export async function depositToRobinhoodReserve(
   }
 
   onStep?.("depositing");
+  // Re-asserted after the approval, because waiting for that receipt is
+  // the longest pause in this flow and the wallet's network is not this
+  // app's to hold still. The deposit is the irreversible half.
+  await assertWalletOnRobinhoodChain(provider);
   let hash: Hex;
   try {
     hash = await walletClient.writeContract({

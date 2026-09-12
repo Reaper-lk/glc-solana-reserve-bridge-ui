@@ -23,7 +23,8 @@ import type { ChainsViewDto } from "@/lib/api/schemas/chains";
 import type { ExplorerEventListDto } from "@/lib/api/schemas/explorer";
 import type { ReserveHistoryListDto } from "@/lib/api/schemas/reserves";
 import type { QuoteOutputDto } from "@/lib/api/schemas/quote";
-import type { RecipientEligibilityDto } from "@/lib/api/schemas/eligibility";
+import { fetchRouteEligibility } from "@/lib/api/eligibility-request";
+import type { EligibilityRoute, RouteEligibility } from "@/lib/bridge/eligibility";
 import type {
   CreateTransferOutputDto,
   CreateTransferRequest,
@@ -216,67 +217,50 @@ export function useQuote(
 }
 
 /**
- * The SolToGlc dual rate-limit check for the Goldcoin address AND (once
- * connected) the Solana source wallet in the form
- * (`GET /recipients/sol-to-glc/eligibility`). Enabled only once the
- * address has passed local validation — never fired per keystroke on
- * half-typed input; `wallet` is `null` until a wallet is connected, in
- * which case only the recipient leg is checked (the source-wallet leg
- * joins automatically once connected). This is the FORM-level check;
- * `BridgeCard.submit` additionally re-fetches through `bridgeApi` directly
- * immediately before invoking the wallet, so a stale cached "eligible"
- * here can never be what authorizes opening Phantom.
- */
-export function useSolToGlcRecipientEligibility(
-  address: string,
-  wallet: string | null,
-  enabled: boolean,
-): UseQueryResult<RecipientEligibilityDto> {
-  return useQuery({
-    queryKey: queryKeys.recipientEligibility("SolToGlc", address, wallet),
-    queryFn: ({ signal }) =>
-      bridgeApi.getSolToGlcRecipientEligibility(address, wallet, signal),
-    enabled: enabled && address.length > 0,
-    refetchInterval: pollIntervals.recipientEligibility,
-    staleTime: 15_000,
-    retry: false,
-  });
-}
-
-/**
- * The `RhnToGlc` twin (`GET /recipients/rhn-to-glc/eligibility`) — the
- * same two rolling-24h limits, with the source-wallet leg keyed by the
- * connected EVM address instead of a Solana pubkey.
+ * The unified rolling-24h wallet eligibility check, for ANY of the six
+ * routes.
  *
- * # Why this one is not merely a warning
+ * # Fail closed, on every route
  *
- * Its Solana sibling is advisory: a failed read there is skipped, because
- * `SolToGlc` funds land in a program the bridge controls and the backend
- * re-checks at admission anyway. `RhnToGlc` has no such floor — the
- * deposit goes straight to the custody contract and a blocked one is
- * folded into `ManualReview` with the funds already committed. So the
- * FORM treats pending, failed and absent alike as "not eligible yet", and
- * `BridgeForm.submit` re-fetches through `bridgeApi` directly immediately
- * before the wallet is invoked. Nothing cached here can be the thing that
- * authorizes a deposit.
+ * Every route requires an authoritative backend verdict before submission
+ * is permitted. That includes the four the backend publishes no endpoint
+ * for yet: `fetchRouteEligibility` rejects for those, this query reports
+ * the failure, and `routeEligibilityVerdict` turns it into `unavailable`,
+ * which disables the button. That is the intended state — it is a stated
+ * backend dependency, not a check this UI may skip or approximate.
  *
  * `retry: false` deliberately: a fail-closed check must reach its refusal
- * promptly rather than sitting in "checking…" through a retry ladder,
- * and the poll interval below re-attempts it on its own.
+ * promptly rather than sitting in "checking…" through a retry ladder, and
+ * the poll interval re-attempts it on its own.
+ *
+ * `placeholderData: undefined` overrides the app-wide keep-previous
+ * default. That default is right for a dashboard figure and wrong here:
+ * the previous value is a verdict about a wallet or address the user has
+ * since edited away, and a placeholder resolves as `success` rather than
+ * `pending` — so it would both render a stale verdict and release the
+ * submit gate while the real answer was still in flight.
  */
-export function useRhnToGlcRecipientEligibility(
-  address: string,
-  wallet: string | null,
+export function useRouteEligibility(
+  route: EligibilityRoute | null,
+  source: string | null,
+  destination: string,
+  chainId: number | null,
   enabled: boolean,
-): UseQueryResult<RecipientEligibilityDto> {
+): UseQueryResult<RouteEligibility> {
   return useQuery({
-    queryKey: queryKeys.recipientEligibility("RhnToGlc", address, wallet),
+    // `route ?? ""` only ever reaches the key of a DISABLED query — the
+    // `enabled` flag below is false in exactly that case — so no request
+    // is ever made for it.
+    queryKey: queryKeys.routeEligibility(route ?? "", source, destination, chainId),
     queryFn: ({ signal }) =>
-      bridgeApi.getRhnToGlcRecipientEligibility(address, wallet, signal),
-    enabled: enabled && address.length > 0,
-    refetchInterval: pollIntervals.recipientEligibility,
+      // Non-null by the `enabled` guard; a route this query actually runs
+      // for is always known.
+      fetchRouteEligibility(route as EligibilityRoute, source, destination, signal),
+    enabled: enabled && route !== null && destination.trim().length > 0,
+    refetchInterval: pollIntervals.routeEligibility,
     staleTime: 15_000,
     retry: false,
+    placeholderData: () => undefined,
   });
 }
 
