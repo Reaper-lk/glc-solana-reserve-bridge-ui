@@ -335,6 +335,28 @@ export function solanaSendError(cause: unknown): ApiError {
 }
 
 /**
+ * A Solana deposit was refused BEFORE anything was signed, because
+ * simulating it against the live program returned a deterministic
+ * rejection (`src/lib/solana/simulate.ts`).
+ *
+ * The Solana mirror of `evmPreflightError`, and added for the same reason:
+ * a refusal we can state plainly is always better than handing the wallet a
+ * transaction that cannot succeed and letting its risk warning speak for us.
+ */
+export function solanaPreflightError(what: string, next: string): ApiError {
+  return new ApiError({
+    kind: "solana-transaction",
+    message: "Solana deposit preflight refused",
+    retryable: false,
+    presentation: {
+      what,
+      funds: "No funds have left your wallet — nothing was signed or submitted.",
+      next,
+    },
+  });
+}
+
+/**
  * The transaction was broadcast (it has a `signature`), but confirming it
  * failed or timed out — unlike a send failure, this is genuinely
  * ambiguous: the transaction may have already landed. Never claim funds

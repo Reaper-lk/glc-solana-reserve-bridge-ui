@@ -3,7 +3,11 @@
 import { useCallback } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey, Transaction } from "@solana/web3.js";
-import { solanaConfirmationError, solanaSendError } from "@/lib/api/errors";
+import {
+  solanaConfirmationError,
+  solanaPreflightError,
+  solanaSendError,
+} from "@/lib/api/errors";
 import { env } from "@/lib/config/env";
 import { useIsMounted } from "@/lib/hooks/useIsMounted";
 import { useWalletRuntime } from "./adapter/provider";
@@ -13,6 +17,7 @@ import {
   isDepositProgramConfigured,
 } from "./deposit";
 import { getDepositCapability, type DepositCapability } from "./deposit";
+import { describeRejection, simulateDeposit } from "./simulate";
 
 /**
  * The one function outside `getDepositCapability` that crosses the
@@ -104,6 +109,26 @@ export function useDepositToReserve(): {
       );
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = feePayer;
+
+      /*
+       * Preflight before the wallet is asked for anything.
+       *
+       * The form's enabled/disabled state comes from the backend's
+       * `GET /status`, which is a DIFFERENT switch from the on-chain
+       * `bridge_config` pause flag — and on 2026-09-09 they disagreed, so
+       * the form stayed open while the program rejected every deposit built
+       * from it. The user saw the wallet's "this dApp could be malicious"
+       * warning rather than a refusal, because a wallet that cannot
+       * simulate a transaction cannot show what it would do.
+       *
+       * An inconclusive simulation is not a refusal — see
+       * `./simulate.ts` for why.
+       */
+      const simulation = await simulateDeposit(connection, transaction);
+      if (simulation.kind === "rejected") {
+        const { what, next } = describeRejection(simulation);
+        throw solanaPreflightError(what, next);
+      }
 
       let signature: string;
       try {

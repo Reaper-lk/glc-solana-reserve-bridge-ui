@@ -12,8 +12,9 @@ const walletState = {
 
 const getLatestBlockhash = vi.fn();
 const confirmTransaction = vi.fn();
+const simulateTransaction = vi.fn();
 const connectionState = {
-  connection: { getLatestBlockhash, confirmTransaction } as unknown,
+  connection: { getLatestBlockhash, confirmTransaction, simulateTransaction } as unknown,
 };
 
 vi.mock("@solana/wallet-adapter-react", () => ({
@@ -71,6 +72,11 @@ beforeEach(() => {
   envState.reserveProgramId = undefined;
   getLatestBlockhash.mockResolvedValue({ blockhash: "abc", lastValidBlockHeight: 100 });
   confirmTransaction.mockResolvedValue({ value: { err: null } });
+  // A clean preflight by default, so the existing send/confirm tests below
+  // exercise what they were written for.
+  simulateTransaction.mockResolvedValue({
+    value: { err: null, logs: [], unitsConsumed: 1 },
+  });
 });
 
 /** Connects the wallet and configures the reserve program, so `deposit()` reaches the send/confirm calls under test rather than an earlier guard clause. */
@@ -207,5 +213,87 @@ describe("useDepositToReserve — deposit", () => {
       expect(thrown.presentation.funds).toContain("sig-2");
       expect(thrown.presentation.next).toContain("block height exceeded");
     }
+  });
+});
+
+describe("useDepositToReserve — simulation preflight", () => {
+  /**
+   * The 2026-09-09 production incident: the backend reported the route
+   * available while the on-chain `bridge_config` had the deposit direction
+   * paused, so a transaction that could never land was handed to the wallet.
+   * Phantom simulated it, failed, and warned the user the dApp might be
+   * malicious rather than showing them a refusal.
+   */
+  const PAUSED = {
+    value: {
+      err: { InstructionError: [0, { Custom: 6020 }] },
+      logs: [
+        "Program log: AnchorError thrown in programs/glc-reserve-bridge/src/instructions/deposit_to_reserve.rs:104. Error Code: DepositDirectionPaused. Error Number: 6020. Error Message: Solana -> Goldcoin deposit direction is paused.",
+      ],
+      unitsConsumed: 29891,
+    },
+  };
+
+  it("never asks the wallet to sign a transaction the program would reject", async () => {
+    connectAndConfigure();
+    simulateTransaction.mockResolvedValue(PAUSED);
+    const { result } = renderHook(() => useDepositToReserve());
+
+    await expect(result.current.deposit(DEPOSIT_PARAMS)).rejects.toThrow();
+    expect(walletState.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses with the program's own reason, and states that nothing was signed", async () => {
+    connectAndConfigure();
+    simulateTransaction.mockResolvedValue(PAUSED);
+    const { result } = renderHook(() => useDepositToReserve());
+
+    try {
+      await result.current.deposit(DEPOSIT_PARAMS);
+      expect.unreachable("deposit should have been refused");
+    } catch (error) {
+      expect(isApiError(error)).toBe(true);
+      if (!isApiError(error)) return;
+      expect(error.presentation.what).toContain(
+        "Solana -> Goldcoin deposit direction is paused",
+      );
+      expect(error.presentation.funds).toContain("No funds have left your wallet");
+      expect(error.retryable).toBe(false);
+    }
+  });
+
+  it("simulates BEFORE the wallet is contacted, not after", async () => {
+    connectAndConfigure();
+    simulateTransaction.mockResolvedValue(PAUSED);
+    const { result } = renderHook(() => useDepositToReserve());
+
+    await expect(result.current.deposit(DEPOSIT_PARAMS)).rejects.toThrow();
+    expect(simulateTransaction).toHaveBeenCalledTimes(1);
+    expect(confirmTransaction).not.toHaveBeenCalled();
+  });
+
+  it("proceeds when the simulation is clean", async () => {
+    connectAndConfigure();
+    walletState.sendTransaction.mockResolvedValue("sig-ok");
+    const { result } = renderHook(() => useDepositToReserve());
+
+    await expect(result.current.deposit(DEPOSIT_PARAMS)).resolves.toEqual({
+      signature: "sig-ok",
+    });
+    expect(walletState.sendTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("proceeds when the simulation cannot be obtained — an RPC blip is not a refusal", async () => {
+    // Refusing on an unreachable RPC would take the whole direction down and
+    // protect nothing: nothing is signed either way, and the wallet still
+    // shows the user the transaction before they approve it.
+    connectAndConfigure();
+    simulateTransaction.mockRejectedValue(new Error("fetch failed"));
+    walletState.sendTransaction.mockResolvedValue("sig-blip");
+    const { result } = renderHook(() => useDepositToReserve());
+
+    await expect(result.current.deposit(DEPOSIT_PARAMS)).resolves.toEqual({
+      signature: "sig-blip",
+    });
   });
 });
