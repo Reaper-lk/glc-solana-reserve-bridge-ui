@@ -37,14 +37,7 @@ vi.mock("viem", async (importOriginal) => {
 });
 
 const { fetchRobinhoodGlcBalance } = await import("@/lib/evm/balance");
-
-const DEPLOYMENT = {
-  chainId: 4663,
-  chainName: "Robinhood Chain",
-  rpcUrl: "https://rpc.example.invalid",
-  bridgeAddress: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
-  tokenAddress: "0xaf0172DDEa4ce60dB3EBab05748A00B14fC8e433",
-} as const;
+const { ROBINHOOD_GLC_TOKEN_ADDRESS } = await import("@/lib/evm/robinhood-target");
 
 const ACCOUNT = "0xdD870fA1b7C4700F2BD7f44238821C26f7392148" as const;
 
@@ -77,7 +70,6 @@ describe("fetchRobinhoodGlcBalance", () => {
   it("reads balanceOf for the connected account", async () => {
     reads({ balanceOf: 1_000_000_000_000_000_000n });
     const balance = await fetchRobinhoodGlcBalance({
-      deployment: DEPLOYMENT,
       account: ACCOUNT,
       provider: providerOn(CHAIN_4663),
     });
@@ -85,7 +77,7 @@ describe("fetchRobinhoodGlcBalance", () => {
     expect(balance).toEqual({ raw: "1000000000000000000", decimals: 18, symbol: "GLC" });
     expect(readContract).toHaveBeenCalledWith(
       expect.objectContaining({
-        address: DEPLOYMENT.tokenAddress,
+        address: ROBINHOOD_GLC_TOKEN_ADDRESS,
         functionName: "balanceOf",
         args: [ACCOUNT],
       }),
@@ -99,7 +91,6 @@ describe("fetchRobinhoodGlcBalance", () => {
     reads({ balanceOf: 5n });
 
     await fetchRobinhoodGlcBalance({
-      deployment: DEPLOYMENT,
       account: ACCOUNT,
       provider,
     });
@@ -120,7 +111,6 @@ describe("fetchRobinhoodGlcBalance", () => {
     reads({ balanceOf: exact });
 
     const balance = await fetchRobinhoodGlcBalance({
-      deployment: DEPLOYMENT,
       account: ACCOUNT,
       provider: providerOn(CHAIN_4663),
     });
@@ -134,7 +124,6 @@ describe("fetchRobinhoodGlcBalance", () => {
     reads({ balanceOf: 0n });
     await expect(
       fetchRobinhoodGlcBalance({
-        deployment: DEPLOYMENT,
         account: ACCOUNT,
         provider: providerOn(CHAIN_4663),
       }),
@@ -145,7 +134,6 @@ describe("fetchRobinhoodGlcBalance", () => {
     reads({ balanceOf: 1n, decimals: 6 });
     await expect(
       fetchRobinhoodGlcBalance({
-        deployment: DEPLOYMENT,
         account: ACCOUNT,
         provider: providerOn(CHAIN_4663),
       }),
@@ -157,7 +145,6 @@ describe("fetchRobinhoodGlcBalance", () => {
     // number for a different asset, which is worse than no number.
     await expect(
       fetchRobinhoodGlcBalance({
-        deployment: DEPLOYMENT,
         account: ACCOUNT,
         provider: providerOn("0x1"),
       }),
@@ -173,7 +160,7 @@ describe("fetchRobinhoodGlcBalance", () => {
     } as unknown as EIP1193Provider;
 
     await expect(
-      fetchRobinhoodGlcBalance({ deployment: DEPLOYMENT, account: ACCOUNT, provider }),
+      fetchRobinhoodGlcBalance({ account: ACCOUNT, provider }),
     ).rejects.toThrow(/wallet is locked/);
     expect(readContract).not.toHaveBeenCalled();
   });
@@ -182,7 +169,6 @@ describe("fetchRobinhoodGlcBalance", () => {
     readContract.mockRejectedValue(new Error("eth_call reverted"));
     await expect(
       fetchRobinhoodGlcBalance({
-        deployment: DEPLOYMENT,
         account: ACCOUNT,
         provider: providerOn(CHAIN_4663),
       }),

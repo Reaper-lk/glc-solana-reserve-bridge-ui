@@ -360,16 +360,24 @@ describe("Robinhood source", () => {
     expect(screen.queryByText(/Balance/)).not.toBeInTheDocument();
   });
 
-  it("attempts no read at all when the token contract is not configured", async () => {
-    // Today's state in every environment: the custody contract is not
-    // deployed, so there is no token address to read.
+  it("still shows the balance and MAX when the DEPOSIT deployment is refused", async () => {
+    // This test used to assert the opposite, and production behaved the
+    // way it described: a deployment refused for a stale or absent
+    // NEXT_PUBLIC_ROBINHOOD_TOKEN_ADDRESS removed the balance row and the
+    // MAX button entirely, beside a wallet that had connected fine.
+    //
+    // A balance is the user's own holding of the PINNED token, read over
+    // their own wallet's provider. It involves neither the bridge
+    // contract nor any configured address, so nothing about the deposit
+    // deployment may decide whether it is shown. Whether a DEPOSIT can be
+    // built is asked separately.
     evm.deployment = null;
     const user = userEvent.setup();
     renderWithQueryClient(<BridgeForm />);
     await robinhoodSource(user);
 
-    expect(screen.queryByText(/Balance/)).not.toBeInTheDocument();
-    expect(maxButton()).not.toBeInTheDocument();
+    expect(await screen.findByText(/12,450\.00 GLC/)).toBeVisible();
+    expect(maxButton()).toBeEnabled();
   });
 
   it("says unavailable rather than zero when the RPC read fails", async () => {
