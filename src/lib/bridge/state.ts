@@ -36,14 +36,6 @@ const REFUND_STATES = new Set<RequestState>([
   "Refunded",
 ]);
 
-/** States the backend has not yet implemented a code path to reach (see docs/MIGRATION_ASSESSMENT.md). */
-const UNEXERCISED_STATES = new Set<RequestState>([
-  "SettlementAuthorized",
-  "DestinationSubmitted",
-  "DestinationConfirmed",
-  "Settled",
-]);
-
 export function isTerminalState(state: RequestState): boolean {
   return TERMINAL_STATES.has(state);
 }
@@ -71,10 +63,6 @@ export function isRefundState(state: RequestState): state is RefundState {
   return REFUND_STATES.has(state);
 }
 
-export function isUnexercisedState(state: RequestState): boolean {
-  return UNEXERCISED_STATES.has(state);
-}
-
 /**
  * The ordered "happy path" sequence for a route, used to render a stepper.
  *
@@ -98,9 +86,70 @@ export function happyPathFor(route: Route): RequestState[] {
     "SourceFinalized",
     "SettlementAuthorized",
     "DestinationSubmitted",
+    "DestinationConfirmed",
     "Settled",
   ];
   return base;
+}
+
+/**
+ * Per-step status for the detail page's stepper.
+ *
+ * Lives here, not in the component, because the mapping from one backend
+ * state to a whole column of done/active/pending marks is the part that can
+ * be wrong, and being wrong is invisible in a screenshot — `#4099` sat in
+ * `DestinationConfirmed` with every circle drawn empty and nobody could tell
+ * from the markup whether that was the backend or the renderer.
+ *
+ * It was the renderer. `DestinationConfirmed` was missing from
+ * `happyPathFor`, so the component's `indexOf` returned -1 and its
+ * `currentIndex === -1` branch marked EVERY step pending — a transfer whose
+ * funds had already reached the destination rendered as one where nothing
+ * had happened at all.
+ *
+ * The rules, stated rather than derived:
+ *
+ * - A state ON the path marks everything before it done and itself active.
+ * - `Settled` is the terminal success, so every step including it is done —
+ *   an active final step reads as "still working" on a finished transfer.
+ * - A state OFF the path is not guessed at. `LiquidityReserved` precedes
+ *   the deposit, so nothing is done yet; anything else off-path (failure,
+ *   manual review, refund) is not rendered as a stepper by the caller at
+ *   all, and gets the same honest all-pending answer rather than an
+ *   invented position.
+ */
+export type StepStatus = "done" | "active" | "pending";
+
+export function stepperStatusesFor(route: Route, state: RequestState): StepStatus[] {
+  const sequence = happyPathFor(route);
+
+  if (state === "Settled") return sequence.map(() => "done");
+
+  const currentIndex = sequence.indexOf(state);
+  if (currentIndex === -1) return sequence.map(() => "pending");
+
+  return sequence.map((_step, index) =>
+    index < currentIndex ? "done" : index === currentIndex ? "active" : "pending",
+  );
+}
+
+/**
+ * Whether the transfer is moving through the pipeline under its own steam —
+ * no operator action, no failure, not yet finished.
+ *
+ * Used for the one neutral line under the stepper. It replaces a warning
+ * that said these states were "still being rolled out on this deployment":
+ * true when the settlement pipeline was partly manual, false and alarming
+ * once automation went live, and shown on `Settled` — a transfer that had
+ * completely finished.
+ */
+export function isInFlightState(state: RequestState): boolean {
+  return (
+    !isTerminalState(state) &&
+    !isFailureState(state) &&
+    !isManualReview(state) &&
+    !isRefundState(state)
+  );
 }
 
 export const REQUEST_STATE_LABELS: Record<RequestState, string> = {

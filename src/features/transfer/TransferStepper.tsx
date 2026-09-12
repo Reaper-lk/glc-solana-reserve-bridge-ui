@@ -1,6 +1,6 @@
 import { CircleCheck, CircleDot, Circle } from "lucide-react";
 import { toneStyles } from "@/lib/status";
-import { happyPathFor, REQUEST_STATE_LABELS } from "@/lib/bridge";
+import { happyPathFor, REQUEST_STATE_LABELS, stepperStatusesFor } from "@/lib/bridge";
 import type { RequestState } from "@/lib/api/schemas/transfer";
 import type { Direction } from "@/lib/api/schemas/common";
 import { cn } from "@/lib/utils/cn";
@@ -26,19 +26,19 @@ export function TransferStepper({
   requiredSourceConfirmations: number | null;
 }) {
   const sequence = happyPathFor(direction);
-  const currentIndex = sequence.indexOf(state);
+  /*
+   * The done/active/pending decision is `stepperStatusesFor`'s, not this
+   * component's. It used to be an inline `indexOf` here, and a state missing
+   * from the sequence (`DestinationConfirmed`, until it was added) silently
+   * fell into the -1 branch and drew every circle empty on a transfer that
+   * had already reached its destination.
+   */
+  const statuses = stepperStatusesFor(direction, state);
 
   return (
     <ol className="flex flex-col gap-0">
       {sequence.map((step, index) => {
-        const status: "done" | "active" | "pending" =
-          currentIndex === -1
-            ? "pending"
-            : index < currentIndex
-              ? "done"
-              : index === currentIndex
-                ? "active"
-                : "pending";
+        const status = statuses[index]!;
         const tone =
           toneStyles[
             status === "done" ? "success" : status === "active" ? "info" : "neutral"

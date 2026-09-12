@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { renderWithQueryClient } from "./test-utils";
 import { TransferDetail } from "@/features/transfer/TransferDetail";
 import * as fixtures from "@/lib/api/mock/fixtures";
@@ -161,13 +161,17 @@ describe("TransferDetail — real backend state machine, never a fabricated succ
     ).toBeInTheDocument();
   });
 
-  it("labels a settlement-pipeline state the backend does not yet drive as unexercised", async () => {
+  it("shows a neutral progress line for an in-flight state, not a rollout warning", async () => {
+    // The old copy told the user this part of the pipeline was "still being
+    // rolled out on this deployment" and that progress was "not yet
+    // guaranteed". Settlement automation is live; the warning was stale.
     getTransfer.mockResolvedValue(transferWith({ id: 6, state: "SettlementAuthorized" }));
     renderWithQueryClient(<TransferDetail id={6} />);
 
     expect(
-      await screen.findByText(/still being rolled out on this deployment/i),
+      await screen.findByText(/progressing through the settlement pipeline/i),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/still being rolled out/i)).not.toBeInTheDocument();
   });
 
   it("shows a loading skeleton before data arrives", () => {
@@ -356,5 +360,100 @@ describe("TransferDetail — a refunded transfer shows the refund, never the quo
 
     await screen.findByText(/this transfer was refunded/i);
     expect(screen.getByText(/Refund transaction/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * Request #4099 — `SolToGlc`, `DestinationConfirmed`, 50,000 gross / 3,000
+ * fee / 47,000 net, with a destination transaction on chain. The page showed
+ * the right badge and the right amounts while the stepper below drew every
+ * circle empty and warned that progress was "not yet guaranteed".
+ */
+function transfer4099(state: TransferViewDto["state"]): TransferViewDto {
+  return transferWith({
+    id: 4099,
+    direction: "SolToGlc",
+    state,
+    gross_amount_atomic: "50000000000000",
+    fee_bps: 600,
+    fee_amount_atomic: "3000000000000",
+    net_amount_atomic: "47000000000000",
+    source_txid: "a".repeat(64),
+    destination_txid: "b".repeat(64),
+    failure_reason: null,
+    refund: null,
+  });
+}
+
+describe("TransferDetail — #4099 settlement progress", () => {
+  it("renders DestinationConfirmed as real progress, not as an untouched timeline", async () => {
+    getTransfer.mockResolvedValue(transfer4099("DestinationConfirmed"));
+    renderWithQueryClient(<TransferDetail id={4099} />);
+
+    // Scoped to the stepper itself: several of these labels also appear in
+    // the status badge above it, and the badge was never the broken part.
+    const stepper = within(await screen.findByRole("list"));
+    for (const label of [
+      "Awaiting your deposit",
+      "Deposit observed",
+      "Source confirmed",
+      "Settlement authorized",
+      "Sending your funds",
+      "Destination confirmed",
+      "Settled",
+    ]) {
+      expect(stepper.getByText(label)).toBeInTheDocument();
+    }
+    // ...and the stale warning is gone.
+    expect(screen.queryByText(/still being rolled out/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not yet guaranteed/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the neutral in-flight line on DestinationConfirmed", async () => {
+    getTransfer.mockResolvedValue(transfer4099("DestinationConfirmed"));
+    renderWithQueryClient(<TransferDetail id={4099} />);
+
+    expect(
+      await screen.findByText(/progressing through the settlement pipeline/i),
+    ).toBeInTheDocument();
+  });
+
+  it("drops the in-flight line once the transfer has Settled", async () => {
+    getTransfer.mockResolvedValue(transfer4099("Settled"));
+    renderWithQueryClient(<TransferDetail id={4099} />);
+
+    const stepper = within(await screen.findByRole("list"));
+    expect(stepper.getByText("Settled")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/progressing through the settlement pipeline/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders ManualReview as an alert, never as normal progress", async () => {
+    getTransfer.mockResolvedValue(transfer4099("ManualReview"));
+    renderWithQueryClient(<TransferDetail id={4099} />);
+
+    expect(
+      await screen.findByText(/this transfer is under manual review/i),
+    ).toBeInTheDocument();
+    // No stepper, and no line implying it is moving along on its own.
+    expect(screen.queryByText("Sending your funds")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/progressing through the settlement pipeline/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    "AwaitingDeposit",
+    "DepositObserved",
+    "SourceFinalized",
+    "DestinationSubmitted",
+  ] as const)("renders %s without the stale rollout warning", async (state) => {
+    getTransfer.mockResolvedValue(transfer4099(state));
+    renderWithQueryClient(<TransferDetail id={4099} />);
+
+    const stepper = within(await screen.findByRole("list"));
+    expect(stepper.getByText("Awaiting your deposit")).toBeInTheDocument();
+    expect(screen.queryByText(/still being rolled out/i)).not.toBeInTheDocument();
   });
 });

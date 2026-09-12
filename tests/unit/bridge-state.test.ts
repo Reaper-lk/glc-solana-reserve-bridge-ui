@@ -8,7 +8,7 @@ import {
   isRefundState,
   isSuccessState,
   isTerminalState,
-  isUnexercisedState,
+  isInFlightState,
   REQUEST_STATE_LABELS,
   transitionLabel,
 } from "@/lib/bridge/state";
@@ -79,19 +79,49 @@ describe("RequestState classification", () => {
     expect(isTerminalState("RefundBroadcast")).toBe(false);
   });
 
-  it("classifies a refund as neither manual review nor an unexercised state", () => {
+  it("classifies a refund as neither manual review nor an in-flight transfer", () => {
     for (const state of ["RefundPending", "RefundBroadcast", "Refunded"] as const) {
       expect(isManualReview(state)).toBe(false);
-      expect(isUnexercisedState(state)).toBe(false);
+      expect(isInFlightState(state)).toBe(false);
+    }
+  });
+});
+
+describe("isInFlightState", () => {
+  /**
+   * This replaced `isUnexercisedState`, which drove a warning saying the
+   * settlement pipeline was "still being rolled out on this deployment".
+   * Settlement automation is live, so the warning was stale — and it fired
+   * on `Settled`, telling a user whose transfer had completely finished
+   * that progress was "not yet guaranteed".
+   */
+  it("is true for every state the pipeline moves through on its own", () => {
+    for (const state of [
+      "LiquidityReserved",
+      "AwaitingDeposit",
+      "DepositObserved",
+      "Confirming",
+      "SourceFinalized",
+      "SettlementAuthorized",
+      "DestinationSubmitted",
+      "DestinationConfirmed",
+    ] as const) {
+      expect(isInFlightState(state)).toBe(true);
     }
   });
 
-  it("flags the settlement-pipeline states the backend does not yet drive", () => {
-    expect(isUnexercisedState("SettlementAuthorized")).toBe(true);
-    expect(isUnexercisedState("DestinationSubmitted")).toBe(true);
-    expect(isUnexercisedState("DestinationConfirmed")).toBe(true);
-    expect(isUnexercisedState("Settled")).toBe(true);
-    expect(isUnexercisedState("AwaitingDeposit")).toBe(false);
+  it("is false once the transfer has finished, however it finished", () => {
+    expect(isInFlightState("Settled")).toBe(false);
+    expect(isInFlightState("Refunded")).toBe(false);
+    expect(isInFlightState("Expired")).toBe(false);
+    expect(isInFlightState("Failed")).toBe(false);
+  });
+
+  it("is false whenever something needs attention, so the neutral line never competes with an alert", () => {
+    expect(isInFlightState("ManualReview")).toBe(false);
+    expect(isInFlightState("RefundPending")).toBe(false);
+    expect(isInFlightState("DestinationSubmissionFailed")).toBe(false);
+    expect(isInFlightState("InsufficientReserveAtSettlement")).toBe(false);
   });
 });
 

@@ -17,7 +17,7 @@ import {
   isFailureState,
   isManualReview,
   isRefundState,
-  isUnexercisedState,
+  isInFlightState,
 } from "@/lib/bridge";
 import type { RefundState } from "@/lib/bridge";
 import type { TransferViewDto } from "@/lib/api/schemas/transfer";
@@ -140,11 +140,19 @@ export function TransferDetail({ id }: { id: number }) {
           />
         )}
 
-      {isUnexercisedState(transfer.state) && (
+      {/*
+        A neutral progress line, and only while the transfer is actually in
+        flight. It replaces a warning that told the user this part of the
+        pipeline was "still being rolled out on this deployment" and that
+        progress past it was "not yet guaranteed" — written when settlement
+        was partly manual, left in place after automation went live, and
+        shown on states as finished as `Settled`. Anything that genuinely
+        needs the user's attention (failure, manual review, refund) is an
+        Alert above, driven by the backend state alone.
+      */}
+      {isInFlightState(transfer.state) && (
         <p className="text-body-sm text-ink-500 mt-2">
-          This state is part of the settlement pipeline that is still being rolled out on
-          this deployment — the transfer is real and being tracked, but automatic progress
-          past this point is not yet guaranteed.
+          Your transfer is progressing through the settlement pipeline.
         </p>
       )}
 
