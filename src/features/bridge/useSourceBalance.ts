@@ -65,17 +65,23 @@ export function useSourceBalance(
     }
 
     case "robinhood": {
-      // The deposit deployment, not the network: a balance read needs the
-      // TOKEN address, which only the deployment carries. It is pinned, so
-      // this resolves by default — a `null` here means configuration
-      // explicitly disagrees with a pin, and no read is attempted against
-      // a contract this build will not transact with. The form's own
-      // capability message already names that; a second "balance
-      // unavailable" line would only repeat it.
-      if (!evmWallet.deployment) return { kind: "unsupported" };
+      // Deliberately NOT gated on the deposit deployment.
+      //
+      // The balance is the user's own holding of the PINNED GLC token,
+      // read over their own wallet's provider. It involves neither the
+      // bridge contract nor any environment-supplied address, so
+      // requiring `evmWallet.deployment` made it fail for reasons that
+      // have nothing to do with it: a deployment whose token or bridge
+      // variable disagreed with its pin — or had simply never been set —
+      // rendered NO balance row and NO MAX button beside a wallet that
+      // had connected perfectly well. Whether a DEPOSIT can be built is a
+      // different question, asked and answered separately by the form's
+      // own capability gate.
       if (!evmWallet.address) return { kind: "disconnected" };
       // A balance read against the wrong network returns a real number for
-      // the wrong asset — worse than no number.
+      // the wrong asset — worse than no number. Reported as unavailable
+      // rather than as nothing, because a user on the wrong chain has
+      // something to act on and the wallet control tells them what.
       if (!evmWallet.onExpectedChain) return { kind: "unavailable" };
       if (robinhoodBalance.isPending) return { kind: "loading" };
       if (robinhoodBalance.isError) return { kind: "unavailable" };

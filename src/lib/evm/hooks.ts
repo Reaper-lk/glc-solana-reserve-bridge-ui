@@ -329,58 +329,57 @@ export const evmWalletQueryKeys = {
   /** Every EVM balance query, for invalidating them together. See `walletQueryKeys.balances`. */
   balances: () => ["evm", "balance"] as const,
   /**
-   * Keyed by chain, token and account together.
+   * Keyed by the connected CHAIN and ACCOUNT.
    *
-   * All three matter: switching networks, switching accounts, or a
-   * deployment change must each produce a different cache entry, so a
-   * balance from one context can never be shown in another. That is the
-   * cache-level half of "never retain a balance from the previous chain";
-   * the component half is that a non-Robinhood source reads this hook's
-   * result not at all.
+   * Both matter: switching networks or switching accounts must produce a
+   * different cache entry, so a balance from one context can never be
+   * shown in another. That is the cache-level half of "never retain a
+   * balance from the previous chain"; the component half is that a
+   * non-Robinhood source reads this hook's result not at all.
    *
-   * The deployment's RPC URL is deliberately NOT part of the key: the read
-   * goes over the connected wallet's provider (see `./balance`), so that
-   * endpoint no longer decides what comes back and keying on it would
-   * invent a cache miss for a change that cannot alter the answer.
+   * The TOKEN is not part of the key because it is not a variable: the
+   * read goes to the pinned `ROBINHOOD_GLC_TOKEN_ADDRESS`. Keying on the
+   * env-derived deployment, as this used to, made a balance depend on
+   * configuration that has nothing to do with a user's own holdings —
+   * which is how a stale token variable produced no balance and no MAX
+   * button beside a healthy connected wallet.
+   *
+   * The RPC URL is likewise absent: the read goes over the connected
+   * wallet's provider (see `./balance`), so that endpoint does not decide
+   * what comes back and keying on it would invent a cache miss for a
+   * change that cannot alter the answer.
    */
-  glcBalance: (
-    deployment: RobinhoodDeployment | null,
-    chainId: number | null,
-    account: string | null,
-  ) =>
-    [
-      "evm",
-      "balance",
-      "glc",
-      deployment?.chainId ?? null,
-      deployment?.tokenAddress ?? null,
-      chainId,
-      account,
-    ] as const,
+  glcBalance: (chainId: number | null, account: string | null) =>
+    ["evm", "balance", "glc", chainId, account] as const,
 } as const;
 
 /**
- * The connected EVM wallet's GLC balance.
+ * The connected EVM wallet's GLC balance, read from the PINNED token.
  *
- * Disabled unless a deployment is configured AND a wallet is connected AND
- * that wallet is on the deployment's chain. Each of those is a real
- * refusal rather than a loading state:
+ * Disabled unless a wallet is connected AND it is on the pinned Robinhood
+ * chain. Both are real refusals rather than loading states:
  *
- * - no deployment (today's state everywhere) — there is no token address to
- *   read, so nothing is attempted;
- * - no wallet — there is no account to read a balance FOR, and asking would
- *   mean prompting someone who has not opted in to anything;
+ * - no wallet — there is no account to read a balance FOR, and asking
+ *   would mean prompting someone who has not opted in to anything;
  * - wrong chain — a balance read against the wrong network would return a
  *   real number for the wrong asset, which is worse than no number.
+ *
+ * It deliberately does NOT require the deposit deployment. A balance is
+ * the user's own holding of a pinned token; it involves neither the
+ * bridge contract nor any env-supplied address. Requiring the deployment
+ * meant a deployment whose token or bridge variable disagreed with its
+ * pin — or simply had not been set — rendered no balance and no MAX
+ * button next to a wallet that had connected fine. Whether a DEPOSIT can
+ * be built is a separate question, asked separately.
  */
 export function useRobinhoodGlcBalance(
   wallet: EvmWalletState,
 ): UseQueryResult<EvmTokenBalance> {
-  const { deployment, address, chainId, onExpectedChain, getProvider } = wallet;
+  const { address, chainId, onExpectedChain, getProvider } = wallet;
 
   return useQuery({
-    queryKey: evmWalletQueryKeys.glcBalance(deployment, chainId, address),
-    enabled: Boolean(deployment) && Boolean(address) && onExpectedChain,
+    queryKey: evmWalletQueryKeys.glcBalance(chainId, address),
+    enabled: Boolean(address) && onExpectedChain,
     refetchInterval: BALANCE_POLL_MS,
     // A failed balance read is reported as unavailable rather than retried
     // into a long spinner: the form has a correct answer for "we do not
@@ -396,16 +395,14 @@ export function useRobinhoodGlcBalance(
      */
     placeholderData: () => undefined,
     queryFn: async () => {
-      if (!deployment || !address) {
-        throw new Error("Robinhood Chain is not configured, or no wallet is connected");
-      }
+      if (!address) throw new Error("No wallet is connected");
       const provider = getProvider();
       // The wallet went away between the render that enabled this query and
       // the query running. Reported as a failed read — which the form shows
       // as "Balance unavailable" — rather than reaching for a global
       // injection that may belong to a different extension entirely.
       if (!provider) throw new Error("The connected wallet is no longer available");
-      return fetchRobinhoodGlcBalance({ deployment, account: address, provider });
+      return fetchRobinhoodGlcBalance({ account: address, provider });
     },
   });
 }

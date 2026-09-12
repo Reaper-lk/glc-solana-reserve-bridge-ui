@@ -7,12 +7,32 @@ import {
 } from "viem";
 import { ROBINHOOD_DECIMALS } from "@/lib/bridge/robinhood-amount";
 import { erc20Abi } from "./abi";
-import type { RobinhoodDeployment } from "./config";
+import { ROBINHOOD_CHAIN_ID, ROBINHOOD_GLC_TOKEN_ADDRESS } from "./robinhood-target";
 
 /**
  * The connected wallet's GLC balance on Robinhood Chain.
  *
- * # Read through the wallet, not through the deployment's RPC
+ * # The PINNED token, never a configured one
+ *
+ * The token address and the chain id come from `./robinhood-target` —
+ * compiled-in constants — not from the deposit deployment this used to
+ * take. Two reasons, and the first is a production bug:
+ *
+ * A balance is a read of the user's own asset. Making it depend on
+ * `robinhoodDeployment()` meant it also depended on
+ * `NEXT_PUBLIC_ROBINHOOD_TOKEN_ADDRESS` and
+ * `NEXT_PUBLIC_ROBINHOOD_BRIDGE_ADDRESS` agreeing with their pins — so a
+ * deployment with a stale or absent token variable showed no balance and
+ * no MAX button beside a wallet that had connected perfectly well, while
+ * nothing about the balance involves the bridge contract at all.
+ *
+ * And the token is not configuration's to choose. Reading `balanceOf` on
+ * an address an environment variable supplied would render a number for
+ * whatever asset that address happens to be, labelled GLC. The pin is the
+ * asset this build is about; `decimals()` below is how the chain confirms
+ * it.
+ *
+ * # Read through the wallet, not through a configured RPC
  *
  * `balanceOf`/`decimals` are dispatched over the CONNECTED wallet's own
  * EIP-1193 provider. This is the account's own balance, and the wallet is
@@ -49,6 +69,14 @@ import type { RobinhoodDeployment } from "./config";
  * surprise value would render a balance that looks plausible and is wrong
  * by a factor of ten to the something.
  *
+ * # Nothing is subtracted
+ *
+ * The figure returned is the raw GLC token balance. Gas on Robinhood
+ * Network is paid in the chain's NATIVE asset, not in GLC, so holding
+ * back a gas allowance from this number would under-report what a user
+ * can actually bridge — and MAX, which is built from it, would refuse
+ * GLC they hold.
+ *
  * # Fail closed on the chain
  *
  * The wallet's chain is re-read from the provider immediately before the
@@ -68,32 +96,32 @@ export interface EvmTokenBalance {
 }
 
 export async function fetchRobinhoodGlcBalance(params: {
-  readonly deployment: RobinhoodDeployment;
   readonly account: Address;
   /** The connected wallet's provider. Never `window.ethereum` read globally. */
   readonly provider: EIP1193Provider;
 }): Promise<EvmTokenBalance> {
-  const { deployment, account, provider } = params;
+  const { account, provider } = params;
 
   const chainIdHex = (await provider.request({ method: "eth_chainId" })) as Hex;
   const chainId = Number(BigInt(chainIdHex));
-  if (chainId !== deployment.chainId) {
+  if (chainId !== ROBINHOOD_CHAIN_ID) {
     throw new Error(
-      `The wallet is on chain ${chainId}, but this balance is for chain ${deployment.chainId}`,
+      `The wallet is on chain ${chainId}, but this balance is for chain ${ROBINHOOD_CHAIN_ID}`,
     );
   }
 
   const client = createPublicClient({ transport: custom(provider) });
+  const token = ROBINHOOD_GLC_TOKEN_ADDRESS as Address;
 
   const [raw, decimals] = await Promise.all([
     client.readContract({
-      address: deployment.tokenAddress,
+      address: token,
       abi: erc20Abi,
       functionName: "balanceOf",
       args: [account],
     }),
     client.readContract({
-      address: deployment.tokenAddress,
+      address: token,
       abi: erc20Abi,
       functionName: "decimals",
     }),

@@ -101,8 +101,9 @@ describe("useRobinhoodGlcBalance", () => {
       decimals: 18,
       symbol: "GLC",
     });
+    // No deployment passed: the token and the chain are pinned, so a
+    // balance never depends on env-supplied addresses.
     expect(fetchRobinhoodGlcBalance).toHaveBeenCalledWith({
-      deployment: DEPLOYMENT,
       account: ACCOUNT,
       provider: PROVIDER,
     });
@@ -163,18 +164,71 @@ describe("useRobinhoodGlcBalance", () => {
   });
 
   it("never carries a balance across accounts or chains", () => {
-    const forAccount = evmWalletQueryKeys.glcBalance(DEPLOYMENT, 4663, ACCOUNT);
+    const forAccount = evmWalletQueryKeys.glcBalance(4663, ACCOUNT);
     const otherAccount = evmWalletQueryKeys.glcBalance(
-      DEPLOYMENT,
       4663,
       "0x0000000000000000000000000000000000000001",
     );
-    const otherChain = evmWalletQueryKeys.glcBalance(DEPLOYMENT, 1, ACCOUNT);
+    const otherChain = evmWalletQueryKeys.glcBalance(1, ACCOUNT);
 
     expect(forAccount).not.toEqual(otherAccount);
     expect(forAccount).not.toEqual(otherChain);
-    // The read no longer depends on the deployment's RPC URL, so it is not
-    // part of the identity of the answer.
+    // Neither the deployment's RPC URL nor its token is part of the key:
+    // the read goes over the wallet's provider to a pinned token, so
+    // neither can alter the answer and keying on them would invent cache
+    // misses for changes that cannot.
     expect(forAccount).not.toContain(DEPLOYMENT.rpcUrl);
+    expect(forAccount).not.toContain(DEPLOYMENT.tokenAddress);
+  });
+
+  it("reads the balance with NO deposit deployment resolved at all", () => {
+    // The production shape this fix is for: a deployment refused for a
+    // stale or absent token variable used to remove the balance and the
+    // MAX button, though neither involves the bridge contract.
+    const { result } = renderHook(
+      () => useRobinhoodGlcBalance(wallet({ deployment: null })),
+      { wrapper: wrapper() },
+    );
+    expect(result.current.isPending).toBe(true);
+    expect(result.current.fetchStatus).not.toBe("idle");
+  });
+});
+
+/**
+ * The refresh triggers.
+ *
+ * Three of the four fall out of the query KEY — a wallet connecting, an
+ * account switching and a network switching all change `(chainId,
+ * account)`, so each is a cache miss rather than a stale figure carried
+ * across it. The fourth, a successful deposit, is an explicit
+ * invalidation, and it works by PREFIX: `BridgeForm.refreshSourceBalance`
+ * invalidates `evmWalletQueryKeys.balances()` without knowing which
+ * account or chain is in play.
+ */
+describe("evmWalletQueryKeys.glcBalance — refresh triggers", () => {
+  const prefix = evmWalletQueryKeys.balances();
+
+  it("sits under the prefix a successful deposit invalidates", () => {
+    const key = evmWalletQueryKeys.glcBalance(4663, ACCOUNT);
+    expect(key.slice(0, prefix.length)).toEqual([...prefix]);
+  });
+
+  it("changes when a wallet connects", () => {
+    // Disconnected to connected: from no account to one.
+    expect(evmWalletQueryKeys.glcBalance(4663, null)).not.toEqual(
+      evmWalletQueryKeys.glcBalance(4663, ACCOUNT),
+    );
+  });
+
+  it("changes when the ACCOUNT changes inside one wallet", () => {
+    expect(evmWalletQueryKeys.glcBalance(4663, ACCOUNT)).not.toEqual(
+      evmWalletQueryKeys.glcBalance(4663, "0x0000000000000000000000000000000000000002"),
+    );
+  });
+
+  it("changes when the NETWORK changes under one account", () => {
+    expect(evmWalletQueryKeys.glcBalance(4663, ACCOUNT)).not.toEqual(
+      evmWalletQueryKeys.glcBalance(1, ACCOUNT),
+    );
   });
 });
