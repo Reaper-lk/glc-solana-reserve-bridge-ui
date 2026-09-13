@@ -98,15 +98,42 @@ describe("document structure", () => {
 });
 
 describe("contents and anchors", () => {
+  /**
+   * The contents list, read in ONE traversal.
+   *
+   * Deliberately not `getAllByRole("link", { name })` inside a loop over
+   * the clauses. That query recomputes the accessible name of every link
+   * in the subtree on each call, so thirty-six clauses against two
+   * rendered copies of the list is ~2,600 accessible-name computations —
+   * it measured 3.5s under coverage instrumentation locally and timed out
+   * against vitest's 5s budget on CI. One pass asserts exactly the same
+   * thing in a few milliseconds.
+   */
+  function contentsLinks(): Map<string, string[]> {
+    const nav = screen.getByRole("navigation", { name: "On this page" });
+    const byName = new Map<string, string[]>();
+
+    for (const link of nav.querySelectorAll("a[href]")) {
+      const name = link.textContent.trim();
+      const hrefs = byName.get(name) ?? [];
+      hrefs.push(link.getAttribute("href")!);
+      byName.set(name, hrefs);
+    }
+
+    return byName;
+  }
+
   it("lists every clause in the table of contents", () => {
     render(<TermsPage />);
-    // Two copies are rendered — the mobile disclosure and the desktop
-    // column — so each clause appears twice by design.
-    const nav = screen.getByRole("navigation", { name: "On this page" });
+    const links = contentsLinks();
+
     for (const clause of CLAUSES) {
-      const links = within(nav).getAllByRole("link", { name: clause });
-      expect(links.length, clause).toBeGreaterThan(0);
-      expect(links[0]).toHaveAttribute("href", `#${slugify(clause)}`);
+      // Two copies are rendered — the mobile disclosure and the desktop
+      // column — so each clause appears twice by design.
+      expect(links.get(clause), clause).toEqual([
+        `#${slugify(clause)}`,
+        `#${slugify(clause)}`,
+      ]);
     }
   });
 
@@ -184,7 +211,7 @@ describe("the text is text", () => {
     // is not a drafting surface, so neither the bracketed placeholder nor
     // the note to complete it may reach a reader.
     const { container } = render(<TermsPage />);
-    const body = container.textContent ?? "";
+    const body = container.textContent;
 
     expect(body).not.toMatch(/\[INSERT/i);
     expect(body).not.toMatch(/completed after legal review/i);
