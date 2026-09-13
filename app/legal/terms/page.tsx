@@ -24,8 +24,8 @@ import { slugify } from "@/lib/content/toc";
  * itself by the origin this deployment was configured with.
  */
 
-export const EFFECTIVE_DATE = "September 13, 2026";
-export const LAST_UPDATED = "September 13, 2026";
+export const EFFECTIVE_DATE = "September 12, 2026";
+export const LAST_UPDATED = "September 12, 2026";
 
 /**
  * The notice the top of the page must carry, in the Alert component's
