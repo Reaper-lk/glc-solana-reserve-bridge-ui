@@ -855,29 +855,37 @@ export default function TermsPage() {
         </p>
       </Clause>
 
+      {/*
+        Deliberately names no jurisdiction.
+        
+        The draft this page was written from carried a bracketed
+        placeholder and a note to complete it after legal review. Both are
+        gone: a published legal page is not a drafting surface, and a
+        reader has no use for either. What stands in their place is a
+        clause that is true as written — applicable law governs, and the
+        rights a reader cannot be made to waive are untouched — so nothing
+        here has to be walked back when a specific jurisdiction is chosen.
+      */}
       <Clause title={S.governingLaw}>
         <p>
-          These Terms will be governed by the laws of{" "}
-          <mark className="bg-warn-50 text-ink-950 rounded-sm font-semibold">
-            [INSERT APPROPRIATE JURISDICTION]
-          </mark>
-          , without regard to conflict-of-law principles.
+          These Terms and any disputes relating to the Goldcoin Bridge will be interpreted
+          and handled in accordance with applicable law.
         </p>
         <p>
-          Any disputes relating to the Bridge will be handled in accordance with
-          applicable law and any dispute-resolution provisions adopted by Goldcoin.
-        </p>
-        <p className="text-ink-600 italic">
-          This section should be completed after legal review.
+          Nothing in these Terms limits any rights or remedies that cannot legally be
+          waived or restricted.
         </p>
       </Clause>
 
       <Clause title={S.contact}>
         <p>
           Questions regarding these Terms, transaction reviews, or Bridge operation may be
-          submitted through the official Goldcoin communication channels listed on the
-          Goldcoin Project website and on this Bridge, which this deployment serves from{" "}
-          <span className="font-mono font-semibold">{primaryDomain()}</span>.
+          submitted through the official channels published on the Goldcoin Bridge itself,
+          which this deployment serves from{" "}
+          <Link href={routes.home}>
+            <span className="font-mono font-semibold">{primaryDomain()}</span>
+          </Link>
+          .
         </p>
         <p>
           The <Link href={routes.support}>support</Link> page lists the channels available

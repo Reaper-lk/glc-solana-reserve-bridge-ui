@@ -178,13 +178,43 @@ describe("the text is text", () => {
     expect(container.querySelectorAll("img")).toHaveLength(0);
   });
 
-  it("leaves the jurisdiction placeholder visible rather than guessing one", () => {
-    // §34 is unresolved in the source document. Rendering a guessed
-    // jurisdiction would be worse than rendering the gap.
+  it("names no jurisdiction, and shows no drafting note in its place", () => {
+    // §34 is unresolved. The clause that stands in for a chosen
+    // jurisdiction has to be true as written — and a published legal page
+    // is not a drafting surface, so neither the bracketed placeholder nor
+    // the note to complete it may reach a reader.
+    const { container } = render(<TermsPage />);
+    const body = container.textContent ?? "";
+
+    expect(body).not.toMatch(/\[INSERT/i);
+    expect(body).not.toMatch(/completed after legal review/i);
+    expect(body).not.toMatch(/without regard to conflict-of-law/i);
+
+    const clause = screen.getByRole("heading", {
+      name: "34. Governing law and disputes",
+    }).parentElement;
+    expect(clause).toHaveTextContent(
+      "These Terms and any disputes relating to the Goldcoin Bridge will be interpreted and handled in accordance with applicable law.",
+    );
+    expect(clause).toHaveTextContent(
+      "Nothing in these Terms limits any rights or remedies that cannot legally be waived or restricted.",
+    );
+  });
+
+  it("points contact at the configured origin and the in-app support route", () => {
+    // No invented email address, no hardcoded domain: the home link is
+    // this deployment's own, and /support is a route the app serves.
     render(<TermsPage />);
-    expect(screen.getByText("[INSERT APPROPRIATE JURISDICTION]")).toBeInTheDocument();
-    expect(
-      screen.getByText("This section should be completed after legal review."),
-    ).toBeInTheDocument();
+    const clause = screen.getByRole("heading", { name: "35. Contact" }).parentElement!;
+
+    const hrefs = within(clause)
+      .getAllByRole("link")
+      .map((link) => link.getAttribute("href"));
+    expect(hrefs).toContain(routes.home);
+    expect(hrefs).toContain(routes.support);
+    expect(hrefs.every((href) => href?.startsWith("/"))).toBe(true);
+
+    expect(clause).toHaveTextContent(/Do not send private keys/);
+    expect(clause.textContent).not.toMatch(/@/);
   });
 });
